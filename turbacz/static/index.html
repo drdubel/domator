@@ -32,7 +32,8 @@
 		ws.onmessage = function (event) {
 			console.info(event.data)
 			var msg = JSON.parse(event.data)
-			$("#" + msg.blind).slider("value", (msg.current_position) / 10)
+			msg.current_position = msg.current_position
+			$("#" + msg.blind).slider("value", 999 - msg.current_position)
 		};
 		$(function () {
 			$("#roleta > span").each(function () {
@@ -41,18 +42,12 @@
 				$(this).empty().slider({
 					value: value,
 					range: "max",
+					max: 999,
 					animate: true,
 					orientation: "vertical",
 					stop: function (event, ui) {
 						console.info(event.target.id, ui.value)
-						var r_val = ui.value * 10 - 1
-						if (r_val < 0) {
-							ws.send(JSON.stringify({ "blind": event.target.id, "position": parseInt(0) }))
-						} else if (r_val > 999) {
-							ws.send(JSON.stringify({ "blind": event.target.id, "position": parseInt(999) }))
-						} else {
-							ws.send(JSON.stringify({ "blind": event.target.id, "position": parseInt(r_val) }))
-						}
+						ws.send(JSON.stringify({ "blind": event.target.id, "position": parseInt(999 - ui.value) }))
 					}
 				});
 			});

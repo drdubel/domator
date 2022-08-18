@@ -26,11 +26,11 @@ STOP = asyncio.Event()
 
 async def move_blind(client, blind, pos):
     while stan_rolet[blind] != pos:
-        if abs(stan_rolet[blind] - pos) > 10:
+        if abs(stan_rolet[blind] - pos) > 5:
             if stan_rolet[blind] < pos:
-                stan_rolet[blind] += 10
+                stan_rolet[blind] += 5
             elif stan_rolet[blind] > pos:
-                stan_rolet[blind] -= 10
+                stan_rolet[blind] -= 5
         else:
             if stan_rolet[blind] < pos:
                 stan_rolet[blind] += 1

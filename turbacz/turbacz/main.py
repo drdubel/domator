@@ -1,11 +1,11 @@
 import logging
 import os
-import pickle
+from pickle import dump, load
 from secrets import token_urlsafe
 from typing import Optional
 
 from authlib.integrations.starlette_client import OAuth, OAuthError
-from fastapi import Cookie, FastAPI, WebSocket
+from fastapi import Cookie, FastAPI, Response, WebSocket
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 from starlette.config import Config
@@ -38,13 +38,13 @@ oauth.register(
 )
 
 with open('turbacz/cookies.pickle', 'rb') as cookies:
-    access_cookies = pickle.load(cookies)
+    access_cookies = load(cookies)
 
 
 @app.get("/")
 async def homepage(request: Request, access_token: Optional[str] = Cookie(None)):
     user = request.session.get("user")
-    if access_token and access_token in access_cookies:
+    if access_token in access_cookies:
         return RedirectResponse(url="/auto")
     if user:
         return HTMLResponse('<p>invalid email!</p><a href="/login">login</a>')
@@ -52,12 +52,12 @@ async def homepage(request: Request, access_token: Optional[str] = Cookie(None))
 
 
 @app.get("/auto")
-async def main(request: Request):
+async def main(request: Request, access_token: Optional[str] = Cookie(None)):
     user = request.session.get("user")
-    if user:
+    if user and access_token in access_cookies:
         with open(os.path.join("static", "index.html")) as fh:
             data = fh.read()
-        return HTMLResponse(content=data, media_type="text/html")
+        return Response(content=data, media_type="text/html")
     return RedirectResponse(url="/")
 
 
@@ -80,9 +80,9 @@ async def auth(request: Request):
             access_token = token_urlsafe()
             access_cookies[access_token] = user["email"]
             with open("turbacz/cookies.pickle", "wb") as cookies:
-                pickle.dump(access_cookies, cookies)
+                dump(access_cookies, cookies)
             response = RedirectResponse(url="/auto")
-            response.set_cookie("access_token", access_token, max_age=3600*12)
+            response.set_cookie("access_token", access_token, max_age=3600*24*14)
             return response
         else:
             return RedirectResponse(url="/")

@@ -47,7 +47,7 @@ async def homepage(request: Request, access_token: Optional[str] = Cookie(None))
     if access_token in access_cookies:
         return RedirectResponse(url="/auto")
     if user:
-        return HTMLResponse('<p>invalid email!</p><a href="/login">login</a>')
+        return HTMLResponse('<h1>Sio!</h1><a href="/login">login</a>')
     return HTMLResponse('<a href="/login">login</a>')
 
 
@@ -116,7 +116,7 @@ async def websocket_endpoint(websocket: WebSocket, access_token=Cookie()):
                 logger.error("Cannot parse %s %s", cmd, err)
                 continue
             logger.debug("putting %s in command queue", req)
-            mqtt.client.publish("/blind/cmd", f"{req.blind} {req.position}")
+            mqtt.client.publish("/blind/cmd", f"{chr(int(req.blind[1])+96)}{req.position}")
             ws_manager.command_q.put_nowait(req)
 
     if access_token in access_cookies:
@@ -127,7 +127,7 @@ def start():
     import uvicorn
 
     logging.basicConfig(level=logging.DEBUG)
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8000)
 
 
 if __name__ == "__main__":

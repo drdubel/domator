@@ -4,16 +4,17 @@ import logging
 from fastapi_mqtt import FastMQTT, MQTTConfig
 
 from .websocket import ws_manager
+from .secrets import mqtt_password
 
 logger = logging.getLogger(__name__)
-
+  
 
 mqtt_config = MQTTConfig(
-    host="127.0.0.1",
+    host="localhost",
     port=1883,
     keepalive=60,
-    username="aplikacja_webowa",
-    password="password",
+    username="turbacz",
+    password=mqtt_password,
 )
 
 mqtt = FastMQTT(config=mqtt_config)
@@ -31,5 +32,4 @@ async def message(client, topic, payload, qos, properties):
     payload = json.loads(payload.decode())
     logger.debug("Received message: %s %s %s %s", topic, payload, qos, properties)
     logger.debug("%s %s", type(payload), payload)
-    for blind, pos in payload.items():
-        await ws_manager.broadcast({"blind": blind, "current_position": pos})
+    await ws_manager.broadcast({"blind": payload[0:2], "current_position": payload[3:]})

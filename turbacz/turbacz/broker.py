@@ -3,11 +3,11 @@ import logging
 
 from fastapi_mqtt import FastMQTT, MQTTConfig
 
+from ._secrets import mqtt_password
 from .websocket import ws_manager
-from .secrets import mqtt_password
 
 logger = logging.getLogger(__name__)
-  
+
 
 mqtt_config = MQTTConfig(
     host="localhost",

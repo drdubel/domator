@@ -5,3 +5,4 @@ _*
 *.code-workspace
 autoryzowane*
 *.pickle
+.vscode

@@ -13,6 +13,8 @@ uvicorn = "<2.0.0"
 Authlib = "^1.1.0"
 itsdangerous = "^2.1.2"
 httpx = "^0.23.0"
+aioconsole = "^0.5.1"
+uvloop = "^0.17.0"
 
 [tool.poetry.dev-dependencies]
 black = "^22.6.0"

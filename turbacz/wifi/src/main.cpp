@@ -57,14 +57,6 @@ void callback(char *topic, uint8_t *payload, int length)
 	Serial.print("Message arrived in topic: ");
 	Serial.println(topic);
 	Serial.print("Message:");
-	if (topic == "/blind/pos")
-	{
-		std::string message = "";
-		for (int i = 0; i < length; i++)
-		{
-			message += (char)payload[i];
-		}
-	}
 	if (length == 1)
 	{
 		for (int i = 0; i < NBLIND; i++)
@@ -114,7 +106,6 @@ void setup()
 			delay(2000);
 		}
 	}
-	client.subscribe("/blind/pos");
 	client.subscribe("/blind/cmd");
 }
 

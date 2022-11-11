@@ -7,4 +7,4 @@ autoryzowane*
 *.pickle
 .vscode
 target
-turbacz/blind-mover/Cargo.lock
+*.lock

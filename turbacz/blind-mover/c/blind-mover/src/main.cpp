@@ -1,16 +1,48 @@
 #include <Arduino.h>
 
-HardwareSerial mySerial2(PB11, PB10);
+HardwareSerial mySerial(PB11, PB10);
 
 char out_buff[5] = {0, 0, 0, 0, 0};
 char in_buff[5] = {0, 0, 0, 0, 0};
-int blinds[7] = {0, 0, 0, 0, 0, 0, 0};
+int blinds[7] = {800, 0, 0, 0, 0, 0, 0};
 int buff_index;
 
-void
+void move_blind(int new_pos, int blind)
+{
+	int motor_startup_time = 2000;
+	int full_lift_time = 20000;
+	delay(motor_startup_time);
+	if (blinds[blind - 'a'] <= new_pos)
+	{
+		int minimum_difference = 1000 / (full_lift_time / 1000 * 2);
+		for (int position = blinds[blind - 'a']; position <= new_pos; position += 25)
+		{
+			delay(500);
+			sprintf(out_buff, "%c%03d", blind, position);
+			mySerial.write(out_buff);
+			blinds[blind - 'a'] = position;
+		}
+		if ((new_pos == 999) & (blinds[blind - 'a'] != 999)) {
+			delay(500);
+			sprintf(out_buff, "%c%03d", blind, 999);
+			mySerial.write(out_buff);
+			blinds[blind - 'a'] = 999;
+		}
+	}
+	else
+	{
+		int minimum_difference = -1000 / (full_lift_time / 1000 * 2);
+		for (int position = blinds[blind - 'a']; position >= new_pos; position -= 25)
+		{
+			delay(500);
+			sprintf(out_buff, "%c%03d", blind, position);
+			mySerial.write(out_buff);
+			blinds[blind - 'a'] = position;
+		}
+	}
+}
 
-	void
-	get_commmand(int in_byte)
+void get_commmand(int in_byte)
 {
 	int blind;
 	int position;
@@ -19,7 +51,7 @@ void
 		blind = in_byte + 32;
 		int position = blinds[in_byte - (int)'A'];
 		sprintf(out_buff, "%c%03d", blind, position);
-		mySerial2.write(out_buff);
+		mySerial.write(out_buff);
 	}
 	else if ((in_byte >= 'a') & (in_byte <= ('g')))
 	{
@@ -35,11 +67,9 @@ void
 	{
 		if ((in_buff[0] >= 'a') & (in_buff[0] <= ('g')))
 		{
-			in_buff[4] = 0;
 			int new_pos = atoi(in_buff + 1);
 			blind = in_buff[0];
-			sprintf(out_buff, "%c%03d", blind, new_pos);
-			mySerial2.write(out_buff);
+			move_blind(new_pos, blind);
 		}
 		buff_index = 0;
 		for (uint i = 0; i < sizeof(in_buff); i++)
@@ -51,7 +81,7 @@ void
 
 void setup()
 {
-	mySerial2.begin(115200);
+	mySerial.begin(115200);
 	pinMode(PB12, OUTPUT);
 	pinMode(PB13, OUTPUT);
 	pinMode(PB14, OUTPUT);
@@ -72,8 +102,8 @@ void setup()
 
 void loop()
 {
-	if (mySerial2.available() > 0)
+	if (mySerial.available() > 0)
 	{
-		get_commmand(mySerial2.read());
+		get_commmand(mySerial.read());
 	}
 }

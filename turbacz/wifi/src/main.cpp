@@ -7,6 +7,7 @@
 #include <string>
 
 #define NBLIND 8
+#define uint unsigned int
 
 // MQTT Broker
 const char *mqtt_broker = "192.168.3.10";
@@ -94,8 +95,8 @@ void setup()
 	Serial.println(WiFi.localIP());
 	while (!client.connected())
 	{
-		Serial.printf("\nThe client blinds-wifi-module connects to the public mqtt broker\n");
-		if (client.connect("blinds-wifi-module", mqttUser, mqttPassword))
+		Serial.printf("\nThe client blinds-wifi connects to the public mqtt broker\n");
+		if (client.connect("blinds-wifi", mqttUser, mqttPassword))
 		{
 			Serial.println("Public emqx mqtt broker connected");
 		}

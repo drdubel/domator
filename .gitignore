@@ -8,3 +8,4 @@ autoryzowane*
 .vscode
 target
 *.lock
+secrets*

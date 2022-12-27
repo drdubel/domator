@@ -5,34 +5,54 @@
 	<title>Heating</title>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<link rel="icon" href="/favicon.ico" type="image/x-icon">
+	<link rel="icon" href="/static/favicon.ico" type="image/x-icon">
 	<script>
 		var wsId = Math.floor(Math.random() * 2000000000)
 		var ws = new WebSocket("ws://127.0.0.1:8000/heating/ws/" + wsId)
 		ws.onmessage = function (event) {
+			'use strict';
 			var msg = JSON.parse(event.data)
-			document.getElementById(msg.id).innerHTML = msg.value
+			for (let id in msg) {
+				console.log(id, msg[id]);
+				document.getElementById(id).innerHTML = msg[id]
+			}
 		}
-		function send_value(value) {
-			console.info(value)
-			ws.send(JSON.stringify(value))
+		function send_value(prevalue, value) {
+			for (var i = 0; i < value.length; i++) {
+				if (((value[i] < '0') | (value[i] > '9')) && (value[i] != '.')) {
+					console.log("NIE")
+					return 0
+				}
+			}
+			if (value.length == 0) {
+				console.log("NIE")
+				return 0
+			}
+			console.info(prevalue + value)
+			ws.send(JSON.stringify(prevalue + value))
 		}
 	</script>
 </head>
 
 <body>
 	<div id="temperatures">
-		<p id="new_temperature_text">New water temperature: <input type="number" step="0.05" id="new_temperature"
-				onchange="send_value(this.value)"></p>
 		<p>Cold water temperature: <span id="cold"></span>°C</p>
 		<p>Mixed water temperature: <span id="mixed"></span>°C</p>
 		<p>Hot water temperature: <span id="hot"></span>°C</p>
-		<p>Target water temperature: <span id="target"></span>°C</p>
+		<p>Target water temperature: <span id="target"></span> <input type="text" id="send_target"
+				onchange="send_value('t', this.value)" pattern="[0-9.]*">
+		</p>
 		<p>Integral value: <span id="integral"></span></p>
 		<p>PID output: <span id="pid_output"></span></p>
-		<p>Kp: <input type="number" step="0.01" id="kp" onchange="send_value('Kp ' + this.value)"></p>
-		<p>Ki: <input type="number" step="0.01" id="ki" onchange="send_value('Ki ' + this.value)"></p>
-		<p>Kd: <input type="number" step="0.01" id="kd" onchange="send_value('Kd ' + this.value)"></p>
+		<p>Kp: <span id="kp"></span> <input type="text" id="targer_kp" onchange="send_value('p', this.value)"
+				pattern="[0-9.]*">
+		</p>
+		<p>Ki: <span id="ki"></span> <input type="text" id="targer_ki" onchange="send_value('i', this.value)"
+				pattern="[0-9.]*">
+		</p>
+		<p>Kd: <span id="kd"></span> <input type="text" id="targer_kd" onchange="send_value('d', this.value)"
+				pattern="[0-9.]*">
+		</p>
 	</div>
 </body>
 

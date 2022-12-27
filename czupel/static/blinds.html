@@ -5,32 +5,17 @@
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<title>Blinds</title>
+	<link rel="stylesheet" href="/static/styles/blinds.css" type="text/css" />
 	<link rel="stylesheet" href="https://code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css">
 	<link rel="stylesheet" href="https://jqueryui.com/resources/demos/style.css">
 	<script src="https://code.jquery.com/jquery-3.6.0.js"></script>
 	<script src="https://code.jquery.com/ui/1.13.2/jquery-ui.js"></script>
-	<style>
-		body {
-			background-color: rgb(0, 0, 0);
-		}
-
-		#nazwa_rolety>span {
-			color: rgb(89, 189, 62);
-			text-align: center;
-		}
-
-		#blind>span {
-			height: 300px;
-			float: left;
-			margin: 45.5px;
-			margin-top: 10px;
-		}
-	</style>
+	<link rel="icon" href="/static/favicon.ico" type="image/x-icon">
 	<script>
 		var wsId = Math.floor(Math.random() * 2000000000)
 		var ws = new WebSocket("ws://127.0.0.1:8000/blinds/ws/" + wsId);
 		ws.onmessage = function (event) {
-			console.info(event.data)
+			console.info(event)
 			var msg = JSON.parse(event.data)
 			msg.current_position = msg.current_position
 			$("#" + msg.blind).slider("value", 999 - msg.current_position)

@@ -1,4 +1,5 @@
 import logging
+import json
 
 from fastapi_mqtt import FastMQTT, MQTTConfig
 
@@ -29,9 +30,10 @@ def connect(client, flags, rc, properties):
 
 @mqtt.on_message()
 async def message(client, topic, payload, qos, properties):
-    payload = payload.decode().split()
+    payload = json.loads(payload.decode())
     if topic == "/heating/metrics":
-        await ws_manager.broadcast({"id": payload[0], "value": payload[1]})
+        print(payload)
+        await ws_manager.broadcast(payload)
     elif topic == "/blind/pos":
         await ws_manager.broadcast(
             {"blind": payload[0], "current_position": payload[1]}

@@ -1,0 +1,28 @@
+[tool.poetry]
+name = "czupel"
+version = "0.1.0"
+description = "IoT logic and user interface"
+authors = ["DrDubel <antek.suszko@gmail.com>"]
+license = "Apache 2.0"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+fastapi = "^0.79.0"
+fastapi-mqtt = "^1.0.5"
+uvicorn = "<2.0.0"
+Authlib = "^1.1.0"
+itsdangerous = "^2.1.2"
+httpx = "^0.23.0"
+aioconsole = "^0.5.1"
+uvloop = "^0.17.0"
+
+[tool.poetry.dev-dependencies]
+black = "^22.6.0"
+isort = "^5.10.1"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+start = "turbacz.main:start"

@@ -29,7 +29,7 @@ oauth = OAuth(config)
 
 background_task_started = False
 
-app.mount("/static", StaticFiles(directory="static", html=True), name="static")
+app.mount("/static", StaticFiles(directory="./static", html=True), name="static")
 
 CONF_URL = "https://accounts.google.com/.well-known/openid-configuration"
 oauth.register(

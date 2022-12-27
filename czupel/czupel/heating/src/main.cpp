@@ -1,6 +1,7 @@
 #include <ArduinoJson.h>
 #include <AutoPID.h>
 #include <DallasTemperature.h>
+#include <EEPROM.h>
 #include <ESP8266WiFi.h>
 #include <OneWire.h>
 #include <PubSubClient.h>
@@ -18,74 +19,96 @@ const char *mqttUser = "heating-wifi";
 WiFiClient espClient;
 PubSubClient client(espClient);
 
-#define PIN_OUTPUT 3
-#define ONE_WIRE_BUS 4
+#define PIN_OUTPUT D1
+#define ONE_WIRE_BUS D2
 
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
 int numberOfDevices;
 
-DeviceAddress tempDeviceAddress;
+DeviceAddress devaddr_cold = {0x28, 0x4B, 0x69, 0xE0, 0x00, 0x00, 0x00, 0x38};
+DeviceAddress devaddr_mixed = {0x28, 0x3C, 0x06, 0xE0, 0x00, 0x00, 0x00, 0x5B};
+DeviceAddress devaddr_hot = {0x28, 0x6C, 0x4D, 0xDC, 0x00, 0x00, 0x00, 0xB6};
 
 SimpleTimer timer;
 
-double temp_mixed, temp_cold, temp_hot, output, integral,
-    temp_target = 30, Kp = 200, Ki = 0.1, Kd = 350;
+double temp_mixed, temp_cold, temp_hot, output;
 
-AutoPID myPID(&temp_mixed, &temp_target, &output, 0, 255, Kp, Ki, Kd);
+struct PidSettings {
+    double target;
+    double kp;
+    double kd;
+    double ki;
+    double integral;
+};
 
-char out[128];
+struct PidSettings pid_settings;
 
-void printAddress(DeviceAddress deviceAddress) {
-    for (uint8_t i = 0; i < 8; i++) {
-        if (deviceAddress[i] < 16) Serial.print("0");
-        Serial.print(deviceAddress[i], HEX);
-    }
-}
+AutoPID myPID(&temp_mixed, &(pid_settings.target), &output, 0, 255,
+              pid_settings.kp, pid_settings.ki, pid_settings.kd);
+
+char out[256];
 
 void callback(char *topic, uint8_t *payload, int length) {
     string message = "";
     for (int i = 1; i < length; i++) {
         message += (char)payload[i];
     }
-    if ((char)payload[0] == 'p') {
-        Kp = stof(message);
+    switch ((char)payload[0]) {
+        case 'p':
+            pid_settings.kp = stof(message);
+            break;
+        case 'i':
+            pid_settings.ki = stof(message);
+            break;
+        case 'd':
+            pid_settings.kd = stof(message);
+            break;
+        case 't':
+            pid_settings.target = stof(message);
+            break;
+        case 'I':
+            myPID.setIntegral(stof(message));
+            break;
+        default:
+            return;
     }
-    if ((char)payload[0] == 'i') {
-        Ki = stof(message);
-    }
-    if ((char)payload[0] == 'd') {
-        Kd = stof(message);
-    }
-    if ((char)payload[0] == 't') {
-        temp_target = stof(message);
-    }
+    myPID.setGains(pid_settings.kp, pid_settings.ki, pid_settings.kd);
+    EEPROM.put(0, pid_settings);
+    EEPROM.commit();
 }
 
 void send_temp() {
     DynamicJsonDocument data(1024);
-    temp_cold = sensors.getTempCByIndex(0);
-    temp_hot = sensors.getTempCByIndex(1);
-    temp_mixed = sensors.getTempCByIndex(2);
-    if (temp_hot > temp_target) {
+    temp_cold = sensors.getTempC(devaddr_cold);
+    temp_mixed = sensors.getTempC(devaddr_mixed);
+    temp_hot = sensors.getTempC(devaddr_hot);
+    if (temp_hot > pid_settings.target) {
         myPID.run();
+    } else {
+        output = 255;
     }
-    integral = myPID.getIntegral();
+    analogWrite(PIN_OUTPUT, (int)output);
+    pid_settings.integral = myPID.getIntegral();
     data["cold"] = temp_cold;
     data["mixed"] = temp_mixed;
     data["hot"] = temp_hot;
-    data["target"] = temp_target;
-    data["integral"] = integral;
+    data["target"] = pid_settings.target;
+    data["integral"] = pid_settings.integral;
     data["pid_output"] = output;
-    data["kp"] = Kp;
-    data["ki"] = Ki;
-    data["kd"] = Kd;
+    data["kp"] = pid_settings.kp;
+    data["ki"] = pid_settings.ki;
+    data["kd"] = pid_settings.kd;
     serializeJson(data, out);
+    serializeJsonPretty(data, Serial);
     client.publish("/heating/metrics", out);
     sensors.requestTemperatures();
 }
 
 void setup() {
+    EEPROM.begin(sizeof(PidSettings));
+    EEPROM.get(0, pid_settings);
+    myPID.setGains(pid_settings.kp, pid_settings.ki, pid_settings.kd);
     Serial.begin(115200);
 
     WiFi.begin(ssid, password);
@@ -116,27 +139,11 @@ void setup() {
     Serial.print("Found ");
     Serial.print(numberOfDevices, DEC);
     Serial.println(" devices.");
-    for (int i = 0; i < numberOfDevices; i++) {
-        if (sensors.getAddress(tempDeviceAddress, i)) {
-            Serial.print("Found device ");
-            Serial.print(i, DEC);
-            Serial.print(" with address: ");
-            printAddress(tempDeviceAddress);
-            Serial.println();
-        } else {
-            Serial.print("Found ghost device at ");
-            Serial.print(i, DEC);
-            Serial.print(
-                " but could not detect address. Check power and cabling");
-        }
-    }
-    sensors.getAddress(tempDeviceAddress, 0);
-    sensors.setResolution(tempDeviceAddress, 12);
-    sensors.getAddress(tempDeviceAddress, 1);
-    sensors.setResolution(tempDeviceAddress, 12);
-    sensors.getAddress(tempDeviceAddress, 2);
-    sensors.setResolution(tempDeviceAddress, 12);
+    sensors.setResolution(devaddr_cold, 12);
+    sensors.setResolution(devaddr_mixed, 12);
+    sensors.setResolution(devaddr_hot, 12);
     sensors.requestTemperatures();
+    pinMode(PIN_OUTPUT, OUTPUT);
     timer.setInterval(750, send_temp);
     myPID.setTimeStep(750);
 }

@@ -1,3 +1,4 @@
+#include <ArduinoJson.h>
 #include <AutoPID.h>
 #include <DallasTemperature.h>
 #include <ESP8266WiFi.h>
@@ -28,10 +29,12 @@ DeviceAddress tempDeviceAddress;
 
 SimpleTimer timer;
 
-double temp_mixed, temp_cool, temp_hot, output, integral,
-    target_temperature = 30, Kp = 200, Ki = 0.1, Kd = 350;
+double temp_mixed, temp_cold, temp_hot, output, integral,
+    temp_target = 30, Kp = 200, Ki = 0.1, Kd = 350;
 
-AutoPID myPID(&temp_mixed, &target_temperature, &output, 0, 255, Kp, Ki, Kd);
+AutoPID myPID(&temp_mixed, &temp_target, &output, 0, 255, Kp, Ki, Kd);
+
+char out[128];
 
 void printAddress(DeviceAddress deviceAddress) {
     for (uint8_t i = 0; i < 8; i++) {
@@ -42,53 +45,43 @@ void printAddress(DeviceAddress deviceAddress) {
 
 void callback(char *topic, uint8_t *payload, int length) {
     string message = "";
-    for (int i = 0; i < length; i++) {
+    for (int i = 1; i < length; i++) {
         message += (char)payload[i];
     }
-    if (message[0] == 'K') {
-        switch (message[1]) {
-            case 'p':
-                Kp = 0;
-                for (int i = 3; i < length; i++) {
-                    Kp += (int)message[i] * pow(10, length - (i + 1));
-                }
-                break;
-            case 'i':
-                Ki = 0;
-                for (int i = 3; i < length; i++) {
-                    Ki += (int)message[i] * pow(10, length - (i + 1));
-                }
-                break;
-            case 'd':
-                Kd = 0;
-                for (int i = 3; i < length; i++) {
-                    Kd += (int)message[i] * pow(10, length - (i + 1));
-                }
-                break;
-        }
-    } else {
-        target_temperature = stof(message);
+    if ((char)payload[0] == 'p') {
+        Kp = stof(message);
+    }
+    if ((char)payload[0] == 'i') {
+        Ki = stof(message);
+    }
+    if ((char)payload[0] == 'd') {
+        Kd = stof(message);
+    }
+    if ((char)payload[0] == 't') {
+        temp_target = stof(message);
     }
 }
 
 void send_temp() {
-    temp_cool = sensors.getTempCByIndex(0);
+    DynamicJsonDocument data(1024);
+    temp_cold = sensors.getTempCByIndex(0);
     temp_hot = sensors.getTempCByIndex(1);
     temp_mixed = sensors.getTempCByIndex(2);
-    myPID.run();
+    if (temp_hot > temp_target) {
+        myPID.run();
+    }
     integral = myPID.getIntegral();
-    Serial.println(&("cold " + to_string(temp_cool))[0]);
-    Serial.println(&("mixed " + to_string(temp_mixed))[0]);
-    Serial.println(&("hot " + to_string(temp_hot))[0]);
-    Serial.println(&("pid " + to_string(output))[0]);
-    Serial.println(&("integral " + to_string(integral))[0]);
-    client.publish("/heating/metrics", &("cold " + to_string(temp_cool))[0]);
-    client.publish("/heating/metrics", &("mixed " + to_string(temp_mixed))[0]);
-    client.publish("/heating/metrics", &("hot " + to_string(temp_hot))[0]);
-    client.publish("/heating/metrics",
-                   &("target " + to_string(target_temperature))[0]);
-    client.publish("/heating/metrics", &("integral " + to_string(integral))[0]);
-    client.publish("/heating/metrics", &("pid_output " + to_string(output))[0]);
+    data["cold"] = temp_cold;
+    data["mixed"] = temp_mixed;
+    data["hot"] = temp_hot;
+    data["target"] = temp_target;
+    data["integral"] = integral;
+    data["pid_output"] = output;
+    data["kp"] = Kp;
+    data["ki"] = Ki;
+    data["kd"] = Kd;
+    serializeJson(data, out);
+    client.publish("/heating/metrics", out);
     sensors.requestTemperatures();
 }
 
@@ -105,7 +98,8 @@ void setup() {
     Serial.println(WiFi.localIP());
     while (!client.connected()) {
         Serial.printf(
-            "\nThe client blinds-wifi connects to the public mqtt broker\n");
+            "\nThe client blinds-wifi connects to the public mqtt "
+            "broker\n");
         if (client.connect("blinds-wifi", mqttUser, mqttPassword)) {
             Serial.println("Public emqx mqtt broker connected");
         } else {

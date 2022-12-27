@@ -37,7 +37,7 @@ oauth.register(
     client_kwargs={"scope": "openid email profile"},
 )
 
-with open('turbacz/cookies.pickle', 'rb') as cookies:
+with open("turbacz/cookies.pickle", "rb") as cookies:
     access_cookies = load(cookies)
 
 
@@ -82,7 +82,7 @@ async def auth(request: Request):
             with open("turbacz/cookies.pickle", "wb") as cookies:
                 dump(access_cookies, cookies)
             response = RedirectResponse(url="/auto")
-            response.set_cookie("access_token", access_token, max_age=3600*24*14)
+            response.set_cookie("access_token", access_token, max_age=3600 * 24 * 14)
             return response
         else:
             return RedirectResponse(url="/")
@@ -108,6 +108,7 @@ async def set_blind(req: BlindRequest):
 async def websocket_endpoint(websocket: WebSocket, access_token=Cookie()):
     await ws_manager.connect(websocket)
     mqtt.publish("/blind/cmd", "S")
+
     async def receive_command(websocket: WebSocket):
         async for cmd in websocket.iter_json():
             try:
@@ -116,7 +117,9 @@ async def websocket_endpoint(websocket: WebSocket, access_token=Cookie()):
                 logger.error("Cannot parse %s %s", cmd, err)
                 continue
             logger.debug("putting %s in command queue", req)
-            mqtt.client.publish("/blind/cmd", f"{chr(int(req.blind[1])+96)}{req.position}")
+            mqtt.client.publish(
+                "/blind/cmd", f"{chr(int(req.blind[1])+96)}{req.position}"
+            )
             ws_manager.command_q.put_nowait(req)
 
     if access_token in access_cookies:

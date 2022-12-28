@@ -14,7 +14,7 @@ mqtt_config = MQTTConfig(
     host="192.168.3.10",
     port=1883,
     keepalive=60,
-    username="czupel",
+    username="turbacz",
     password=mqtt_password,
 )
 
@@ -35,6 +35,11 @@ async def message(client, topic, payload, qos, properties):
     if topic == "/heating/metrics":
         with open("./static/data/heating_chart.json", "r") as chart_data_json:
             chart_data = json.load(chart_data_json)
+            if len(chart_data["labels"]) == 1000:
+                chart_data["labels"] = chart_data["labels"][1:]
+                chart_data["cold"] = chart_data["cold"][1:]
+                chart_data["mixed"] = chart_data["mixed"][1:]
+                chart_data["hot"] = chart_data["hot"][1:]
             chart_data["labels"].append(
                 time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
             )
@@ -43,8 +48,8 @@ async def message(client, topic, payload, qos, properties):
             chart_data["hot"].append(payload["hot"])
         with open("./static/data/heating_chart.json", "w") as chart_data_json:
             json.dump(chart_data, chart_data_json)
-        await ws_manager.broadcast(payload)
+        await ws_manager.broadcast(payload, "heating")
     elif topic == "/blind/pos":
         await ws_manager.broadcast(
-            {"blind": payload[0], "current_position": payload[1]}
+            {"blind": payload[0], "current_position": payload[1]}, "blinds"
         )

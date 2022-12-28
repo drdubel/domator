@@ -6,10 +6,15 @@
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<link rel="icon" href="/static/favicon.ico" type="image/x-icon">
-	<script src="/static/scripts/heating.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 
 <body>
+	<div>
+		<canvas id="myChart"></canvas>
+	</div>
+	<br>
+	<script type="module" src="/static/scripts/heating.js"></script>
 	<div id="temperatures">
 		<p>Cold water temperature: <span id="cold"></span>°C</p>
 		<p>Mixed water temperature: <span id="mixed"></span>°C</p>

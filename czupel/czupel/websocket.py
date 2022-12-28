@@ -23,10 +23,11 @@ class ConnectionManager:
     async def send_personal_message(self, message: Any, websocket: WebSocket):
         await websocket.send_json(message)
 
-    async def broadcast(self, message: Any):
+    async def broadcast(self, message: Any, app: Any):
         for connection in tuple(self.active_connections):
             try:
-                await connection.send_json(message)
+                if app in connection.url.path:
+                    await connection.send_json(message)
             except LocalProtocolError as err:
                 self.active_connections.remove(connection)
                 logger.warning(

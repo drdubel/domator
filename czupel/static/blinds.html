@@ -22,8 +22,7 @@
 		};
 		$(function () {
 			$("#blind > span").each(function () {
-				// read initial values from markup and remove that
-				var value = parseInt($(this).text(), 10);
+				var value = parseInt($(this).text(), 10)
 				$(this).empty().slider({
 					value: value,
 					range: "max",
@@ -34,9 +33,9 @@
 						console.info(event.target.id, ui.value)
 						ws.send(JSON.stringify({ "blind": event.target.id, "position": parseInt(999 - ui.value) }))
 					}
-				});
-			});
-		});
+				})
+			})
+		})
 	</script>
 </head>
 

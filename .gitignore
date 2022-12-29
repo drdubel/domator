@@ -9,4 +9,4 @@ autoryzowane*
 target
 *.lock
 secrets*
-czupel/static/data/heating_chart.json
+heating_chart.json

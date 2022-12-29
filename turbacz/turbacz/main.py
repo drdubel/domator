@@ -12,6 +12,8 @@ from starlette.config import Config
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
+from aioprometheus.asgi.middleware import MetricsMiddleware
+from aioprometheus.asgi.starlette import metrics
 
 from .autoryzowane import authorized
 from .broker import mqtt
@@ -21,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key="!secret")
+app.add_middleware(MetricsMiddleware)
+app.add_route("/metrics", metrics)
 mqtt.init_app(app)
 
 config = Config("turbacz/.env")
@@ -28,7 +32,7 @@ oauth = OAuth(config)
 
 background_task_started = False
 
-app.mount("/static", StaticFiles(directory="static", html=True), name="static")
+app.mount("/static", StaticFiles(directory="./static", html=True), name="static")
 
 CONF_URL = "https://accounts.google.com/.well-known/openid-configuration"
 oauth.register(
@@ -56,6 +60,36 @@ async def main(request: Request, access_token: Optional[str] = Cookie(None)):
     user = request.session.get("user")
     if user and access_token in access_cookies:
         with open(os.path.join("static", "index.html")) as fh:
+            data = fh.read()
+        return Response(content=data, media_type="text/html")
+    return RedirectResponse(url="/")
+
+
+@app.get("/heating")
+async def heating(request: Request, access_token: Optional[str] = Cookie(None)):
+    user = request.session.get("user")
+    if user and access_token in access_cookies:
+        with open(os.path.join("static", "heating.html")) as fh:
+            data = fh.read()
+        return Response(content=data, media_type="text/html")
+    return RedirectResponse(url="/")
+
+
+@app.get("/blinds")
+async def blinds(request: Request, access_token: Optional[str] = Cookie(None)):
+    user = request.session.get("user")
+    if user and access_token in access_cookies:
+        with open(os.path.join("static", "blinds.html")) as fh:
+            data = fh.read()
+        return Response(content=data, media_type="text/html")
+    return RedirectResponse(url="/")
+
+
+@app.get("/lights")
+async def lights(request: Request, access_token: Optional[str] = Cookie(None)):
+    user = request.session.get("user")
+    if user and access_token in access_cookies:
+        with open(os.path.join("static", "lights.html")) as fh:
             data = fh.read()
         return Response(content=data, media_type="text/html")
     return RedirectResponse(url="/")
@@ -104,8 +138,8 @@ async def set_blind(req: BlindRequest):
     return {"current_position": req.position}
 
 
-@app.websocket("/ws/{client_id}")
-async def websocket_endpoint(websocket: WebSocket, access_token=Cookie()):
+@app.websocket("/blinds/ws/{client_id}")
+async def websocket_blinds(websocket: WebSocket, access_token=Cookie()):
     await ws_manager.connect(websocket)
     mqtt.publish("/blind/cmd", "S")
 
@@ -120,7 +154,19 @@ async def websocket_endpoint(websocket: WebSocket, access_token=Cookie()):
             mqtt.client.publish(
                 "/blind/cmd", f"{chr(int(req.blind[1])+96)}{req.position}"
             )
-            ws_manager.command_q.put_nowait(req)
+
+    if access_token in access_cookies:
+        await receive_command(websocket)
+
+
+@app.websocket("/heating/ws/{client_id}")
+async def websocket_heating(websocket: WebSocket, access_token=Cookie()):
+    await ws_manager.connect(websocket)
+
+    async def receive_command(websocket: WebSocket):
+        async for cmd in websocket.iter_json():
+            logger.debug("putting %s in command queue", cmd)
+            mqtt.client.publish("/heating/cmd", cmd)
 
     if access_token in access_cookies:
         await receive_command(websocket)

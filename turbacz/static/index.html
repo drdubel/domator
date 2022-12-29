@@ -2,81 +2,22 @@
 <html lang="en">
 
 <head>
+	<title>Turbacz</title>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<title>Turbacz</title>
-	<link rel="stylesheet" href="https://code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css">
-	<link rel="stylesheet" href="https://jqueryui.com/resources/demos/style.css">
-	<script src="https://code.jquery.com/jquery-3.6.0.js"></script>
-	<script src="https://code.jquery.com/ui/1.13.2/jquery-ui.js"></script>
-	<style>
-		body {
-			background-color: rgb(0, 0, 0);
-		}
-
-		#nazwa_rolety>span {
-			color: rgb(89, 189, 62);
-			text-align: center;
-		}
-
-		#roleta>span {
-			height: 300px;
-			float: left;
-			margin: 45.5px;
-			margin-top: 10px;
-		}
-	</style>
-	<script>
-		var wsId = Math.floor(Math.random() * 2000000000)
-		var ws = new WebSocket("ws://127.0.0.1:8000/ws/" + wsId);
-		ws.onmessage = function (event) {
-			console.info(event.data)
-			var msg = JSON.parse(event.data)
-			msg.current_position = msg.current_position
-			$("#" + msg.blind).slider("value", 999 - msg.current_position)
-		};
-		$(function () {
-			$("#roleta > span").each(function () {
-				// read initial values from markup and remove that
-				var value = parseInt($(this).text(), 10);
-				$(this).empty().slider({
-					value: value,
-					range: "max",
-					max: 999,
-					animate: true,
-					orientation: "vertical",
-					stop: function (event, ui) {
-						console.info(event.target.id, ui.value)
-						ws.send(JSON.stringify({ "blind": event.target.id, "position": parseInt(999 - ui.value) }))
-					}
-				});
-			});
-		});
-	</script>
+	<link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+	<link rel="stylesheet" href="/static/styles/index.css" type="text/css" />
 </head>
 
 <body>
-	<div id="nazwa_rolety">
-		<span style="margin-left:15px;">Sypialnia R</span>
-		<span style="margin-left:32px;">Salon 1</span>
-		<span style="margin-left:48px;">Salon 2</span>
-		<span style="margin-left:44px;">Salon 3</span>
-		<span style="margin-left:45px;">Salon 4</span>
-		<span style="margin-left:40px;">Sypialnia G</span>
-		<span style="margin-left:18px;">Sypialnia Zo</span>
+	<div id="apps">
+		<a href="http://127.0.0.1:8000/heating">
+			<button type="button" class="block">Heating</button>
+		</a>
+		<a href="http://127.0.0.1:8000/blinds">
+			<button type="button" class="block">Blinds</button>
+		</a>
 	</div>
-
-	<div id="roleta">
-		<span id="r1"></span>
-		<span id="r2"></span>
-		<span id="r3"></span>
-		<span id="r4"></span>
-		<span id="r5"></span>
-		<span id="r6"></span>
-		<span id="r7"></span>
-	</div>
-
-
 </body>
 
 </html>

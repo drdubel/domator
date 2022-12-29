@@ -4,6 +4,7 @@ import json
 import time
 from fastapi_mqtt import FastMQTT, MQTTConfig
 
+from . import metrics
 from .secrets import mqtt_password
 from .websocket import ws_manager
 
@@ -33,6 +34,13 @@ def connect(client, flags, rc, properties):
 async def message(client, topic, payload, qos, properties):
     payload = json.loads(payload.decode())
     if topic == "/heating/metrics":
+        for probe in ("cold", "mixed", "hot"):
+            metrics.water_temp.set({"probe": probe}, payload[probe])
+        metrics.pid_integral.set({}, payload["integral"])
+        metrics.pid_output.set({}, payload["pid_output"])
+        metrics.pid_target.set({}, payload["target"])
+        for multiplier in ("kp", "ki", "kd"):
+            metrics.pid_multiplier.set({"multiplier": multiplier}, payload[multiplier])
         with open("./static/data/heating_chart.json", "r") as chart_data_json:
             chart_data = json.load(chart_data_json)
             if len(chart_data["labels"]) == 1000:

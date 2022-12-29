@@ -1,6 +1,5 @@
 import logging
 import os
-import json
 from pickle import dump, load
 from secrets import token_urlsafe
 from typing import Optional
@@ -13,6 +12,8 @@ from starlette.config import Config
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
+from aioprometheus.asgi.middleware import MetricsMiddleware
+from aioprometheus.asgi.starlette import metrics
 
 from .autoryzowane import authorized
 from .broker import mqtt
@@ -22,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key="!secret")
+app.add_middleware(MetricsMiddleware)
+app.add_route("/metrics", metrics)
 mqtt.init_app(app)
 
 config = Config("czupel/.env")

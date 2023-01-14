@@ -32,8 +32,9 @@ def connect(client, flags, rc, properties):
 
 @mqtt.on_message()
 async def message(client, topic, payload, qos, properties):
-    payload = json.loads(payload.decode())
+    payload = payload.decode()
     if topic == "/heating/metrics":
+        payload = json.loads(payload)
         for probe in ("cold", "mixed", "hot"):
             metrics.water_temp.set({"probe": probe}, payload[probe])
         metrics.pid_integral.set({}, payload["integral"])

@@ -1,6 +1,6 @@
 [tool.poetry]
-name = "czupel"
-version = "0.1.0"
+name = "Czupel"
+version = "0.2.1"
 description = "IoT logic and user interface"
 authors = ["DrDubel <antek.suszko@gmail.com>"]
 license = "Apache 2.0"

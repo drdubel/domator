@@ -78,6 +78,32 @@ void callback(char *topic, uint8_t *payload, int length) {
     EEPROM.commit();
 }
 
+void wifi_connect() {
+    WiFi.begin(ssid, password);
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.println("Connecting to WiFi..");
+    }
+    Serial.println(WiFi.localIP());
+}
+
+void mqtt_connect() {
+    client.setServer(mqtt_broker, mqtt_port);
+    client.setCallback(callback);
+    while (!client.connected()) {
+        Serial.printf(
+            "\nThe client blinds-wifi connects to the public mqtt broker\n");
+        if (client.connect("blinds-wifi", mqttUser, mqttPassword)) {
+            Serial.println("Public emqx mqtt broker connected");
+        } else {
+            Serial.print("failed with state ");
+            Serial.print(client.state());
+            delay(2000);
+        }
+    }
+    client.subscribe("/heating/cmd");
+}
+
 void send_temp() {
     DynamicJsonDocument data(1024);
     temp_cold = sensors.getTempC(devaddr_cold);
@@ -110,28 +136,8 @@ void setup() {
     EEPROM.get(0, pid_settings);
     myPID.setGains(pid_settings.kp, pid_settings.ki, pid_settings.kd);
     Serial.begin(115200);
-
-    WiFi.begin(ssid, password);
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
-        Serial.println("Connecting to WiFi..");
-    }
-    client.setServer(mqtt_broker, mqtt_port);
-    client.setCallback(callback);
-    Serial.println(WiFi.localIP());
-    while (!client.connected()) {
-        Serial.printf(
-            "\nThe client blinds-wifi connects to the public mqtt "
-            "broker\n");
-        if (client.connect("blinds-wifi", mqttUser, mqttPassword)) {
-            Serial.println("Public emqx mqtt broker connected");
-        } else {
-            Serial.print("failed with state ");
-            Serial.print(client.state());
-            delay(2000);
-        }
-    }
-    client.subscribe("/heating/cmd");
+    wifi_connect();
+    mqtt_connect();
 
     sensors.begin();
     numberOfDevices = sensors.getDeviceCount();
@@ -149,6 +155,9 @@ void setup() {
 }
 
 void loop() {
+    if (!client.connected()) {
+        mqtt_connect();
+    }
     client.loop();
     timer.run();
 }

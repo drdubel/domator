@@ -93,7 +93,7 @@ void mqtt_connect() {
     while (!client.connected()) {
         Serial.printf(
             "\nThe client blinds-wifi connects to the public mqtt broker\n");
-        if (client.connect("blinds-wifi", mqttUser, mqttPassword)) {
+        if (client.connect("heating-wifi", mqttUser, mqttPassword)) {
             Serial.println("Public emqx mqtt broker connected");
         } else {
             Serial.print("failed with state ");

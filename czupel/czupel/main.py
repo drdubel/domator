@@ -133,6 +133,11 @@ class BlindRequest(BaseModel):
     position: int
 
 
+class SwitchChange(BaseModel):
+    id: str
+    state: int
+
+
 @app.post("/setblind")
 async def set_blind(req: BlindRequest):
     return {"current_position": req.position}
@@ -167,6 +172,26 @@ async def websocket_heating(websocket: WebSocket, access_token=Cookie()):
         async for cmd in websocket.iter_json():
             logger.debug("putting %s in command queue", cmd)
             mqtt.client.publish("/heating/cmd", cmd)
+
+    if access_token in access_cookies:
+        await receive_command(websocket)
+
+
+@app.websocket("/lights/ws/{client_id}")
+async def websocket_lights(websocket: WebSocket, access_token=Cookie()):
+    await ws_manager.connect(websocket)
+    mqtt.publish("/switch/1/cmd", "S")
+
+    async def receive_command(websocket: WebSocket):
+        async for cmd in websocket.iter_json():
+            try:
+                chg = SwitchChange.parse_obj(cmd)
+            except ValidationError as err:
+                logger.error("Cannot parse %s %s", cmd, err)
+                continue
+            logger.debug("putting %s in command queue", cmd)
+            print(f"{chg.id}{chg.state}")
+            mqtt.client.publish("/switch/1/cmd", f"{chg.id}{chg.state}")
 
     if access_token in access_cookies:
         await receive_command(websocket)

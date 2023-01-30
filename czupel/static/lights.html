@@ -5,19 +5,63 @@
 	<title>Lights</title>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<link rel="stylesheet" href="/static/styles/lights.css" type="text/css" />
 	<link rel="icon" href="/static/favicon.ico" type="image/x-icon">
-	<script>
-		var wsId = Math.floor(Math.random() * 2000000000)
-		var ws = new WebSocket("ws://127.0.0.1:8000/lights/ws/" + wsId)
-		ws.onmessage = function (event) {
-			var msg = JSON.parse(event.data)
-		}
-	</script>
+	<script src="/static/scripts/lights.js"></script>
 </head>
 
 <body>
-	<h1>BUDOWA</h1>
-	<p>Projekt w trakcie budowy</p>
+	<h1>Lights</h1>
+	<div id="switches">
+		<label class="switch">
+			<input type="checkbox" id="s0" onchange="changeSwitchState(this.id, this.checked)">
+			<span class="slider"></span>
+		</label>
+		<label class="switch">
+			<input type="checkbox" id="s1" onchange="changeSwitchState(this.id, this.checked)">
+			<span class="slider"></span>
+		</label>
+		<label class="switch">
+			<input type="checkbox" id="s2" onchange="changeSwitchState(this.id, this.checked)">
+			<span class="slider"></span>
+		</label>
+		<label class="switch">
+			<input type="checkbox" id="s3" onchange="changeSwitchState(this.id, this.checked)">
+			<span class="slider"></span>
+		</label>
+		<label class="switch">
+			<input type="checkbox" id="s4" onchange="changeSwitchState(this.id, this.checked)">
+			<span class="slider"></span>
+		</label>
+		<label class="switch">
+			<input type="checkbox" id="s5" onchange="changeSwitchState(this.id, this.checked)">
+			<span class="slider"></span>
+		</label>
+		<label class="switch">
+			<input type="checkbox" id="s6" onchange="changeSwitchState(this.id, this.checked)">
+			<span class="slider"></span>
+		</label>
+		<label class="switch">
+			<input type="checkbox" id="s7" onchange="changeSwitchState(this.id, this.checked)">
+			<span class="slider"></span>
+		</label>
+		<label class="switch">
+			<input type="checkbox" id="s8" onchange="changeSwitchState(this.id, this.checked)">
+			<span class="slider"></span>
+		</label>
+		<label class="switch">
+			<input type="checkbox" id="s9" onchange="changeSwitchState(this.id, this.checked)">
+			<span class="slider"></span>
+		</label>
+		<label class="switch">
+			<input type="checkbox" id="s10" onchange="changeSwitchState(this.id, this.checked)">
+			<span class="slider"></span>
+		</label>
+		<label class="switch">
+			<input type="checkbox" id="s11" onchange="changeSwitchState(this.id, this.checked)">
+			<span class="slider"></span>
+		</label>
+	</div>
 </body>
 
 </html>

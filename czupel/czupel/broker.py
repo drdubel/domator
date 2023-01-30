@@ -1,7 +1,8 @@
-import logging
 import json
-
+import logging
 import time
+from string import ascii_lowercase
+
 from fastapi_mqtt import FastMQTT, MQTTConfig
 
 from . import metrics
@@ -26,7 +27,7 @@ mqtt = FastMQTT(config=mqtt_config)
 def connect(client, flags, rc, properties):
     mqtt.client.subscribe("/blind/pos")
     mqtt.client.subscribe("/heating/metrics")
-    mqtt.publish("/blind/cmd", "S")
+    mqtt.client.subscribe("/switch/1/state")
     logger.info("Connected: %s %s %s %s", client, flags, rc, properties)
 
 
@@ -63,3 +64,10 @@ async def message(client, topic, payload, qos, properties):
         await ws_manager.broadcast(
             {"blind": payload[0], "current_position": payload[1]}, "blinds"
         )
+    elif topic == "/switch/1/state":
+        payload = {
+            "id": "s" + str(ascii_lowercase.index(payload[0])),
+            "state": int(payload[1]),
+        }
+        print(payload)
+        await ws_manager.broadcast(payload, "lights")

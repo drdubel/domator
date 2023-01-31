@@ -1,16 +1,35 @@
 var wsId = Math.floor(Math.random() * 2000000000)
 var ws = new WebSocket("ws://127.0.0.1:8000/lights/ws/" + wsId)
-
+var lights = { "s0": 0, "s1": 0, "s2": 0, "s3": 0, "s4": 0, "s5": 0, "s6": 0, "s7": 0, "s8": 0, "s9": 0, "s10": 0, "s11": 0 }
 
 ws.onmessage = function (event) {
 	var msg = JSON.parse(event.data)
 	console.log(msg.id, msg.state)
-	document.getElementById(msg.id).checked = msg.state
+	switch (msg.state) {
+		case 1:
+			lights[msg.id] = 1
+			document.getElementById(msg.id).src = "static/img/on.png"
+			break;
+		case 0:
+			lights[msg.id] = 0
+			document.getElementById(msg.id).src = "static/img/off.png"
+			break;
+	}
 }
 
 
-function changeSwitchState(id, state) {
-	var msg = JSON.stringify({ "id": String.fromCharCode('a'.charCodeAt(0) + parseInt(id.slice(1))), "state": state | 0 })
+function changeSwitchState(id) {
+	switch (lights[id]) {
+		case 1:
+			lights[id] = 0
+			document.getElementById(id).src = "static/img/off.png"
+			break;
+		case 0:
+			lights[id] = 1
+			document.getElementById(id).src = "static/img/on.png"
+			break;
+	}
+	var msg = JSON.stringify({ "id": String.fromCharCode('a'.charCodeAt(0) + parseInt(id.slice(1))), "state": lights[id] })
 	console.log(msg)
 	ws.send(msg)
 }

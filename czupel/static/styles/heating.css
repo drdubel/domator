@@ -1,17 +1,6 @@
 body {
 	background-color: rgba(39, 51, 48, 0.918);
-}
-
-#nazwa_rolety>span {
 	color: rgb(255, 255, 255);
-	text-align: center;
-}
-
-#blind>span {
-	height: 300px;
-	float: left;
-	margin: 45.5px;
-	margin-top: 10px;
 }
 
 .sidenav {

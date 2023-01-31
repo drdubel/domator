@@ -61,6 +61,7 @@ var chart = new Chart(ctx, {
 	}
 })
 
+chart.defaults.color = '#000';
 chart.options.animation = false
 
 ws.onmessage = function (event) {

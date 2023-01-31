@@ -64,11 +64,14 @@ void callback(char *topic, uint8_t *payload, int length) {
     if ((length == 1) && ((char)payload[0] == 'S')) {
         for (int i = 0; i < NLAMPS; ++i) {
             Serial2.write('A' + i);
+            Serial.write('A' + i);
         };
         Serial.println();
     } else {
         Serial2.write((char)payload[0]);
         Serial2.write((char)payload[1]);
+        Serial.write((char)payload[0]);
+        Serial.write((char)payload[1]);
         Serial.println();
     }
 }

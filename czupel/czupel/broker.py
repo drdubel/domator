@@ -6,7 +6,7 @@ from string import ascii_lowercase
 from fastapi_mqtt import FastMQTT, MQTTConfig
 
 from . import metrics
-from .secrets import mqtt_password
+from .data.secrets import mqtt_password
 from .websocket import ws_manager
 
 logger = logging.getLogger(__name__)

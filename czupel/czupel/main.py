@@ -15,7 +15,7 @@ from starlette.responses import HTMLResponse, RedirectResponse
 from aioprometheus.asgi.middleware import MetricsMiddleware
 from aioprometheus.asgi.starlette import metrics
 
-from .autoryzowane import authorized
+from .data.autoryzowane import authorized
 from .broker import mqtt
 from .websocket import ws_manager
 
@@ -41,7 +41,7 @@ oauth.register(
     client_kwargs={"scope": "openid email profile"},
 )
 
-with open("czupel/cookies.pickle", "rb") as cookies:
+with open("czupel/data/cookies.pickle", "rb") as cookies:
     access_cookies = load(cookies)
 
 
@@ -113,7 +113,7 @@ async def auth(request: Request):
         if user["email"] in authorized:
             access_token = token_urlsafe()
             access_cookies[access_token] = user["email"]
-            with open("czupel/cookies.pickle", "wb") as cookies:
+            with open("czupel/data/cookies.pickle", "wb") as cookies:
                 dump(access_cookies, cookies)
             response = RedirectResponse(url="/auto")
             response.set_cookie("access_token", access_token, max_age=3600 * 24 * 14)
@@ -127,7 +127,7 @@ async def logout(
     request: Request, response: Response, access_token: Optional[str] = Cookie(None)
 ):
     access_cookies.pop(access_token)
-    with open("czupel/cookies.pickle", "wb") as cookies:
+    with open("czupel/data/cookies.pickle", "wb") as cookies:
         dump(access_cookies, cookies)
     request.session.pop("user", None)
     response.delete_cookie(key="access_token")

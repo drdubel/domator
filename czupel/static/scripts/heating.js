@@ -1,6 +1,8 @@
 var wsId = Math.floor(Math.random() * 2000000000)
 var ws = new WebSocket("ws://127.0.0.1:8000/heating/ws/" + wsId)
 
+Chart.defaults.color = '#FFF';
+
 const data = {
 	labels: [],
 	datasets: [{

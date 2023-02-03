@@ -123,8 +123,14 @@ async def auth(request: Request):
 
 
 @app.get("/logout")
-async def logout(request: Request):
+async def logout(
+    request: Request, response: Response, access_token: Optional[str] = Cookie(None)
+):
+    access_cookies.pop(access_token)
+    with open("czupel/cookies.pickle", "wb") as cookies:
+        dump(access_cookies, cookies)
     request.session.pop("user", None)
+    response.delete_cookie(key="access_token")
     return RedirectResponse(url="/")
 
 

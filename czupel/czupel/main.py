@@ -4,19 +4,20 @@ from pickle import dump, load
 from secrets import token_urlsafe
 from typing import Optional
 
+from aioprometheus.asgi.middleware import MetricsMiddleware
+from aioprometheus.asgi.starlette import metrics
 from authlib.integrations.starlette_client import OAuth, OAuthError
 from fastapi import Cookie, FastAPI, Response, WebSocket
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 from starlette.config import Config
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
-from aioprometheus.asgi.middleware import MetricsMiddleware
-from aioprometheus.asgi.starlette import metrics
 
-from .data.autoryzowane import authorized
 from .broker import mqtt
+from .data.autoryzowane import authorized
 from .websocket import ws_manager
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,13 @@ oauth.register(
 
 with open("czupel/data/cookies.pickle", "rb") as cookies:
     access_cookies = load(cookies)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def custom_http_exception_handler(request, exc):
+    return HTMLResponse(
+        '<h1>Sio!<br>Tu nic nie ma!</h1><a href="/auto">Strona Główna</a>'
+    )
 
 
 @app.get("/")

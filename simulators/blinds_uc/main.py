@@ -2,6 +2,7 @@ import asyncio
 import signal
 
 import aioconsole
+
 # gmqtt also compatibility with uvloop
 import uvloop
 from gmqtt import Client as MQTTClient

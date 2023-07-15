@@ -16,8 +16,8 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
 
-from .autoryzowane import authorized
 from .broker import mqtt
+from .data.authorized import authorized
 from .websocket import ws_manager
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ app.add_middleware(MetricsMiddleware)
 app.add_route("/metrics", metrics)
 mqtt.init_app(app)
 
-config = Config("turbacz/.env")
+config = Config("turbacz/data/.env")
 oauth = OAuth(config)
 
 background_task_started = False
@@ -42,7 +42,7 @@ oauth.register(
     client_kwargs={"scope": "openid email profile"},
 )
 
-with open("turbacz/cookies.pickle", "rb") as cookies:
+with open("turbacz/data/cookies.pickle", "rb") as cookies:
     access_cookies = load(cookies)
 
 
@@ -119,9 +119,10 @@ async def auth(request: Request):
     if user:
         request.session["user"] = dict(user)
         if user["email"] in authorized:
+            print(user)
             access_token = token_urlsafe()
             access_cookies[access_token] = user["email"]
-            with open("turbacz/cookies.pickle", "wb") as cookies:
+            with open("turbacz/data/cookies.pickle", "wb") as cookies:
                 dump(access_cookies, cookies)
             response = RedirectResponse(url="/auto")
             response.set_cookie("access_token", access_token, max_age=3600 * 24 * 14)

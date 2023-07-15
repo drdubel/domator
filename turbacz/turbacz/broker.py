@@ -1,18 +1,18 @@
-import logging
 import json
-
+import logging
 import time
+
 from fastapi_mqtt import FastMQTT, MQTTConfig
 
 from . import metrics
-from .secrets import mqtt_password
+from .data.secrets import mqtt_password
 from .websocket import ws_manager
 
 logger = logging.getLogger(__name__)
 
 
 mqtt_config = MQTTConfig(
-    host="192.168.3.10",
+    host="127.0.0.1",
     port=1883,
     keepalive=60,
     username="turbacz",
@@ -59,7 +59,6 @@ async def message(client, topic, payload, qos, properties):
             json.dump(chart_data, chart_data_json)
         await ws_manager.broadcast(payload, "heating")
     elif topic == "/blind/pos":
-        payload = payload.split()
         await ws_manager.broadcast(
             {"blind": payload[0], "current_position": payload[1]}, "blinds"
         )

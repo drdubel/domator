@@ -15,3 +15,11 @@ body {
 	text-align: center;
 	color: rgb(255, 255, 255);
 }
+
+#logout {
+	color: rgb(255, 255, 255);
+}
+
+#logout:hover {
+	color: rgb(93, 181, 223);
+}

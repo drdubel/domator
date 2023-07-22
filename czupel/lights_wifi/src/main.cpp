@@ -3,7 +3,7 @@
 #include <PubSubClient.h>
 #include <credentials.h>
 
-#define NLAMPS 12
+#define NLIGHTS 8
 
 using namespace std;
 
@@ -51,7 +51,7 @@ void getCmd(char cmd_char) {
 
 void callback(char *topic, uint8_t *payload, int length) {
     if ((length == 1) && ((char)payload[0] == 'S')) {
-        for (int i = 0; i < NLAMPS; ++i) {
+        for (int i = 0; i < NLIGHTS; ++i) {
             Serial.write('A' + i);
         }
     } else {

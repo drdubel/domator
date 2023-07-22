@@ -1,5 +1,5 @@
 var wsId = Math.floor(Math.random() * 2000000000)
-var ws = new WebSocket("ws://127.0.0.1:8000/lights/ws/" + wsId)
+var ws = new WebSocket("wss://czupel.dry.pl/lights/ws/" + wsId)
 var lights = { "s0": 0, "s1": 0, "s2": 0, "s3": 0, "s4": 0, "s5": 0, "s6": 0, "s7": 0, "s8": 0, "s9": 0, "s10": 0, "s11": 0 }
 
 ws.onmessage = function (event) {
@@ -33,3 +33,15 @@ function changeSwitchState(id) {
 	console.log(msg)
 	ws.send(msg)
 }
+
+function openNav() {
+	document.getElementById("sidenav").style.width = "160px";
+	document.getElementById("main").style.marginLeft = "160px";
+	document.getElementById("openbtn").style.visibility = "hidden";
+}
+
+function closeNav() {
+	document.getElementById("sidenav").style.width = "0";
+	document.getElementById("main").style.marginLeft = "0";
+	document.getElementById("openbtn").style.visibility = "visible";
+} 

@@ -1,5 +1,5 @@
 var wsId = Math.floor(Math.random() * 2000000000)
-var ws = new WebSocket("ws://127.0.0.1:8000/heating/ws/" + wsId)
+var ws = new WebSocket("wss://czupel.dry.pl/heating/ws/" + wsId)
 
 Chart.defaults.color = '#FFF';
 
@@ -63,7 +63,6 @@ var chart = new Chart(ctx, {
 	}
 })
 
-chart.defaults.color = '#000';
 chart.options.animation = false
 
 ws.onmessage = function (event) {
@@ -108,3 +107,15 @@ function send_value(prevalue, value) {
 	console.info(prevalue + value)
 	ws.send(JSON.stringify(prevalue + value))
 }
+
+function openNav() {
+	document.getElementById("sidenav").style.width = "160px";
+	document.getElementById("main").style.marginLeft = "160px";
+	document.getElementById("openbtn").style.visibility = "hidden";
+}
+
+function closeNav() {
+	document.getElementById("sidenav").style.width = "0";
+	document.getElementById("main").style.marginLeft = "0";
+	document.getElementById("openbtn").style.visibility = "visible";
+} 

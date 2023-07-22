@@ -5,35 +5,46 @@
 	<title>Heating</title>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<link rel="stylesheet" href="/static/styles/heating.css" type="text/css" />
 	<link rel="icon" href="/static/favicon.ico" type="image/x-icon">
 	<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 
 <body>
-	<div>
-		<canvas id="myChart"></canvas>
+	<div class="sidenav" id="sidenav">
+		<a href="javascript:void(0)" class="closebtn" onclick="closeNav()">&times;</a>
+		<a href="auto">Home</a>
+		<a href="blinds">Blinds</a>
+		<a href="lights">Lights</a>
+		<a id="logout" style=" position: absolute; bottom: 25px;" href="Turbacz">Logout</a>
 	</div>
-	<br>
-	<script src="/static/scripts/heating.js"></script>
-	<div id="temperatures">
-		<p>Cold water temperature: <span id="cold"></span>°C</p>
-		<p>Mixed water temperature: <span id="mixed"></span>°C</p>
-		<p>Hot water temperature: <span id="hot"></span>°C</p>
-		<p>Target water temperature: <span id="target"></span>°C <input type="text" id="targer_temp"
-				onchange="send_value('t', this.value)" pattern="[0-9.]*">
-		</p>
-		<p>Integral value: <span id="integral"></span> <input type="text" id="targer_integral"
-				onchange="send_value('I', this.value)" pattern="[0-9.]*"></p>
-		<p>PID output: <span id="pid_output"></span></p>
-		<p>Kp: <span id="kp"></span> <input type="text" id="targer_kp" onchange="send_value('p', this.value)"
-				pattern="[0-9.]*">
-		</p>
-		<p>Ki: <span id="ki"></span> <input type="text" id="targer_ki" onchange="send_value('i', this.value)"
-				pattern="[0-9.]*">
-		</p>
-		<p>Kd: <span id="kd"></span> <input type="text" id="targer_kd" onchange="send_value('d', this.value)"
-				pattern="[0-9.]*">
-		</p>
+	<div id="main">
+		<button class="openbtn" id="openbtn" onclick="openNav()">&#9776;</button>
+		<div>
+			<canvas id="myChart"></canvas>
+		</div>
+		<br>
+		<script src="/static/scripts/heating.js"></script>
+		<div id="temperatures">
+			<p>Cold water temperature: <span id="cold"></span>°C</p>
+			<p>Mixed water temperature: <span id="mixed"></span>°C</p>
+			<p>Hot water temperature: <span id="hot"></span>°C</p>
+			<p>Target water temperature: <span id="target"></span>°C <input type="text" id="targer_temp"
+					onchange="send_value('t', this.value)" pattern="[0-9.]*">
+			</p>
+			<p>Integral value: <span id="integral"></span> <input type="text" id="targer_integral"
+					onchange="send_value('I', this.value)" pattern="[0-9.]*"></p>
+			<p>PID output: <span id="pid_output"></span></p>
+			<p>Kp: <span id="kp"></span> <input type="text" id="targer_kp" onchange="send_value('p', this.value)"
+					pattern="[0-9.]*">
+			</p>
+			<p>Ki: <span id="ki"></span> <input type="text" id="targer_ki" onchange="send_value('i', this.value)"
+					pattern="[0-9.]*">
+			</p>
+			<p>Kd: <span id="kd"></span> <input type="text" id="targer_kd" onchange="send_value('d', this.value)"
+					pattern="[0-9.]*">
+			</p>
+		</div>
 	</div>
 </body>
 

@@ -105,3 +105,15 @@ function send_value(prevalue, value) {
 	console.info(prevalue + value)
 	ws.send(JSON.stringify(prevalue + value))
 }
+
+function openNav() {
+	document.getElementById("sidenav").style.width = "160px";
+	document.getElementById("main").style.marginLeft = "160px";
+	document.getElementById("openbtn").style.visibility = "hidden";
+}
+
+function closeNav() {
+	document.getElementById("sidenav").style.width = "0";
+	document.getElementById("main").style.marginLeft = "0";
+	document.getElementById("openbtn").style.visibility = "visible";
+} 

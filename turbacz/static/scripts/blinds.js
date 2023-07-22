@@ -2,14 +2,13 @@ var wsId = Math.floor(Math.random() * 2000000000)
 var ws = new WebSocket("ws://127.0.0.1:8000/blinds/ws/" + wsId);
 
 ws.onmessage = function (event) {
-	console.info(event)
 	var msg = JSON.parse(event.data)
-	msg.current_position = msg.current_position
+	console.info(msg)
 	$("#" + msg.blind).slider("value", 999 - msg.current_position)
 }
 
 $(function () {
-	$("#blind > span").each(function () {
+	$(".flex-container > span").each(function () {
 		var value = parseInt($(this).text(), 10)
 		$(this).empty().slider({
 			value: value,
@@ -24,3 +23,15 @@ $(function () {
 		})
 	})
 })
+
+function openNav() {
+	document.getElementById("sidenav").style.width = "160px";
+	document.getElementById("main").style.marginLeft = "160px";
+	document.getElementById("openbtn").style.visibility = "hidden";
+}
+
+function closeNav() {
+	document.getElementById("sidenav").style.width = "0";
+	document.getElementById("main").style.marginLeft = "0";
+	document.getElementById("openbtn").style.visibility = "visible";
+} 

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+	<title>Lights</title>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<link rel="stylesheet" href="/static/styles/lights.css" type="text/css" />
+	<link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+	<script src="/static/scripts/lights.js"></script>
+</head>
+
+<body>
+	<div id="sidenav" class="sidenav">
+		<a href="javascript:void(0)" class="closebtn" onclick="closeNav()">&times;</a>
+		<a href="auto">Home</a>
+		<a href="blinds">Blinds</a>
+		<a href="heating">Heating</a>
+		<a id="logout" style=" position: absolute; bottom: 25px;" href="logout">Logout</a>
+	</div>
+	<div id="main">
+		<button class="openbtn" id="openbtn" onclick="openNav()">&#9776;</button>
+		<h1>Lights</h1>
+		<div id="switches">
+			<img id="s0" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" width="60" height="100" />
+			<img id="s1" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" width="60" height="100" />
+			<img id="s2" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" width="60" height="100" />
+			<img id="s3" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" width="60" height="100" />
+			<img id="s4" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" width="60" height="100" />
+			<img id="s5" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" width="60" height="100" />
+			<img id="s6" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" width="60" height="100" />
+			<img id="s7" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" width="60" height="100" />
+			<img id="s8" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" width="60" height="100" />
+			<img id="s9" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" width="60" height="100" />
+			<img id="s10" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" width="60" height="100" />
+			<img id="s11" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" width="60" height="100" />
+		</div>
+	</div>
+</body>
+
+</html>

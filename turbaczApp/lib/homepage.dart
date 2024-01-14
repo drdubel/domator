@@ -30,37 +30,50 @@ class _MyHomePageState extends State<MyHomePage> {
 
   @override
   Widget build(BuildContext context) {
+    Size size = MediaQuery.of(context).size;
     return Scaffold(
-        body: _pages.elementAt(_selectedIndex),
-        bottomNavigationBar: BottomNavigationBar(
-          type: BottomNavigationBarType.shifting,
-          items: <BottomNavigationBarItem>[
-            BottomNavigationBarItem(
-              icon: const Icon(Icons.thermostat_sharp),
-              label: 'Heating',
-              backgroundColor: Theme.of(context).colorScheme.onPrimary,
-            ),
-            BottomNavigationBarItem(
-              icon: const Icon(Icons.blinds),
-              label: 'Blinds',
-              backgroundColor: Theme.of(context).colorScheme.onPrimary,
-            ),
-            BottomNavigationBarItem(
-              icon: const Icon(Icons.light_sharp),
-              label: 'Lights',
-              backgroundColor: Theme.of(context).colorScheme.onPrimary,
-            ),
-            BottomNavigationBarItem(
-              icon: const Icon(Icons.settings),
-              label: 'Settings',
-              backgroundColor: Theme.of(context).colorScheme.onPrimary,
-            ),
-          ],
-          currentIndex: _selectedIndex,
-          onTap: _onItemTapped,
-          showUnselectedLabels: true,
-          selectedItemColor: Theme.of(context).colorScheme.tertiary,
-          unselectedItemColor: Theme.of(context).colorScheme.secondary,
-        ));
+        body: Container(
+          margin: EdgeInsets.only(
+              top: size.height / 10,
+              left: size.width / 20,
+              right: size.width / 20),
+          child: _pages.elementAt(_selectedIndex),
+        ),
+        bottomNavigationBar: SizedBox(
+            height: size.height / 10,
+            child: BottomNavigationBar(
+              iconSize: size.height / 40,
+              unselectedFontSize: size.height / 50,
+              selectedFontSize: size.height / 40,
+              selectedIconTheme: IconThemeData(size: size.height / 30),
+              type: BottomNavigationBarType.shifting,
+              items: <BottomNavigationBarItem>[
+                BottomNavigationBarItem(
+                  icon: const Icon(Icons.thermostat_sharp),
+                  label: 'Heating',
+                  backgroundColor: Theme.of(context).colorScheme.onPrimary,
+                ),
+                BottomNavigationBarItem(
+                  icon: const Icon(Icons.blinds),
+                  label: 'Blinds',
+                  backgroundColor: Theme.of(context).colorScheme.onPrimary,
+                ),
+                BottomNavigationBarItem(
+                  icon: const Icon(Icons.light_sharp),
+                  label: 'Lights',
+                  backgroundColor: Theme.of(context).colorScheme.onPrimary,
+                ),
+                BottomNavigationBarItem(
+                  icon: const Icon(Icons.settings),
+                  label: 'Settings',
+                  backgroundColor: Theme.of(context).colorScheme.onPrimary,
+                ),
+              ],
+              currentIndex: _selectedIndex,
+              onTap: _onItemTapped,
+              showUnselectedLabels: true,
+              selectedItemColor: Theme.of(context).colorScheme.tertiary,
+              unselectedItemColor: Theme.of(context).colorScheme.secondary,
+            )));
   }
 }

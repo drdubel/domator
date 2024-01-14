@@ -40,12 +40,12 @@ class _MyHomePageState extends State<MyHomePage> {
           child: _pages.elementAt(_selectedIndex),
         ),
         bottomNavigationBar: SizedBox(
-            height: size.height / 10,
+            height: size.height / 12,
             child: BottomNavigationBar(
               iconSize: size.height / 40,
-              unselectedFontSize: size.height / 50,
-              selectedFontSize: size.height / 40,
-              selectedIconTheme: IconThemeData(size: size.height / 30),
+              unselectedFontSize: size.height / 65,
+              selectedFontSize: size.height / 50,
+              selectedIconTheme: IconThemeData(size: size.height / 27.5),
               type: BottomNavigationBarType.shifting,
               items: <BottomNavigationBarItem>[
                 BottomNavigationBarItem(

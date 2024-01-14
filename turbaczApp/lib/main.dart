@@ -2,12 +2,17 @@ import 'package:flutter/material.dart';
 import 'homepage.dart';
 
 void main() {
-  runApp(const MyApp());
+  runApp(const Turbacz());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class Turbacz extends StatefulWidget {
+  const Turbacz({Key? key}) : super(key: key);
 
+  @override
+  State<Turbacz> createState() => _Turbacz();
+}
+
+class _Turbacz extends State<Turbacz> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(

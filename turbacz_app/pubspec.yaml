@@ -40,6 +40,7 @@ dependencies:
   syncfusion_flutter_core: ^24.1.45
   flutter_inappwebview: ^5.8.0
   syncfusion_flutter_charts: ^24.1.46
+  http: ^1.2.0
 
 dev_dependencies:
   flutter_test:

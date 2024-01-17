@@ -48,16 +48,16 @@ class _Blinds extends State<Blinds> {
       children: <Widget>[
         const Spacer(),
         Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-          blind(0, "Sypialnia R"),
-          blind(5, "Sypialnia G"),
-          blind(6, "Sypialnia Zo")
-        ]),
-        const Spacer(),
-        Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
           blind(1, "Salon 1"),
           blind(2, "Salon 2"),
           blind(3, "Salon 3"),
           blind(4, "Salon 4")
+        ]),
+        const Spacer(),
+        Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+          blind(0, "Sypialnia R"),
+          blind(5, "Sypialnia G"),
+          blind(6, "Sypialnia Zo")
         ]),
         const Spacer(
           flex: 4,

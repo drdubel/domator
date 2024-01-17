@@ -29,7 +29,7 @@ class _Turbacz extends State<Turbacz> {
         ),
         useMaterial3: true,
       ),
-      home: const MyHomePage(title: 'Turbacz'),
+      home: const MyHomePage(),
     );
   }
 }

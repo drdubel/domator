@@ -5,9 +5,7 @@ import 'lights.dart';
 import 'settings.dart';
 
 class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  final String title;
+  const MyHomePage({super.key});
 
   @override
   State<MyHomePage> createState() => _MyHomePageState();
@@ -40,7 +38,7 @@ class _MyHomePageState extends State<MyHomePage> {
           child: _pages.elementAt(_selectedIndex),
         ),
         bottomNavigationBar: SizedBox(
-            height: size.height / 12,
+            height: size.height / 11.5,
             child: BottomNavigationBar(
               iconSize: size.height / 40,
               unselectedFontSize: size.height / 65,

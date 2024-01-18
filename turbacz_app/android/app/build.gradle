@@ -23,6 +23,7 @@ if (flutterVersionName == null) {
 }
 
 android {
+    buildToolsVersion "33.0.2"
     namespace "com.example.turbacz"
     compileSdkVersion flutter.compileSdkVersion
     ndkVersion flutter.ndkVersion

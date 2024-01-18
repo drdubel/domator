@@ -4,6 +4,7 @@ from pickle import dump, load
 from secrets import token_urlsafe
 from typing import Optional
 
+import requests
 from aioprometheus.asgi.middleware import MetricsMiddleware
 from aioprometheus.asgi.starlette import metrics
 from authlib.integrations.starlette_client import OAuth, OAuthError
@@ -71,6 +72,91 @@ async def main(request: Request, access_token: Optional[str] = Cookie(None)):
             data = fh.read()
         return Response(content=data, media_type="text/html")
     return RedirectResponse(url="/")
+
+
+@app.get("/api/temperatures")
+async def get_temperatures(request: Request, start: int, end: int, step: int):
+    response1 = requests.get(
+        "http://127.0.0.1:8428/api/v1/query_range",
+        params={
+            "start": start,
+            "end": end,
+            "query": "water_temperature",
+            "step": step,
+        },
+    )
+
+    response2 = requests.get(
+        "http://127.0.0.1:8428/api/v1/query_range",
+        params={
+            "start": start,
+            "end": end,
+            "query": "pid_target",
+            "step": step,
+        },
+    )
+
+    if response1.status_code != 200 or response2.status_code != 200:
+        return "connection not working"
+
+    water_temperatures = (
+        response1.json()["data"]["result"] + response2.json()["data"]["result"]
+    )
+
+    result = [
+        {
+            "timestamp": water_temperatures[0]["values"][i][0],
+            "cold": water_temperatures[0]["values"][i][1],
+            "hot": water_temperatures[1]["values"][i][1],
+            "mixed": water_temperatures[2]["values"][i][1],
+            "target": water_temperatures[3]["values"][i][1],
+        }
+        for i in range(len(water_temperatures[0]["values"]))
+    ]
+
+    return result
+
+
+@app.get("/api/heating_data")
+async def get_heating_data(request: Request):
+    response1 = requests.get(
+        "http://127.0.0.1:8428/api/v1/query?query=water_temperature"
+    )
+    response2 = requests.get("http://127.0.0.1:8428/api/v1/query?query=pid_target")
+    response3 = requests.get("http://127.0.0.1:8428/api/v1/query?query=pid_integral")
+    response4 = requests.get("http://127.0.0.1:8428/api/v1/query?query=pid_output")
+    response5 = requests.get("http://127.0.0.1:8428/api/v1/query?query=pid_multiplier")
+
+    if (
+        response1.status_code != 200
+        or response2.status_code != 200
+        or response3.status_code != 200
+        or response4.status_code != 200
+        or response5.status_code != 200
+    ):
+        return "connection not working"
+
+    heating_data = (
+        response1.json()["data"]["result"]
+        + response2.json()["data"]["result"]
+        + response3.json()["data"]["result"]
+        + response4.json()["data"]["result"]
+        + response5.json()["data"]["result"]
+    )
+
+    result = {
+        "cold": heating_data[0]["value"][1],
+        "hot": heating_data[1]["value"][1],
+        "mixed": heating_data[2]["value"][1],
+        "target": heating_data[3]["value"][1],
+        "integral": heating_data[4]["value"][1],
+        "pid": heating_data[5]["value"][1],
+        "kd": heating_data[6]["value"][1],
+        "ki": heating_data[7]["value"][1],
+        "kp": heating_data[8]["value"][1],
+    }
+
+    return result
 
 
 @app.get("/heating")

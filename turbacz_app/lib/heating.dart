@@ -1,7 +1,9 @@
+import 'dart:async';
+
 import 'package:syncfusion_flutter_charts/charts.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'dart:math';
+import 'dart:convert';
 
 class Heating extends StatefulWidget {
   const Heating({super.key});
@@ -20,111 +22,96 @@ class ChartData {
 }
 
 class _Heating extends State<Heating> {
-  double cold = 28;
-  double hot = 48;
-  double mixed = 32;
-  double target = 33;
-  double integral = 0;
-  double pid = 65;
-  double p = 19;
-  double i = 0.15;
-  double d = 300;
-
-  final List<ChartData> temperature = <ChartData>[
-    ChartData(DateTime(2024, 1, 17, 15, 0), Random().nextDouble() * 1 + 27.5,
-        Random().nextDouble() * 1 + 48.5, Random().nextDouble() * 1 + 32.5, 33),
-    ChartData(DateTime(2024, 1, 17, 15, 5), Random().nextDouble() * 1 + 27.5,
-        Random().nextDouble() * 1 + 48.5, Random().nextDouble() * 1 + 32.5, 33),
-    ChartData(DateTime(2024, 1, 17, 15, 10), Random().nextDouble() * 1 + 27.5,
-        Random().nextDouble() * 1 + 48.5, Random().nextDouble() * 1 + 32.5, 33),
-    ChartData(DateTime(2024, 1, 17, 15, 15), Random().nextDouble() * 1 + 27.5,
-        Random().nextDouble() * 1 + 48.5, Random().nextDouble() * 1 + 32.5, 33),
-    ChartData(DateTime(2024, 1, 17, 15, 20), Random().nextDouble() * 1 + 27.5,
-        Random().nextDouble() * 1 + 48.5, Random().nextDouble() * 1 + 32.5, 33),
-    ChartData(DateTime(2024, 1, 17, 15, 25), Random().nextDouble() * 1 + 27.5,
-        Random().nextDouble() * 1 + 48.5, Random().nextDouble() * 1 + 32.5, 33),
-    ChartData(DateTime(2024, 1, 17, 15, 30), Random().nextDouble() * 1 + 27.5,
-        Random().nextDouble() * 1 + 48.5, Random().nextDouble() * 1 + 32.5, 33),
-    ChartData(DateTime(2024, 1, 17, 15, 35), Random().nextDouble() * 1 + 27.5,
-        Random().nextDouble() * 1 + 48.5, Random().nextDouble() * 1 + 32.5, 33),
-    ChartData(DateTime(2024, 1, 17, 15, 40), Random().nextDouble() * 1 + 27.5,
-        Random().nextDouble() * 1 + 48.5, Random().nextDouble() * 1 + 32.5, 33),
-    ChartData(DateTime(2024, 1, 17, 15, 45), Random().nextDouble() * 1 + 27.5,
-        Random().nextDouble() * 1 + 48.5, Random().nextDouble() * 1 + 32.5, 33),
-    ChartData(DateTime(2024, 1, 17, 15, 50), Random().nextDouble() * 1 + 27.5,
-        Random().nextDouble() * 1 + 48.5, Random().nextDouble() * 1 + 32.5, 33),
-    ChartData(DateTime(2024, 1, 17, 15, 55), Random().nextDouble() * 1 + 27.5,
-        Random().nextDouble() * 1 + 48.5, Random().nextDouble() * 1 + 32.5, 33),
-    ChartData(DateTime(2024, 1, 17, 16, 0), Random().nextDouble() * 1 + 27.5,
-        Random().nextDouble() * 1 + 48.5, Random().nextDouble() * 1 + 32.5, 33),
-    ChartData(DateTime(2024, 1, 17, 16, 5), Random().nextDouble() * 1 + 27.5,
-        Random().nextDouble() * 1 + 48.5, Random().nextDouble() * 1 + 32.5, 33),
-    ChartData(DateTime(2024, 1, 17, 16, 10), Random().nextDouble() * 1 + 27.5,
-        Random().nextDouble() * 1 + 48.5, Random().nextDouble() * 1 + 32.5, 33),
-    ChartData(DateTime(2024, 1, 17, 16, 15), Random().nextDouble() * 1 + 27.5,
-        Random().nextDouble() * 1 + 48.5, Random().nextDouble() * 1 + 32.5, 33),
-    ChartData(DateTime(2024, 1, 17, 16, 20), Random().nextDouble() * 1 + 27.5,
-        Random().nextDouble() * 1 + 48.5, Random().nextDouble() * 1 + 32.5, 33),
-    ChartData(DateTime(2024, 1, 17, 16, 25), Random().nextDouble() * 1 + 27.5,
-        Random().nextDouble() * 1 + 48.5, Random().nextDouble() * 1 + 32.5, 33),
-    ChartData(DateTime(2024, 1, 17, 16, 30), Random().nextDouble() * 1 + 27.5,
-        Random().nextDouble() * 1 + 48.5, Random().nextDouble() * 1 + 32.5, 33),
-    ChartData(DateTime(2024, 1, 17, 16, 35), Random().nextDouble() * 1 + 27.5,
-        Random().nextDouble() * 1 + 48.5, Random().nextDouble() * 1 + 32.5, 33),
-    ChartData(DateTime(2024, 1, 17, 16, 40), Random().nextDouble() * 1 + 27.5,
-        Random().nextDouble() * 1 + 48.5, Random().nextDouble() * 1 + 32.5, 33),
-    ChartData(DateTime(2024, 1, 17, 16, 45), Random().nextDouble() * 1 + 27.5,
-        Random().nextDouble() * 1 + 48.5, Random().nextDouble() * 1 + 32.5, 33),
-    ChartData(DateTime(2024, 1, 17, 16, 50), Random().nextDouble() * 1 + 27.5,
-        Random().nextDouble() * 1 + 48.5, Random().nextDouble() * 1 + 32.5, 33),
-    ChartData(DateTime(2024, 1, 17, 16, 55), Random().nextDouble() * 1 + 27.5,
-        Random().nextDouble() * 1 + 48.5, Random().nextDouble() * 1 + 32.5, 33),
-    ChartData(DateTime(2024, 1, 17, 17, 0), Random().nextDouble() * 1 + 27.5,
-        Random().nextDouble() * 1 + 48.5, Random().nextDouble() * 1 + 32.5, 33),
-  ];
-
   late TrackballBehavior _trackballBehavior;
   late ZoomPanBehavior _zoomPanBehavior;
-  late int timestamp;
 
-  void getData() async {
-    String now = DateTime.now().toUtc().toIso8601String();
-    String end = DateTime.now()
-        .toUtc()
-        .subtract(const Duration(days: 30))
-        .toIso8601String();
-    print(now);
-    print(end);
-    final uri = Uri.parse('http://192.168.3.10:8428/api/v1/query_range')
-        .replace(queryParameters: {
-      "start": now,
-      "query": "water_temperature",
-      "end": end,
-      "step": "15"
-    });
+  late double cold = 28;
+  late double hot = 30;
+  late double mixed = 32;
+  late double target = 33;
+  late double integral = 0;
+  late double pid = 65;
+  late double p = 19;
+  late double i = 0.15;
+  late double d = 300;
+
+  late List<ChartData> temperature = [];
+  var time = const Duration(seconds: 5);
+  var time2 = const Duration(seconds: 1);
+
+  void getChartData() async {
+    String start =
+        (DateTime.now().millisecondsSinceEpoch / 1000 - 600).round().toString();
+    String end =
+        (DateTime.now().millisecondsSinceEpoch / 1000).round().toString();
+
+    final uri = Uri.parse('https://turbacz.dry.pl/api/temperatures')
+        .replace(queryParameters: {"start": start, "end": end, "step": "5"});
+
     var client = http.Client();
     final response = await client.get(uri);
-    if (response.statusCode == 200) {
-      print(response.body);
-    } else {
-      print('A network error occurred');
+
+    List<dynamic> data = json.decode(response.body);
+    List<ChartData> newTemperature = <ChartData>[];
+
+    for (int i = 0; i < data.length; i++) {
+      newTemperature.add(ChartData(
+          DateTime.fromMillisecondsSinceEpoch(data[i]["timestamp"] * 1000),
+          double.parse(data[i]["cold"]),
+          double.parse(data[i]["hot"]),
+          double.parse(data[i]["mixed"]),
+          double.parse(data[i]["target"])));
     }
-    print("a");
+
+    setState(() {
+      temperature = newTemperature;
+    });
+  }
+
+  void getHeatingData() async {
+    final uri = Uri.parse('https://turbacz.dry.pl/api/heating_data');
+
+    var client = http.Client();
+    final response = await client.get(uri);
+
+    Map<String, dynamic> data = json.decode(response.body);
+    double newCold = double.parse(data["cold"]);
+    double newHot = double.parse(data["hot"]);
+    double newMixed = double.parse(data["mixed"]);
+    double newTarget = double.parse(data["target"]);
+    double newIntegral = double.parse(data["integral"]);
+    double newPid = double.parse(data["pid"]);
+    double newP = double.parse(data["kp"]);
+    double newI = double.parse(data["ki"]);
+    double newD = double.parse(data["kd"]);
+
+    setState(() {
+      cold = newCold;
+      hot = newHot;
+      mixed = newMixed;
+      target = newTarget;
+      integral = newIntegral;
+      pid = newPid;
+      p = newP;
+      i = newI;
+      d = newD;
+    });
   }
 
   @override
   void initState() {
-    getData();
+    super.initState();
     _trackballBehavior = TrackballBehavior(
         enable: true,
         shouldAlwaysShow: true,
         activationMode: ActivationMode.singleTap,
         tooltipAlignment: ChartAlignment.near,
         tooltipDisplayMode: TrackballDisplayMode.floatAllPoints,
-        tooltipSettings: InteractiveTooltip(
+        lineColor: Colors.grey[400],
+        tooltipSettings: const InteractiveTooltip(
             format: 'point.x : point.y',
-            color: Colors.grey[700],
-            textStyle: const TextStyle(color: Colors.white)));
+            color: Color.fromARGB(140, 97, 97, 97),
+            textStyle: TextStyle(color: Colors.white)));
     _zoomPanBehavior = ZoomPanBehavior(
         zoomMode: ZoomMode.x,
         enablePinching: true,
@@ -133,7 +120,10 @@ class _Heating extends State<Heating> {
         selectionRectBorderColor: Colors.red,
         selectionRectBorderWidth: 1,
         selectionRectColor: Colors.grey);
-    super.initState();
+    getHeatingData();
+    getChartData();
+    Timer.periodic(time2, (timer) => getHeatingData());
+    Timer.periodic(time, (timer) => getChartData());
   }
 
   @override
@@ -146,37 +136,42 @@ class _Heating extends State<Heating> {
         children: [
           SizedBox(
               height: size.height / 2,
-              child: SfCartesianChart(
-                  trackballBehavior: _trackballBehavior,
-                  zoomPanBehavior: _zoomPanBehavior,
-                  primaryXAxis: const DateTimeAxis(
-                    maximumLabels: 5,
-                  ),
-                  primaryYAxis: const NumericAxis(
-                      minimum: 25, maximum: 52, labelFormat: '{value}°C'),
-                  series: <CartesianSeries>[
-                    SplineSeries<ChartData, DateTime>(
-                        color: Colors.greenAccent[700],
-                        dataSource: temperature,
-                        xValueMapper: (ChartData sales, _) => sales.date,
-                        yValueMapper: (ChartData sales, _) => sales.target),
-                    SplineSeries<ChartData, DateTime>(
-                        color: Colors.blue[200],
-                        dataSource: temperature,
-                        xValueMapper: (ChartData sales, _) => sales.date,
-                        yValueMapper: (ChartData sales, _) => sales.cold),
-                    SplineSeries<ChartData, DateTime>(
-                        color: Colors.red[800],
-                        dataSource: temperature,
-                        xValueMapper: (ChartData sales, _) => sales.date,
-                        yValueMapper: (ChartData sales, _) => sales.hot),
-                    SplineSeries<ChartData, DateTime>(
-                        color: const Color.fromARGB(255, 1, 0, 94),
-                        width: 3,
-                        dataSource: temperature,
-                        xValueMapper: (ChartData sales, _) => sales.date,
-                        yValueMapper: (ChartData sales, _) => sales.mixed),
-                  ])),
+              width: size.width,
+              child: temperature.isEmpty
+                  ? const Center(child: CircularProgressIndicator())
+                  : SfCartesianChart(
+                      trackballBehavior: _trackballBehavior,
+                      zoomPanBehavior: _zoomPanBehavior,
+                      primaryXAxis: const DateTimeAxis(
+                        maximumLabels: 5,
+                      ),
+                      primaryYAxis: const NumericAxis(
+                          minimum: 25, maximum: 52, labelFormat: '{value}°C'),
+                      series: <CartesianSeries>[
+                          LineSeries<ChartData, DateTime>(
+                              color: Colors.greenAccent[700],
+                              dataSource: temperature,
+                              xValueMapper: (ChartData sales, _) => sales.date,
+                              yValueMapper: (ChartData sales, _) =>
+                                  sales.target),
+                          LineSeries<ChartData, DateTime>(
+                              color: Colors.blue[200],
+                              dataSource: temperature,
+                              xValueMapper: (ChartData sales, _) => sales.date,
+                              yValueMapper: (ChartData sales, _) => sales.cold),
+                          LineSeries<ChartData, DateTime>(
+                              color: Colors.red[800],
+                              dataSource: temperature,
+                              xValueMapper: (ChartData sales, _) => sales.date,
+                              yValueMapper: (ChartData sales, _) => sales.hot),
+                          LineSeries<ChartData, DateTime>(
+                              color: const Color.fromARGB(255, 1, 0, 94),
+                              width: 3,
+                              dataSource: temperature,
+                              xValueMapper: (ChartData sales, _) => sales.date,
+                              yValueMapper: (ChartData sales, _) =>
+                                  sales.mixed),
+                        ])),
           Row(children: [
             Text(
               "Cold water temperature: $cold°C",

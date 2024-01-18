@@ -16,6 +16,7 @@ httpx = "^0.23.0"
 aioconsole = "^0.5.1"
 uvloop = "^0.17.0"
 aioprometheus = "^22.5.0"
+wsproto = "^1.2.0"
 
 [tool.poetry.dev-dependencies]
 black = "^22.6.0"

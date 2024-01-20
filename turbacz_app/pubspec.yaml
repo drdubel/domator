@@ -45,6 +45,8 @@ dependencies:
   google_sign_in: ^6.2.1
   firebase_auth: ^4.16.0
   firebase_core: ^2.24.2
+  provider: ^6.1.1
+  url_launcher: ^6.2.3
 
 flutter_launcher_icons:
   android: true

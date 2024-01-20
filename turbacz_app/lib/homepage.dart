@@ -4,14 +4,14 @@ import 'blinds.dart';
 import 'lights.dart';
 import 'settings.dart';
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key});
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<HomePage> createState() => _HomePage();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
+class _HomePage extends State<HomePage> {
   static const List<Widget> _pages = <Widget>[
     Heating(),
     Blinds(),

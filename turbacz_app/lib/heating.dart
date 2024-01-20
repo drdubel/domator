@@ -36,8 +36,8 @@ class _Heating extends State<Heating> {
   late double d = 300;
 
   late List<ChartData> temperature = [];
-  var time = const Duration(seconds: 5);
-  var time2 = const Duration(seconds: 1);
+  var timer = const Duration(seconds: 5);
+  var timer2 = const Duration(seconds: 1);
 
   void getChartData() async {
     String start =
@@ -51,6 +51,9 @@ class _Heating extends State<Heating> {
     var client = http.Client();
     final response = await client.get(uri);
 
+    if (response.body.length == 21) {
+      return;
+    }
     List<dynamic> data = json.decode(response.body);
     List<ChartData> newTemperature = <ChartData>[];
 
@@ -74,6 +77,9 @@ class _Heating extends State<Heating> {
     var client = http.Client();
     final response = await client.get(uri);
 
+    if (response.body.length == 21) {
+      return;
+    }
     Map<String, dynamic> data = json.decode(response.body);
     double newCold = double.parse(data["cold"]);
     double newHot = double.parse(data["hot"]);
@@ -122,8 +128,20 @@ class _Heating extends State<Heating> {
         selectionRectColor: Colors.grey);
     getHeatingData();
     getChartData();
-    Timer.periodic(time2, (timer) => getHeatingData());
-    Timer.periodic(time, (timer) => getChartData());
+    Timer.periodic(timer2, (timer) {
+      if (!context.mounted) {
+        timer.cancel();
+        return;
+      }
+      getHeatingData();
+    });
+    Timer.periodic(timer, (timer) {
+      if (!context.mounted) {
+        timer.cancel();
+        return;
+      }
+      getChartData();
+    });
   }
 
   @override

@@ -24,7 +24,7 @@ class _Turbacz extends State<Turbacz> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      title: 'Turbacz',
       theme: ThemeData(
         brightness: Brightness.dark,
         colorScheme: ColorScheme.dark(
@@ -39,7 +39,9 @@ class _Turbacz extends State<Turbacz> {
       ),
       home: Consumer<MyAuthProvider>(
         builder: (context, authProvider, child) {
-          return authProvider.isAuthorized ? const HomePage() : LoginPage();
+          return authProvider.isAuthorized
+              ? const HomePage()
+              : const LoginPage();
         },
       ),
     );

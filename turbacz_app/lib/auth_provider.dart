@@ -13,10 +13,10 @@ class MyAuthProvider extends ChangeNotifier {
     WidgetsFlutterBinding.ensureInitialized();
 
     await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
+        options: DefaultFirebaseOptions.currentPlatform, name: "Turbacz");
     final GoogleSignInAccount? googleUser =
         await GoogleSignIn(scopes: ["email"]).signIn();
+    print("User: a\n\n\n\n\nsdasds");
 
     final GoogleSignInAuthentication? googleAuth =
         await googleUser?.authentication;

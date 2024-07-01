@@ -1,4 +1,4 @@
-name: Turbacz
+name: turbacz
 description: "IOT app."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
@@ -38,7 +38,6 @@ dependencies:
   syncfusion_flutter_sliders: ^24.1.45
   webview_flutter: ^4.4.4
   syncfusion_flutter_core: ^24.1.45
-  flutter_inappwebview: ^5.8.0
   syncfusion_flutter_charts: ^24.1.46
   http: ^1.2.0
   flutter_launcher_icons: ^0.13.1
@@ -47,6 +46,7 @@ dependencies:
   firebase_core: ^2.24.2
   provider: ^6.1.1
   url_launcher: ^6.2.3
+  flutter_web_auth_2: ^3.1.1
 
 flutter_launcher_icons:
   android: true

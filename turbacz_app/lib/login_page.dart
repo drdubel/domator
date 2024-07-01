@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 import 'auth_provider.dart';
 
 class LoginPage extends StatelessWidget {
+  const LoginPage({super.key});
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(

@@ -11,7 +11,7 @@ bool switch1[NLIGHTS];
 int whichDigit, whichLight, buttonState, lastCheck, prevButtonState, i;
 
 void get_cmd(char cmd_char) {
-    if (('A' <= cmd_char) && (cmd_char <= 'L')) {
+    if (('A' <= cmd_char) && (cmd_char <= 'A' + NLIGHTS)) {
         serialEsp.write('a' + (cmd_char - 'A'));
         serialEsp.write('0' + (int)switch1[cmd_char - 'A']);
         serialDebug.write('a' + (cmd_char - 'A'));
@@ -21,6 +21,10 @@ void get_cmd(char cmd_char) {
     } else {
         switch1[whichLight] = (bool)(cmd_char - '0');
         digitalWrite(lightPins[whichLight], switch1[whichLight]);
+        serialEsp.write('a' + whichLight);
+        serialEsp.write('0' + (int)switch1[whichLight]);
+        serialDebug.write('a' + whichLight);
+        serialDebug.write('0' + (int)switch1[whichLight]);
     }
 }
 
@@ -29,7 +33,7 @@ void setup() {
     serialEsp.begin(115200);
     for (int i = 0; i < NLIGHTS; i++) {
         pinMode(lightPins[i], OUTPUT);
-        digitalWrite(lightPins[i], HIGH);
+        digitalWrite(lightPins[i], LOW);
     }
 }
 

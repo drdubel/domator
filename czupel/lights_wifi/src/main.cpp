@@ -3,7 +3,7 @@
 #include <PubSubClient.h>
 #include <credentials.h>
 
-#define NLIGHTS 8
+#define NLIGHTS 9
 
 using namespace std;
 
@@ -40,7 +40,7 @@ void mqttConnect() {
 }
 
 void getCmd(char cmd_char) {
-    if (('a' <= cmd_char) && (cmd_char <= 'l')) {
+    if (('a' <= cmd_char) && (cmd_char <= 'a' + NLIGHTS)) {
         whichLight = cmd_char;
     } else {
         msg[0] = whichLight;

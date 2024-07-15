@@ -22,19 +22,53 @@
 	<div id="main">
 		<button class="openbtn" id="openbtn" onclick="openNav()">&#9776;</button>
 		<h1>Lights</h1>
-		<div id="switches">
-			<img id="s0" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" width="60" height="100" />
-			<img id="s1" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" width="60" height="100" />
-			<img id="s2" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" width="60" height="100" />
-			<img id="s3" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" width="60" height="100" />
-			<img id="s4" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" width="60" height="100" />
-			<img id="s5" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" width="60" height="100" />
-			<img id="s6" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" width="60" height="100" />
-			<img id="s7" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" width="60" height="100" />
-			<img id="s8" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" width="60" height="100" />
-			<img id="s9" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" width="60" height="100" />
-			<img id="s10" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" width="60" height="100" />
-			<img id="s11" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" width="60" height="100" />
+		<div id="salon" class="flex-containers">
+			<h2>Salon:</h2>
+			<div class="break"></div>
+			<div class="flex-container">
+				<a>Kinkiet 3</a>
+				<img id="s0" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+			</div>
+			<div class="flex-container">
+				<a>Kinkiet 4</a>
+				<img id="s1" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+			</div>
+			<div class="flex-container">
+				<a>Nad stołem</a>
+				<img id="s2" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+			</div>
+			<div class="flex-container">
+				<a>Nad kanapą</a>
+				<img id="s3" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+			</div>
+		</div>
+
+		<div id="antresola" class="flex-containers">
+			<h2>Antresola:</h2>
+			<div class="break"></div>
+			<div class="flex-container">
+				<a>Nad komputerem A</a>
+				<img id="s4" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+			</div>
+			<div class="flex-container">
+				<a>Wejście pokój A</a>
+				<img id="s5" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+			</div>
+			<div class="flex-container">
+				<a>Nad obrazem</a>
+				<img id="s6" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+			</div>
+			<div class="flex-container">
+				<a>Duża lampa A</a>
+				<img id="s7" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+			</div>
+		</div>
+
+		<div id="debug" class="debug">
+			<div class="flex-container">
+				<a>Debug</a>
+				<img id="s8" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+			</div>
 		</div>
 	</div>
 </body>

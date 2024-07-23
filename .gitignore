@@ -4,6 +4,7 @@ _*
 .env
 *.code-workspace
 autoryzowane*
+authorized*
 *.pickle
 .vscode
 target
@@ -12,3 +13,5 @@ secrets*
 heating_chart.json
 .pio
 credentials*
+kiczora
+chrobacz

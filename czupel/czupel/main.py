@@ -165,7 +165,7 @@ async def websocket_blinds(websocket: WebSocket, access_token=Cookie()):
     async def receive_command(websocket: WebSocket):
         async for cmd in websocket.iter_json():
             try:
-                req = BlindRequest.model_validate(cmd)
+                req = BlindRequest.parse_obj(cmd)
             except ValidationError as err:
                 logger.error("Cannot parse %s %s", cmd, err)
                 continue
@@ -199,7 +199,7 @@ async def websocket_lights(websocket: WebSocket, access_token=Cookie()):
     async def receive_command(websocket: WebSocket):
         async for cmd in websocket.iter_json():
             try:
-                chg = SwitchChange.model_validate(cmd)
+                chg = SwitchChange.parse_obj(cmd)
             except ValidationError as err:
                 logger.error("Cannot parse %s %s", cmd, err)
                 continue

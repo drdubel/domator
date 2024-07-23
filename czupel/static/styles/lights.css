@@ -3,6 +3,10 @@ body {
 	color: rgb(255, 255, 255);
 }
 
+.small>h2 {
+	margin: 0;
+}
+
 .switch {
 	position: relative;
 	display: inline-block;
@@ -54,7 +58,7 @@ input:checked+.slider:before {
 	transform: translateY(-26px);
 }
 
-.flex-container {
+.flex-container-big {
 	display: flex;
 	flex-direction: column;
 	align-items: center;
@@ -63,22 +67,42 @@ input:checked+.slider:before {
 	margin-left: 25px;
 }
 
-.flex-container>img {
+.flex-container-big>img {
 	margin-top: 12px;
 	height: 100px;
-	width: 60;
+	width: 60px;
 }
 
-.flex-containers {
+.flex-containers-big {
 	display: flex;
 	flex-direction: row;
 	flex-wrap: wrap;
 	margin: 50px;
 }
 
-.flex-containers>h2 {
-	margin: 0;
-	margin-top: 0;
+.flex-container-small {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	width: 22.5%;
+	margin-left: 2.5%;
+}
+
+.flex-container-small>a {
+	font-size: 75%;
+}
+
+.flex-container-small>img {
+	margin-top: 10%;
+	height: 7.5vh;
+	width: 4.5vh;
+}
+
+.flex-containers-small {
+	display: flex;
+	flex-direction: row;
+	flex-wrap: wrap;
+	margin: 2.5%;
 }
 
 .break {
@@ -88,6 +112,6 @@ input:checked+.slider:before {
 
 .debug {
 	position: fixed;
-	bottom: 50px;
-	right: 50px;
+	bottom: 2.5%;
+	right: 0px;
 }

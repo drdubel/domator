@@ -17,7 +17,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
 
 from .broker import mqtt
-from .data.autoryzowane import authorized
+from .data.authorized import authorized
 from .websocket import ws_manager
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ app.add_middleware(MetricsMiddleware)
 app.add_route("/metrics", metrics)
 mqtt.init_app(app)
 
-config = Config("czupel/.env")
+config = Config("czupel/data/.env")
 oauth = OAuth(config)
 
 background_task_started = False
@@ -43,11 +43,11 @@ oauth.register(
 )
 
 with open("czupel/data/cookies.pickle", "rb") as cookies:
-    access_cookies = load(cookies)
+    access_cookies: dict = load(cookies)
 
 
 @app.exception_handler(StarletteHTTPException)
-async def custom_http_exception_handler(request, exc):
+async def custom_http_exception_handler(request: Request, exc):
     return HTMLResponse(
         '<h1>Sio!<br>Tu nic nie ma!</h1><a href="/auto">Strona Główna</a>'
     )
@@ -165,7 +165,7 @@ async def websocket_blinds(websocket: WebSocket, access_token=Cookie()):
     async def receive_command(websocket: WebSocket):
         async for cmd in websocket.iter_json():
             try:
-                req = BlindRequest.parse_obj(cmd)
+                req = BlindRequest.model_validate(cmd)
             except ValidationError as err:
                 logger.error("Cannot parse %s %s", cmd, err)
                 continue
@@ -199,7 +199,7 @@ async def websocket_lights(websocket: WebSocket, access_token=Cookie()):
     async def receive_command(websocket: WebSocket):
         async for cmd in websocket.iter_json():
             try:
-                chg = SwitchChange.parse_obj(cmd)
+                chg = SwitchChange.model_validate(cmd)
             except ValidationError as err:
                 logger.error("Cannot parse %s %s", cmd, err)
                 continue
@@ -215,7 +215,7 @@ def start():
     import uvicorn
 
     logging.basicConfig(level=logging.DEBUG)
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8002)
 
 
 if __name__ == "__main__":

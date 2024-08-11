@@ -44,11 +44,11 @@ oauth.register(
 )
 
 with open("turbacz/data/cookies.pickle", "rb") as cookies:
-    access_cookies = load(cookies)
+    access_cookies: dict = load(cookies)
 
 
 @app.exception_handler(StarletteHTTPException)
-async def custom_http_exception_handler(request, exc):
+async def custom_http_exception_handler(request: Request, exc):
     return HTMLResponse(
         '<h1>Sio!<br>Tu nic nie ma!</h1><a href="/auto">Strona Główna</a>'
     )
@@ -205,7 +205,6 @@ async def auth(request: Request):
     if user:
         request.session["user"] = dict(user)
         if user["email"] in authorized:
-            print(user)
             access_token = token_urlsafe()
             access_cookies[access_token] = user["email"]
             with open("turbacz/data/cookies.pickle", "wb") as cookies:
@@ -218,14 +217,25 @@ async def auth(request: Request):
 
 
 @app.get("/logout")
-async def logout(request: Request):
+async def logout(
+    request: Request, response: Response, access_token: Optional[str] = Cookie(None)
+):
+    access_cookies.pop(access_token)
+    with open("turbacz/data/cookies.pickle", "wb") as cookies:
+        dump(access_cookies, cookies)
     request.session.pop("user", None)
+    response.delete_cookie(key="access_token")
     return RedirectResponse(url="/")
 
 
 class BlindRequest(BaseModel):
     blind: str
     position: int
+
+
+class SwitchChange(BaseModel):
+    id: str
+    state: int
 
 
 @app.post("/setblind")
@@ -262,6 +272,26 @@ async def websocket_heating(websocket: WebSocket, access_token=Cookie()):
         async for cmd in websocket.iter_json():
             logger.debug("putting %s in command queue", cmd)
             mqtt.client.publish("/heating/cmd", cmd)
+
+    if access_token in access_cookies:
+        await receive_command(websocket)
+
+
+@app.websocket("/lights/ws/{client_id}")
+async def websocket_lights(websocket: WebSocket, access_token=Cookie()):
+    await ws_manager.connect(websocket)
+    mqtt.publish("/switch/1/cmd", "S")
+
+    async def receive_command(websocket: WebSocket):
+        async for cmd in websocket.iter_json():
+            try:
+                chg = SwitchChange.parse_obj(cmd)
+            except ValidationError as err:
+                logger.error("Cannot parse %s %s", cmd, err)
+                continue
+            logger.debug("putting %s in command queue", cmd)
+            print(f"{chg.id}{chg.state}")
+            mqtt.client.publish("/switch/1/cmd", f"{chg.id}{chg.state}")
 
     if access_token in access_cookies:
         await receive_command(websocket)

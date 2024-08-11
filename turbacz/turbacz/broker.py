@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 mqtt_config = MQTTConfig(
-    host="192.168.3.10",
+    host="127.0.0.1",
     port=1883,
     keepalive=60,
     username="turbacz",

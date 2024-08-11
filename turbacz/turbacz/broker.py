@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 mqtt_config = MQTTConfig(
-    host="127.0.0.1",
+    host="192.168.3.10",
     port=1883,
     keepalive=60,
     username="turbacz",
@@ -28,7 +28,6 @@ def connect(client, flags, rc, properties):
     mqtt.client.subscribe("/blind/pos")
     mqtt.client.subscribe("/heating/metrics")
     mqtt.client.subscribe("/switch/1/state")
-    mqtt.publish("/blind/cmd", "S")
     logger.info("Connected: %s %s %s %s", client, flags, rc, properties)
 
 
@@ -51,14 +50,12 @@ async def message(client, topic, payload, qos, properties):
                 chart_data["cold"] = chart_data["cold"][1:]
                 chart_data["mixed"] = chart_data["mixed"][1:]
                 chart_data["hot"] = chart_data["hot"][1:]
-                chart_data["target"] = chart_data["target"][1:]
             chart_data["labels"].append(
                 time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
             )
             chart_data["cold"].append(payload["cold"])
             chart_data["mixed"].append(payload["mixed"])
             chart_data["hot"].append(payload["hot"])
-            chart_data["target"].append(payload["target"])
         with open("./static/data/heating_chart.json", "w") as chart_data_json:
             json.dump(chart_data, chart_data_json)
         await ws_manager.broadcast(payload, "heating")

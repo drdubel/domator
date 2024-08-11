@@ -28,7 +28,6 @@ def connect(client, flags, rc, properties):
     mqtt.client.subscribe("/blind/pos")
     mqtt.client.subscribe("/heating/metrics")
     mqtt.client.subscribe("/switch/1/state")
-    mqtt.publish("/blind/cmd", "S")
     logger.info("Connected: %s %s %s %s", client, flags, rc, properties)
 
 

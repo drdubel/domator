@@ -9,11 +9,12 @@
 
 using namespace std;
 
+const int VoltagePin = 1;
+
 AHT20 aht20;
 Adafruit_BMP280 bmp;
-
-list<float> temperatures, humidities, pressures;
-int i = 0, interval = 2000, samples = 15;
+float temperature_sum = 0, humidity_sum = 0, pressure_sum = 0, voltage_sum = 0;
+int i = 0, j = 0, interval = 2000, samples = 10, vol_interval = 40;
 long long startTime;
 
 float average(list<float> &values) {
@@ -24,16 +25,19 @@ float average(list<float> &values) {
 }
 
 void sendData() {
-    String temperature = String(average(temperatures), 2);
-    String humidity = String(average(humidities), 2);
-    String pressure = String(average(pressures), 2);
+    String temperature = String(temperature_sum / i, 2);
+    String humidity = String(humidity_sum / i, 2);
+    String pressure = String(pressure_sum / i, 2);
+    String voltage = String(voltage_sum / j / 238.875, 2);
     String payload =
         "measurement,dev=wemosS2mini,location=LadyTwin temperature=" +
-        temperature + ",pressure=" + pressure + ",humidity=" + humidity;
+        temperature + ",pressure=" + pressure + ",humidity=" + humidity +
+        ",voltage=" + voltage;
 
     Serial.println("Average temperature: " + temperature + " C\t");
     Serial.println("Average humidity: " + humidity + "% RH");
     Serial.println("Average pressure: " + pressure + " hPa");
+    Serial.println("Average voltage: " + voltage + " V");
 
     HTTPClient http;
     http.begin("metrics.dry.pl", 443, "/api/v2/write", test_root_ca,
@@ -86,30 +90,42 @@ void setup() {
     initWiFi();
     initSensors();
 
+    analogSetAttenuation(ADC_2_5db);
+    analogReadMilliVolts(VoltagePin);
+
     startTime = millis();
 }
 
 void loop() {
+    if (millis() - startTime >= j * vol_interval) {
+        float voltage = analogRead(VoltagePin);
+
+        voltage_sum += voltage;
+
+        j++;
+    }
     if (millis() - startTime >= i * interval) {
         float temperature = aht20.getTemperature();
         float humidity = aht20.getHumidity();
         float pressure = bmp.readPressure() / 100;
 
-        if (temperatures.size() >= samples) temperatures.pop_front();
-        if (humidities.size() >= samples) humidities.pop_front();
-        if (pressures.size() >= samples) pressures.pop_front();
-
-        temperatures.push_back(temperature);
-        humidities.push_back(humidity);
-        pressures.push_back(pressure);
+        temperature_sum += temperature;
+        humidity_sum += humidity;
+        pressure_sum += pressure;
 
         i++;
     }
 
     if (millis() - startTime >= interval * samples) {
         startTime = millis();
-        i = 0;
 
         sendData();
+
+        i = 0;
+        j = 0;
+        temperature_sum = 0;
+        humidity_sum = 0;
+        pressure_sum = 0;
+        voltage_sum = 0;
     }
 }

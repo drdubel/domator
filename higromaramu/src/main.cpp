@@ -70,14 +70,14 @@ void initWiFi() {
 void initSensors() {
     Wire.begin();
 
-    if (aht20.begin() == false) {
-        Serial.println("AHT20 not detected. Please check wiring. Freezing.");
+    if (!aht20.begin()) {
+        Serial.println("AHT20 not detected. Please check wiring.");
         while (1);
     }
     Serial.println("AHT20 acknowledged.");
 
     if (!bmp.begin()) {
-        Serial.println("BMP280 not detected. Please check wiring. Freezing.");
+        Serial.println("BMP280 not detected. Please check wiring.");
         while (1);
     }
     Serial.println("BMP280 acknowledged.");
@@ -97,6 +97,12 @@ void setup() {
 }
 
 void loop() {
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("WiFi connection lost. Reconnecting...");
+
+        initWiFi();
+    }
+
     if (millis() - startTime >= j * vol_interval) {
         float voltage = analogRead(VoltagePin);
 
@@ -104,6 +110,7 @@ void loop() {
 
         j++;
     }
+
     if (millis() - startTime >= i * interval) {
         float temperature = aht20.getTemperature();
         float humidity = aht20.getHumidity();

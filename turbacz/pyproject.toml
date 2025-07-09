@@ -5,14 +5,14 @@ description = "IoT logic and user interface"
 authors = [{ name = "DrDubel", email = "antek.suszko@gmail.com" }]
 requires-python = "~=3.13.5"
 dependencies = [
-    "fastapi>=0.79.0,<0.80",
+    "fastapi>=0.79.0",
     "fastapi-mqtt>=1.0.5,<2",
     "uvicorn<2.0.0",
     "Authlib>=1.1.0,<2",
     "itsdangerous>=2.1.2,<3",
-    "httpx>=0.23.0,<0.24",
-    "aioconsole>=0.5.1,<0.6",
-    "aioprometheus>=22.5.0,<23",
+    "httpx>=0.23.0",
+    "aioconsole>=0.5.1",
+    "aioprometheus>=22.5.0",
     "wsproto>=1.2.0,<2",
     "requests>=2.32.4",
 ]

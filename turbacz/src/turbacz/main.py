@@ -43,9 +43,16 @@ oauth.register(
     client_kwargs={"scope": "openid email profile"},
 )
 
-with open("turbacz/data/cookies.pickle", "rb") as cookies:
-    access_cookies: dict = load(cookies)
+def load_cookies():
+    try:
+        with open("turbacz/data/cookies.pickle", "rb") as cookies:
+            access_cookies: dict = load(cookies)
+    except FileNotFoundError:
+        access_cookies = {}
+    return access_cookies
 
+
+access_cookies = load_cookies()
 
 @app.exception_handler(StarletteHTTPException)
 async def custom_http_exception_handler(request: Request, exc):

@@ -1,6 +1,6 @@
 var wsId = Math.floor(Math.random() * 2000000000)
-var ws = new WebSocket("ws://127.0.0.1:8000/lights/ws/" + wsId)
-var lights = { "s0": 0, "s1": 0, "s2": 0, "s3": 0, "s4": 0, "s5": 0, "s6": 0, "s7": 0, "s8": 0, "s9": 0, "s10": 0, "s11": 0 }
+var ws = new WebSocket("wss://rdest.dry.pl/lights/ws/" + wsId)
+var lights = { "1a": 0, "1b": 0, "1c": 0, "1d": 0, "1e": 0, "1f": 0, "1g": 0, "1h": 0, "2a": 0, "2b": 0, "2c": 0, "2d": 0, "2e": 0, "2f": 0, "2g": 0, "2h": 0, "3a": 0, "3b": 0, "3c": 0, "3d": 0, "3e": 0, "3f": 0, "3g": 0, "3h": 0 }
 
 ws.onmessage = function (event) {
 	var msg = JSON.parse(event.data)
@@ -29,7 +29,7 @@ function changeSwitchState(id) {
 			document.getElementById(id).src = "static/data/img/on.png"
 			break;
 	}
-	var msg = JSON.stringify({ "id": String.fromCharCode('a'.charCodeAt(0) + parseInt(id.slice(1))), "state": lights[id] })
+	var msg = JSON.stringify({ "id": id[0], "light": id[1], "state": lights[id] })
 	console.log(msg)
 	ws.send(msg)
 }

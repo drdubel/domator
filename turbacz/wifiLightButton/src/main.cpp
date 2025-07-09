@@ -39,7 +39,7 @@ void mqttConnect() {
     Serial.print("Connecting to MQTT broker at ");
     Serial.print(mqtt_broker);
     Serial.print(" with user ");
-    Serial.print(mqttUser);
+    Serial.println(mqttUser);
 
     client.setServer(mqtt_broker, mqtt_port);
     while (!client.connected()) {
@@ -76,8 +76,7 @@ void loop() {
             msg = 'a' + i;
             Serial.print("Publishing message: ");
             Serial.println(msg);
-            client.publish(("/switch/" + String(DEVICE_ID)).c_str(),
-                           String(msg).c_str());
+            client.publish("/switch/" DEVICE_ID, String(msg).c_str());
         }
 
         lastButtonState[i] = currentState;

@@ -79,6 +79,15 @@ void callback(char *topic, uint8_t *payload, int length) {
         lights[whichLight] = (char)payload[1] - '0';
 
         digitalWrite(relays[whichLight], lights[whichLight] ? HIGH : LOW);
+
+        msg[0] = 'A' + whichLight;
+        msg[1] = lights[whichLight] ? '1' : '0';
+        client.publish("/relay/" DEVICE_ID "/state", msg);
+
+        Serial.print("Light ");
+        Serial.print('a' + whichLight);
+        Serial.print(" set to ");
+        Serial.println(lights[whichLight] ? "ON" : "OFF");
     }
 }
 

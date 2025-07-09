@@ -4,7 +4,6 @@ from pickle import dump, load
 from secrets import token_urlsafe
 from typing import Optional
 
-import requests
 from aioprometheus.asgi.middleware import MetricsMiddleware
 from aioprometheus.asgi.starlette import metrics
 from authlib.integrations.starlette_client import OAuth, OAuthError
@@ -43,6 +42,7 @@ oauth.register(
     client_kwargs={"scope": "openid email profile"},
 )
 
+
 def load_cookies():
     try:
         with open("turbacz/data/cookies.pickle", "rb") as cookies:
@@ -53,6 +53,7 @@ def load_cookies():
 
 
 access_cookies = load_cookies()
+
 
 @app.exception_handler(StarletteHTTPException)
 async def custom_http_exception_handler(request: Request, exc):
@@ -76,111 +77,6 @@ async def main(request: Request, access_token: Optional[str] = Cookie(None)):
     user = request.session.get("user")
     if user and access_token in access_cookies:
         with open(os.path.join("static", "index.html")) as fh:
-            data = fh.read()
-        return Response(content=data, media_type="text/html")
-    return RedirectResponse(url="/")
-
-
-@app.get("/api/temperatures")
-async def get_temperatures(request: Request, start: int, end: int, step: int):
-    response1 = requests.get(
-        "http://127.0.0.1:8428/api/v1/query_range",
-        params={
-            "start": start,
-            "end": end,
-            "query": "water_temperature",
-            "step": step,
-        },
-    )
-
-    response2 = requests.get(
-        "http://127.0.0.1:8428/api/v1/query_range",
-        params={
-            "start": start,
-            "end": end,
-            "query": "pid_target",
-            "step": step,
-        },
-    )
-
-    if response1.status_code != 200 or response2.status_code != 200:
-        return "connection not working"
-
-    water_temperatures = (
-        response1.json()["data"]["result"] + response2.json()["data"]["result"]
-    )
-
-    result = [
-        {
-            "timestamp": water_temperatures[0]["values"][i][0],
-            "cold": water_temperatures[0]["values"][i][1],
-            "hot": water_temperatures[1]["values"][i][1],
-            "mixed": water_temperatures[2]["values"][i][1],
-            "target": water_temperatures[3]["values"][i][1],
-        }
-        for i in range(len(water_temperatures[0]["values"]))
-    ]
-
-    return result
-
-
-@app.get("/api/heating_data")
-async def get_heating_data(request: Request):
-    response1 = requests.get(
-        "http://127.0.0.1:8428/api/v1/query?query=water_temperature"
-    )
-    response2 = requests.get("http://127.0.0.1:8428/api/v1/query?query=pid_target")
-    response3 = requests.get("http://127.0.0.1:8428/api/v1/query?query=pid_integral")
-    response4 = requests.get("http://127.0.0.1:8428/api/v1/query?query=pid_output")
-    response5 = requests.get("http://127.0.0.1:8428/api/v1/query?query=pid_multiplier")
-
-    if (
-        response1.status_code != 200
-        or response2.status_code != 200
-        or response3.status_code != 200
-        or response4.status_code != 200
-        or response5.status_code != 200
-    ):
-        return "connection not working"
-
-    heating_data = (
-        response1.json()["data"]["result"]
-        + response2.json()["data"]["result"]
-        + response3.json()["data"]["result"]
-        + response4.json()["data"]["result"]
-        + response5.json()["data"]["result"]
-    )
-
-    result = {
-        "cold": heating_data[0]["value"][1],
-        "hot": heating_data[1]["value"][1],
-        "mixed": heating_data[2]["value"][1],
-        "target": heating_data[3]["value"][1],
-        "integral": heating_data[4]["value"][1],
-        "pid": heating_data[5]["value"][1],
-        "kd": heating_data[6]["value"][1],
-        "ki": heating_data[7]["value"][1],
-        "kp": heating_data[8]["value"][1],
-    }
-
-    return result
-
-
-@app.get("/heating")
-async def heating(request: Request, access_token: Optional[str] = Cookie(None)):
-    user = request.session.get("user")
-    if user and access_token in access_cookies:
-        with open(os.path.join("static", "heating.html")) as fh:
-            data = fh.read()
-        return Response(content=data, media_type="text/html")
-    return RedirectResponse(url="/")
-
-
-@app.get("/blinds")
-async def blinds(request: Request, access_token: Optional[str] = Cookie(None)):
-    user = request.session.get("user")
-    if user and access_token in access_cookies:
-        with open(os.path.join("static", "blinds.html")) as fh:
             data = fh.read()
         return Response(content=data, media_type="text/html")
     return RedirectResponse(url="/")
@@ -235,53 +131,9 @@ async def logout(
     return RedirectResponse(url="/")
 
 
-class BlindRequest(BaseModel):
-    blind: str
-    position: int
-
-
 class SwitchChange(BaseModel):
     id: str
     state: int
-
-
-@app.post("/setblind")
-async def set_blind(req: BlindRequest):
-    return {"current_position": req.position}
-
-
-@app.websocket("/blinds/ws/{client_id}")
-async def websocket_blinds(websocket: WebSocket, access_token=Cookie()):
-    await ws_manager.connect(websocket)
-    mqtt.publish("/blind/cmd", "S")
-
-    async def receive_command(websocket: WebSocket):
-        async for cmd in websocket.iter_json():
-            try:
-                req = BlindRequest.parse_obj(cmd)
-            except ValidationError as err:
-                logger.error("Cannot parse %s %s", cmd, err)
-                continue
-            logger.debug("putting %s in command queue", req)
-            mqtt.client.publish(
-                "/blind/cmd", f"{chr(int(req.blind[1])+96)}{req.position}"
-            )
-
-    if access_token in access_cookies:
-        await receive_command(websocket)
-
-
-@app.websocket("/heating/ws/{client_id}")
-async def websocket_heating(websocket: WebSocket, access_token=Cookie()):
-    await ws_manager.connect(websocket)
-
-    async def receive_command(websocket: WebSocket):
-        async for cmd in websocket.iter_json():
-            logger.debug("putting %s in command queue", cmd)
-            mqtt.client.publish("/heating/cmd", cmd)
-
-    if access_token in access_cookies:
-        await receive_command(websocket)
 
 
 @app.websocket("/lights/ws/{client_id}")

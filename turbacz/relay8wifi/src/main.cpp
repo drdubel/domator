@@ -10,9 +10,9 @@ const byte wifiActivityPin = 255;
 #define NLIGHTS 8
 
 char msg[2];
-const char *mqtt_broker = "192.168.3.244";
+const char *mqtt_broker = "10.42.0.1";
 const int mqtt_port = 1883;
-const char *mqttUser = "relay1";
+const char *mqttUser = "relay" DEVICE_ID "-wifi";
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -33,20 +33,28 @@ void wifiConnect() {
         delay(500);
     }
 
+    Serial.println(WiFi.localIP());
     Serial.println();
 }
 
 void mqttConnect() {
-    client.setServer(mqtt_broker, mqtt_port);
+    Serial.print("Connecting to MQTT broker at ");
+    Serial.print(mqtt_broker);
+    Serial.print(" with user ");
+    Serial.println(mqttUser);
+
     client.setCallback(callback);
+    client.setServer(mqtt_broker, mqtt_port);
+
     while (!client.connected()) {
-        if (client.connect(mqttUser)) {
+        if (client.connect(mqttUser, mqttUser, mqttPassword)) {
+            Serial.println("Connected to MQTT broker");
         } else {
             delay(2000);
         }
     }
 
-    client.subscribe("/switch/1/state");
+    client.subscribe("/relay/" DEVICE_ID "/cmd");
 }
 
 void callback(char *topic, uint8_t *payload, int length) {
@@ -54,16 +62,19 @@ void callback(char *topic, uint8_t *payload, int length) {
         for (int i = 0; i < NLIGHTS; ++i) {
             msg[0] = 'A' + i;
             msg[1] = lights[i] ? '1' : '0';
-            client.publish("/switch/1/state", msg);
+
+            client.publish("/relay/" DEVICE_ID "/state", msg);
         }
     } else if (payload[0] >= 'a' && payload[0] < 'a' + NLIGHTS && length == 2) {
         Serial.print("Received message: ");
         Serial.print(topic);
         Serial.print(" with payload: ");
+
         for (int i = 0; i < length; ++i) {
             Serial.print((char)payload[i]);
         }
         Serial.println();
+
         whichLight = (char)payload[0] - 'a';
         lights[whichLight] = (char)payload[1] - '0';
 
@@ -85,7 +96,6 @@ void setup() {
 
 void loop() {
     if (client.connected()) {
-        Serial.println("Client connected");
         client.loop();
     } else {
         mqttConnect();

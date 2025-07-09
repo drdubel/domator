@@ -16,7 +16,7 @@ mqtt_config = MQTTConfig(
     host="127.0.0.1",
     port=1883,
     keepalive=60,
-    username="turbacz",
+    username="torpeda",
     password=mqtt_password,
 )
 

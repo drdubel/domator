@@ -8,7 +8,7 @@
 using namespace std;
 
 char msg;
-const char *mqtt_broker = "10.42.0.1";
+const char *mqtt_broker = "192.168.42.2";
 const int mqtt_port = 1883;
 const char *mqttUser = "switch" DEVICE_ID "-wifi";
 
@@ -49,6 +49,8 @@ void mqttConnect() {
             delay(2000);
         }
     }
+
+    client.publish("/switch/" DEVICE_ID, "connected");
 }
 
 void setup() {
@@ -60,6 +62,8 @@ void setup() {
     for (int i = 0; i < NLIGHTS; i++) {
         pinMode(buttonPins[i], INPUT_PULLDOWN);
     }
+    pinMode(LED_BUILTIN, OUTPUT);
+    digitalWrite(LED_BUILTIN, LOW);
 }
 
 void loop() {
@@ -83,8 +87,10 @@ void loop() {
     }
 
     if (client.connected()) {
+        digitalWrite(LED_BUILTIN, HIGH);
         client.loop();
     } else {
+        digitalWrite(LED_BUILTIN, LOW);
         mqttConnect();
     }
 }

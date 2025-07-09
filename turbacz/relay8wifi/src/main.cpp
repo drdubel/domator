@@ -10,7 +10,7 @@ const byte wifiActivityPin = 255;
 #define NLIGHTS 8
 
 char msg[2];
-const char *mqtt_broker = "10.42.0.1";
+const char *mqtt_broker = "192.168.42.2";
 const int mqtt_port = 1883;
 const char *mqttUser = "relay" DEVICE_ID "-wifi";
 
@@ -101,12 +101,17 @@ void setup() {
         pinMode(relays[i], OUTPUT);
         digitalWrite(relays[i], LOW);
     }
+
+    pinMode(23, OUTPUT);
+    digitalWrite(23, LOW);
 }
 
 void loop() {
     if (client.connected()) {
+        digitalWrite(23, HIGH);
         client.loop();
     } else {
+        digitalWrite(23, LOW);
         mqttConnect();
     }
 }

@@ -23,51 +23,48 @@ mqtt_config = MQTTConfig(
 mqtt = FastMQTT(config=mqtt_config)
 
 
+lights = [[0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0]]
+
+
+def switch2relay(switchId, button):
+    return ("3", "a")
+
+
 @mqtt.on_connect()
 def connect(client, flags, rc, properties):
-    mqtt.client.subscribe("/blind/pos")
-    mqtt.client.subscribe("/heating/metrics")
-    mqtt.client.subscribe("/switch/1/state")
+    mqtt.client.subscribe("/switch/#")
+    mqtt.client.subscribe("/relay/1/state")
+
     logger.info("Connected: %s %s %s %s", client, flags, rc, properties)
 
 
 @mqtt.on_message()
 async def message(client, topic, payload, qos, properties):
     payload = payload.decode()
-    if topic == "/heating/metrics":
-        payload = json.loads(payload)
-        for probe in ("cold", "mixed", "hot"):
-            metrics.water_temp.set({"probe": probe}, payload[probe])
-        metrics.pid_integral.set({}, payload["integral"])
-        metrics.pid_output.set({}, payload["pid_output"])
-        metrics.pid_target.set({}, payload["target"])
-        for multiplier in ("kp", "ki", "kd"):
-            metrics.pid_multiplier.set({"multiplier": multiplier}, payload[multiplier])
-        with open("./static/data/heating_chart.json", "r") as chart_data_json:
-            chart_data = json.load(chart_data_json)
-            if len(chart_data["labels"]) == 1000:
-                chart_data["labels"] = chart_data["labels"][1:]
-                chart_data["cold"] = chart_data["cold"][1:]
-                chart_data["mixed"] = chart_data["mixed"][1:]
-                chart_data["hot"] = chart_data["hot"][1:]
-            chart_data["labels"].append(
-                time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-            )
-            chart_data["cold"].append(payload["cold"])
-            chart_data["mixed"].append(payload["mixed"])
-            chart_data["hot"].append(payload["hot"])
-        with open("./static/data/heating_chart.json", "w") as chart_data_json:
-            json.dump(chart_data, chart_data_json)
-        await ws_manager.broadcast(payload, "heating")
-    elif topic == "/blind/pos":
-        payload = payload.split()
-        await ws_manager.broadcast(
-            {"blind": payload[0], "current_position": payload[1]}, "blinds"
+    print(f"Received message on topic {topic}: {payload}")
+    if topic.startswith("/switch/"):
+        switchId = topic.split("/")[2]
+        payload = payload[0]
+
+        relay = switch2relay(switchId, payload)
+        lightId = ascii_lowercase.index(relay[1])
+
+        print(f"Switch {switchId} button {payload} -> relay {relay}")
+
+        mqtt.client.publish(
+            f"/relay/{relay[0]}/cmd",
+            relay[1] + str(lights[int(relay[0]) - 1][lightId] ^ 1),
         )
-    elif topic == "/switch/1/state":
+
+    elif topic.startswith("/relay/"):
+        relayId = topic.split("/")[2]
+
+        lights[int(relayId) - 1][ascii_lowercase.index(payload[0])] = int(payload[1])
         payload = {
-            "id": "s" + str(ascii_lowercase.index(payload[0])),
+            "id": relayId + str(ascii_lowercase.index(payload[0])),
             "state": int(payload[1]),
         }
+
         print(payload)
+
         await ws_manager.broadcast(payload, "lights")

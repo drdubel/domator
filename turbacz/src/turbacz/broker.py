@@ -1,7 +1,7 @@
 import json
 import logging
 import time
-from string import ascii_lowercase
+from string import ascii_uppercase, ascii_lowercase
 
 from fastapi_mqtt import FastMQTT, MQTTConfig
 
@@ -27,7 +27,7 @@ lights = [[0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0,
 
 
 def switch2relay(switchId, button):
-    return ("3", "a")
+    return ("1", button)
 
 
 @mqtt.on_connect()
@@ -59,9 +59,9 @@ async def message(client, topic, payload, qos, properties):
     elif topic.startswith("/relay/"):
         relayId = topic.split("/")[2]
 
-        lights[int(relayId) - 1][ascii_lowercase.index(payload[0])] = int(payload[1])
+        lights[int(relayId) - 1][ascii_uppercase.index(payload[0])] = int(payload[1])
         payload = {
-            "id": relayId + str(ascii_lowercase.index(payload[0])),
+            "id": relayId + payload[0],
             "state": int(payload[1]),
         }
 

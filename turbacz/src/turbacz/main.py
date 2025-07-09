@@ -132,14 +132,17 @@ async def logout(
 
 
 class SwitchChange(BaseModel):
-    id: str
+    id: int
+    light: str
     state: int
 
 
 @app.websocket("/lights/ws/{client_id}")
 async def websocket_lights(websocket: WebSocket, access_token=Cookie()):
     await ws_manager.connect(websocket)
-    mqtt.publish("/switch/1/cmd", "S")
+    mqtt.publish("/relay/1/cmd", "S")
+    mqtt.publish("/relay/2/cmd", "S")
+    mqtt.publish("/relay/3/cmd", "S")
 
     async def receive_command(websocket: WebSocket):
         async for cmd in websocket.iter_json():
@@ -149,8 +152,8 @@ async def websocket_lights(websocket: WebSocket, access_token=Cookie()):
                 logger.error("Cannot parse %s %s", cmd, err)
                 continue
             logger.debug("putting %s in command queue", cmd)
-            print(f"{chg.id}{chg.state}")
-            mqtt.client.publish("/switch/1/cmd", f"{chg.id}{chg.state}")
+            print(f"{chg.id} {chg.light} {chg.state}")
+            mqtt.client.publish(f"/relay/{chg.id}/cmd", f"{chg.light}{chg.state}")
 
     if access_token in access_cookies:
         await receive_command(websocket)

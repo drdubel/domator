@@ -5,6 +5,7 @@
 #include <WebServer.h>
 #include <WiFi.h>
 #include <credentials.h>
+#include <painlessMesh.h>
 
 #define NLIGHTS 7
 #define LED_PIN 8
@@ -60,17 +61,14 @@ void setLedColor(uint8_t r, uint8_t g, uint8_t b) {
 
 void updateLedStatus() {
     bool wifi_ok = (WiFi.status() == WL_CONNECTED);
-    bool mqtt_ok = client.connected();
     bool server_ok = serverStarted;
 
-    if (wifi_ok && mqtt_ok && server_ok)
+    if (wifi_ok && server_ok)
         setLedColor(255, 255, 255);
-    else if (wifi_ok && mqtt_ok)
-        setLedColor(255, 255, 0);
-    else if (wifi_ok && server_ok)
-        setLedColor(255, 0, 255);
     else if (wifi_ok)
         setLedColor(255, 0, 0);
+    else if (server_ok)
+        setLedColor(0, 255, 0);
     else
         setLedColor(0, 0, 0);
 }
@@ -91,27 +89,6 @@ void wifiConnect() {
 
     Serial.println(WiFi.localIP());
     Serial.println();
-}
-
-void mqttConnect() {
-    Serial.print("Connecting to MQTT broker at ");
-    Serial.print(mqtt_broker);
-    Serial.print(" with user ");
-    Serial.println(mqttUser);
-
-    client.setServer(mqtt_broker, mqtt_port);
-    while (!client.connected()) {
-        if (client.connect(mqttUser, mqttUser, mqttPassword)) {
-            Serial.println("Connected to MQTT broker");
-        } else {
-            setLedColor(0, 255, 0);
-            delay(500);
-            setLedColor(0, 0, 0);
-            delay(500);
-        }
-    }
-
-    client.publish("/switch/" DEVICE_ID, "connected");
 }
 
 void handleRoot() { server.send(200, "text/html", upload_html); }
@@ -159,7 +136,6 @@ void setup() {
     setLedColor(0, 0, 0);
 
     wifiConnect();
-    mqttConnect();
     serverSetup();
 
     for (int i = 0; i < NLIGHTS; i++) {
@@ -191,11 +167,7 @@ void loop() {
 
     updateLedStatus();
 
-    if (WiFi.status() != WL_CONNECTED)
-        wifiConnect();
-    else if (!client.connected())
-        mqttConnect();
+    if (WiFi.status() != WL_CONNECTED) wifiConnect();
 
-    client.loop();
     server.handleClient();
 }

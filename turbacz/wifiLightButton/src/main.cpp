@@ -15,15 +15,13 @@ using namespace std;
 
 Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 
-char msg;
-const char *mqtt_broker = "192.168.42.2";
-const int mqtt_port = 1883;
-const char *mqttUser = "switch" DEVICE_ID "-wifi";
-
 WiFiClient espClient;
 PubSubClient client(espClient);
 
 WebServer server(80);
+
+Scheduler userScheduler;
+painlessMesh mesh;
 
 const char *upload_html PROGMEM = R"rawliteral(
 <!DOCTYPE html>
@@ -53,6 +51,47 @@ int lastTimeClick[NLIGHTS];
 int debounceDelay = 250;
 char whichLight;
 int lastButtonState[NLIGHTS] = {HIGH, HIGH, HIGH, HIGH, HIGH, HIGH, HIGH};
+
+char msg;
+
+void sendMessage();
+
+Task taskSendMessage(TASK_SECOND * 1, TASK_FOREVER, &sendMessage);
+
+void sendMessage() {
+    String msg = "1";
+    msg += DEVICE_ID;
+    mesh.sendBroadcast(msg);
+    taskSendMessage.setInterval(random(TASK_SECOND * 1, TASK_SECOND * 5));
+}
+
+void receivedCallback(uint32_t from, String &msg) {
+    Serial.printf("startHere: Received from %u msg=%s\n", from, msg.c_str());
+}
+
+void newConnectionCallback(uint32_t nodeId) {
+    Serial.printf("--> startHere: New Connection, nodeId = %u\n", nodeId);
+}
+
+void changedConnectionCallback() { Serial.printf("Changed connections\n"); }
+
+void nodeTimeAdjustedCallback(int32_t offset) {
+    Serial.printf("Adjusted time %u. Offset = %d\n", mesh.getNodeTime(),
+                  offset);
+}
+
+void meshSetup() {
+    mesh.setDebugMsgTypes(ERROR | STARTUP);
+
+    mesh.init(MESH_PREFIX, MESH_PASSWORD, &userScheduler, MESH_PORT);
+    mesh.onReceive(&receivedCallback);
+    mesh.onNewConnection(&newConnectionCallback);
+    mesh.onChangedConnections(&changedConnectionCallback);
+    mesh.onNodeTimeAdjusted(&nodeTimeAdjustedCallback);
+
+    userScheduler.addTask(taskSendMessage);
+    taskSendMessage.enable();
+}
 
 void setLedColor(uint8_t r, uint8_t g, uint8_t b) {
     pixels.setPixelColor(0, pixels.Color(r, g, b));
@@ -135,14 +174,11 @@ void setup() {
     pixels.setBrightness(5);
     setLedColor(0, 0, 0);
 
-    wifiConnect();
-    serverSetup();
+    meshSetup();
 
     for (int i = 0; i < NLIGHTS; i++) {
         pinMode(buttonPins[i], INPUT_PULLDOWN);
     }
-
-    updateLedStatus();
 }
 
 void loop() {
@@ -159,7 +195,6 @@ void loop() {
             msg = 'a' + i;
             Serial.print("Publishing message: ");
             Serial.println(msg);
-            client.publish("/switch/" DEVICE_ID, String(msg).c_str());
         }
 
         lastButtonState[i] = currentState;
@@ -167,7 +202,6 @@ void loop() {
 
     updateLedStatus();
 
-    if (WiFi.status() != WL_CONNECTED) wifiConnect();
-
+    mesh.update();
     server.handleClient();
 }

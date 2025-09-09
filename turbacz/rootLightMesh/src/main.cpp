@@ -6,12 +6,18 @@
 #include <Update.h>
 #include <WiFi.h>
 #include <WiFiClient.h>
-#include <consts.h>
 #include <credentials.h>
 #include <painlessMesh.h>
 #include <webpage.h>
 
-#include <map>
+#include <algorithm>
+#include <vector>
+
+#define HOSTNAME "ROOT_Node"
+
+#define NLIGHTS 7
+#define LED_PIN 8
+#define NUM_LEDS 1
 
 void receivedCallback(const uint32_t& from, const String& msg);
 void droppedConnectionCallback(uint32_t nodeId);
@@ -27,7 +33,11 @@ PubSubClient mqttClient(mqtt_broker, mqtt_port, wifiClient);
 
 IPAddress getlocalIP() { return IPAddress(mesh.getStationIP()); }
 
-std::map<uint32_t, String> nodes;
+IPAddress mqtt_broker(192, 168, 3, 244);
+const int mqtt_port = 1883;
+const char* mqttUser = "root_node";
+
+std::vector<uint32_t> nodes;
 
 void setLedColor(uint8_t r, uint8_t g, uint8_t b) {
     pixels.setPixelColor(0, pixels.Color(r, g, b));
@@ -37,14 +47,9 @@ void setLedColor(uint8_t r, uint8_t g, uint8_t b) {
 // DO NAPRAWY
 void updateLedStatus() {
     bool wifi_ok = (WiFi.status() == WL_CONNECTED);
-    bool server_ok = serverStarted;
 
-    if (wifi_ok && server_ok)
+    if (wifi_ok)
         setLedColor(255, 255, 255);
-    else if (wifi_ok)
-        setLedColor(255, 0, 0);
-    else if (server_ok)
-        setLedColor(0, 255, 0);
     else
         setLedColor(0, 0, 0);
 }
@@ -77,25 +82,34 @@ void serverInit() {
         "/update", HTTP_POST,
         [](AsyncWebServerRequest* request) {
             bool updateSuccess = !Update.hasError();
-            request->send(200, "text/plain",
-                          updateSuccess ? "Update successful. Rebooting..."
-                                        : "Update failed!");
+            AsyncWebServerResponse* response = request->beginResponse(
+                200, "text/plain",
+                updateSuccess ? "Update successful. Rebooting..."
+                              : "Update failed!");
+            response->addHeader("Connection", "close");
+            request->send(response);
+
             if (updateSuccess) {
-                delay(1000);
+                // Give browser time to read response
+                Serial.println("OTA complete, rebooting in 2s...");
+                delay(2000);
                 ESP.restart();
             }
         },
         [](AsyncWebServerRequest* request, String filename, size_t index,
            uint8_t* data, size_t len, bool final) {
             if (!index) {
-                Update.begin(UPDATE_SIZE_UNKNOWN);
+                Serial.printf("Update Start: %s\n", filename.c_str());
+                if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+                    Update.printError(Serial);
+                }
             }
             if (Update.write(data, len) != len) {
                 Update.printError(Serial);
             }
             if (final) {
                 if (Update.end(true)) {
-                    Serial.println("Update complete");
+                    Serial.printf("Update Success: %u bytes\n", index + len);
                 } else {
                     Update.printError(Serial);
                 }
@@ -125,7 +139,7 @@ void meshInit() {
 }
 
 void droppedConnectionCallback(uint32_t nodeId) {
-    auto it = nodes.find(nodeId);
+    auto it = std::find(nodes.begin(), nodes.end(), nodeId);
     if (it != nodes.end()) {
         Serial.print("Node ");
         Serial.print(nodeId);
@@ -152,7 +166,7 @@ void receivedCallback(const uint32_t& from, const String& msg) {
         Serial.println("Publishing to topic: " + topic);
         mqttClient.publish(topic.c_str(), msg.c_str());
     } else {
-        nodes[from] = msg;
+        nodes[from] = atoi(msg.c_str());
         Serial.print("Node ");
         Serial.print(from);
         Serial.print(" registered as ");
@@ -168,6 +182,7 @@ void setup() {
     setLedColor(0, 0, 0);
 
     meshInit();
+    Serial.printf("MAC Address: %s\n", WiFi.macAddress().c_str());
 }
 
 void loop() {

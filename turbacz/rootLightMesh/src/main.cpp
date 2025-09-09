@@ -21,11 +21,11 @@
 
 IPAddress mqtt_broker(192, 168, 3, 244);
 const int mqtt_port = 1883;
-const char* mqttUser = "root_node";
+const char *mqttUser = "root_node";
 
 std::vector<uint32_t> nodes;
 
-void receivedCallback(const uint32_t& from, const String& msg);
+void receivedCallback(const uint32_t &from, const String &msg);
 void droppedConnectionCallback(uint32_t nodeId);
 void newConnectionCallback(uint32_t nodeId);
 
@@ -75,29 +75,37 @@ void mqttConnect() {
 }
 
 void serverInit() {
-    server.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
+    // Serve main page
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
         request->send(200, "text/html", webpage);
     });
+
+    // Handle update upload
     server.on(
         "/update", HTTP_POST,
-        [](AsyncWebServerRequest* request) {
-            bool updateSuccess = !Update.hasError();
-            AsyncWebServerResponse* response = request->beginResponse(
+        [](AsyncWebServerRequest *request) {
+            bool success = !Update.hasError();
+
+            AsyncWebServerResponse *response = request->beginResponse(
                 200, "text/plain",
-                updateSuccess ? "Update successful. Rebooting..."
-                              : "Update failed!");
+                success ? "Update successful! Rebooting in 5s..."
+                        : "Update failed!");
             response->addHeader("Connection", "close");
             request->send(response);
 
-            if (updateSuccess) {
-                // Give browser time to read response
-                Serial.println("OTA complete, rebooting in 2s...");
-                delay(2000);
-                ESP.restart();
+            if (success) {
+                Serial.println("OTA update finished, reboot in 5 seconds...");
+                // Restart AFTER sending response
+                xTaskCreate(
+                    [](void *param) {
+                        delay(5000);
+                        ESP.restart();
+                    },
+                    "rebootTask", 4096, NULL, 1, NULL);
             }
         },
-        [](AsyncWebServerRequest* request, String filename, size_t index,
-           uint8_t* data, size_t len, bool final) {
+        [](AsyncWebServerRequest *request, String filename, size_t index,
+           uint8_t *data, size_t len, bool final) {
             if (!index) {
                 Serial.printf("Update Start: %s\n", filename.c_str());
                 if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
@@ -115,8 +123,8 @@ void serverInit() {
                 }
             }
         });
-    server.begin();
 
+    server.begin();
     Serial.println("HTTP server started");
 }
 
@@ -154,7 +162,7 @@ void newConnectionCallback(uint32_t nodeId) {
     mesh.sendSingle(nodeId, String(rootId));
 }
 
-void receivedCallback(const uint32_t& from, const String& msg) {
+void receivedCallback(const uint32_t &from, const String &msg) {
     Serial.printf("bridge: Received from %u msg=%s\n", from, msg.c_str());
 
     if (msg[0] >= 97) {

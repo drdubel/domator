@@ -182,7 +182,6 @@ void setup() {
     setLedColor(0, 0, 0);
 
     meshInit();
-    Serial.printf("MAC Address: %s\n", WiFi.macAddress().c_str());
 }
 
 void loop() {

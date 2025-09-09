@@ -5,10 +5,16 @@
 #include <Update.h>
 #include <WiFi.h>
 #include <WiFiClient.h>
-#include <consts.h>
 #include <credentials.h>
 #include <painlessMesh.h>
 #include <webpage.h>
+
+#define HOSTNAME "20"
+#define DEVICE_ID "20"
+
+#define NLIGHTS 7
+#define LED_PIN 8
+#define NUM_LEDS 1
 
 void receivedCallback(const uint32_t& from, const String& msg);
 
@@ -20,6 +26,14 @@ painlessMesh mesh;
 
 uint32_t rootId;
 
+const int buttonPins[NLIGHTS] = {A0, A1, A3, A4, A5, 6, 7};
+int lastTimeClick[NLIGHTS];
+int debounceDelay = 250;
+char whichLight;
+int lastButtonState[NLIGHTS] = {HIGH, HIGH, HIGH, HIGH, HIGH, HIGH, HIGH};
+
+char msg;
+
 void setLedColor(uint8_t r, uint8_t g, uint8_t b) {
     pixels.setPixelColor(0, pixels.Color(r, g, b));
     pixels.show();
@@ -28,14 +42,9 @@ void setLedColor(uint8_t r, uint8_t g, uint8_t b) {
 // DO NAPRAWY
 void updateLedStatus() {
     bool wifi_ok = (WiFi.status() == WL_CONNECTED);
-    bool server_ok = serverStarted;
 
-    if (wifi_ok && server_ok)
+    if (wifi_ok)
         setLedColor(255, 255, 255);
-    else if (wifi_ok)
-        setLedColor(255, 0, 0);
-    else if (server_ok)
-        setLedColor(0, 255, 0);
     else
         setLedColor(0, 0, 0);
 }
@@ -74,12 +83,6 @@ void setup() {
 void loop() {
     mesh.update();
 
-    static unsigned long lastSendTime = 0;
-    if (millis() - lastSendTime >= 2000) {
-        lastSendTime = millis();
-        mesh.sendBroadcast(String(char('a' + 1)));
-    }
-
     for (int i = 0; i < NLIGHTS; i++) {
         int currentState = digitalRead(buttonPins[i]);
 
@@ -92,7 +95,7 @@ void loop() {
 
             msg = 'a' + i;
             Serial.print("Publishing message: ");
-            Serial.println(DEVICE_ID + msg);
+            Serial.println(msg);
 
             mesh.sendSingle(rootId, String(msg));
         }

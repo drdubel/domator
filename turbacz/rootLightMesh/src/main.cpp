@@ -19,6 +19,12 @@
 #define LED_PIN 8
 #define NUM_LEDS 1
 
+IPAddress mqtt_broker(192, 168, 3, 244);
+const int mqtt_port = 1883;
+const char* mqttUser = "root_node";
+
+std::vector<uint32_t> nodes;
+
 void receivedCallback(const uint32_t& from, const String& msg);
 void droppedConnectionCallback(uint32_t nodeId);
 void newConnectionCallback(uint32_t nodeId);
@@ -32,12 +38,6 @@ WiFiClient wifiClient;
 PubSubClient mqttClient(mqtt_broker, mqtt_port, wifiClient);
 
 IPAddress getlocalIP() { return IPAddress(mesh.getStationIP()); }
-
-IPAddress mqtt_broker(192, 168, 3, 244);
-const int mqtt_port = 1883;
-const char* mqttUser = "root_node";
-
-std::vector<uint32_t> nodes;
 
 void setLedColor(uint8_t r, uint8_t g, uint8_t b) {
     pixels.setPixelColor(0, pixels.Color(r, g, b));
@@ -161,7 +161,7 @@ void receivedCallback(const uint32_t& from, const String& msg) {
         if (WiFi.status() != WL_CONNECTED) return;
         if (!mqttClient.connected()) mqttConnect();
 
-        String topic = "/switch/" + nodes[from];
+        String topic = "/switch/" + from;
 
         Serial.println("Publishing to topic: " + topic);
         mqttClient.publish(topic.c_str(), msg.c_str());

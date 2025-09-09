@@ -14,6 +14,7 @@
 #include <map>
 
 void receivedCallback(const uint32_t& from, const String& msg);
+void droppedConnectionCallback(uint32_t nodeId);
 void newConnectionCallback(uint32_t nodeId);
 
 Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
@@ -111,6 +112,7 @@ void meshInit() {
     mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA, 6);
     mesh.onReceive(&receivedCallback);
     mesh.onNewConnection(&newConnectionCallback);
+    mesh.onDroppedConnection(&droppedConnectionCallback);
 
     mesh.stationManual(STATION_SSID, STATION_PASSWORD);
     mesh.setHostname(HOSTNAME);
@@ -120,22 +122,16 @@ void meshInit() {
 
     uint32_t rootId = mesh.getNodeId();
     Serial.println("ROOT:" + String(rootId));
+}
 
-    while (WiFi.status() != WL_CONNECTED) {
-        mesh.update();
-        Serial.print(".");
-
-        delay(250);
-        setLedColor(255, 0, 0);
-        delay(250);
-        setLedColor(0, 0, 0);
+void droppedConnectionCallback(uint32_t nodeId) {
+    auto it = nodes.find(nodeId);
+    if (it != nodes.end()) {
+        Serial.print("Node ");
+        Serial.print(nodeId);
+        Serial.println(" disconnected, removing from nodes map.");
+        nodes.erase(it);
     }
-
-    myIP = getlocalIP();
-    Serial.println("My IP is " + myIP.toString());
-
-    serverInit();
-    mqttConnect();
 }
 
 void newConnectionCallback(uint32_t nodeId) {
@@ -176,6 +172,15 @@ void setup() {
 
 void loop() {
     mesh.update();
+
+    if (myIP != getlocalIP()) {
+        Serial.println("Connected to external WiFi!");
+        myIP = getlocalIP();
+        Serial.println("My IP is " + myIP.toString());
+
+        serverInit();
+        mqttConnect();
+    }
 
     if (WiFi.status() == WL_CONNECTED) {
         if (!mqttClient.connected()) mqttConnect();

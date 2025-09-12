@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
+#include <HTTPClient.h>
 #include <Update.h>
 #include <WiFi.h>
 #include <WiFiClient.h>
@@ -32,6 +33,8 @@ int debounceDelay = 250;
 char whichLight;
 int lastButtonState[NLIGHTS] = {HIGH, HIGH, HIGH, HIGH, HIGH, HIGH, HIGH};
 
+const char* firmware_url = "https://czupel.dry.pl/static/data/firmware.bin";
+
 char msg;
 
 void setLedColor(uint8_t r, uint8_t g, uint8_t b) {
@@ -49,6 +52,64 @@ void updateLedStatus() {
         setLedColor(0, 0, 0);
 }
 
+void performFirmwareUpdate() {
+    Serial.println("[OTA] Stopping mesh...");
+    mesh.stop();  // stop mesh to free Wi-Fi
+
+    Serial.println("[OTA] Switching to STA mode...");
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(STATION_SSID, STATION_PASSWORD);
+
+    Serial.print("[OTA] Connecting to WiFi");
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(300);
+        Serial.print(".");
+    }
+    Serial.println(" connected!");
+
+    WiFiClientSecure client;
+    client
+        .setInsecure();  // disable cert check (use proper cert in production!)
+    HTTPClient http;
+
+    Serial.println("[OTA] Connecting to update server...");
+    if (http.begin(client, firmware_url)) {
+        int httpCode = http.GET();
+        if (httpCode == HTTP_CODE_OK) {
+            int contentLength = http.getSize();
+            Serial.printf("[OTA] Firmware size: %d bytes\n", contentLength);
+
+            if (Update.begin(contentLength)) {
+                Serial.println("[OTA] Writing firmware...");
+                size_t written = Update.writeStream(*http.getStreamPtr());
+
+                Serial.printf("[OTA] Written %d/%d bytes\n", (int)written,
+                              contentLength);
+
+                if (Update.end()) {
+                    if (Update.isFinished()) {
+                        Serial.println("[OTA] Update finished, restarting...");
+                        ESP.restart();
+                    } else {
+                        Serial.println(
+                            "[OTA] Update not finished, something went wrong.");
+                    }
+                } else {
+                    Serial.printf("[OTA] Update error: %d\n",
+                                  Update.getError());
+                }
+            } else {
+                Serial.println("[OTA] Not enough space for OTA.");
+            }
+        } else {
+            Serial.printf("[OTA] HTTP GET failed, code: %d\n", httpCode);
+        }
+        http.end();
+    } else {
+        Serial.println("[OTA] Unable to connect to update server!");
+    }
+}
+
 void meshInit() {
     mesh.setDebugMsgTypes(ERROR | STARTUP | CONNECTION);
 
@@ -59,11 +120,15 @@ void meshInit() {
 void receivedCallback(const uint32_t& from, const String& msg) {
     Serial.printf("bridge: Received from %u msg=%s\n", from, msg.c_str());
 
+    if (msg == "U") {
+        setLedColor(0, 0, 255);
+        performFirmwareUpdate();
+        return;
+    }
+
     rootId = msg.toInt();
     Serial.print("New root ID: ");
     Serial.println(rootId);
-
-    mesh.sendSingle(rootId, String(DEVICE_ID));
 }
 
 void setup() {
@@ -71,7 +136,6 @@ void setup() {
 
     pixels.begin();
     pixels.setBrightness(5);
-    setLedColor(0, 0, 0);
 
     meshInit();
 

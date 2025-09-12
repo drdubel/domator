@@ -11,7 +11,7 @@
 #include <webpage.h>
 
 #include <algorithm>
-#include <vector>
+#include <map>
 
 #define HOSTNAME "ROOT_Node"
 
@@ -22,8 +22,9 @@
 IPAddress mqtt_broker(192, 168, 3, 244);
 const int mqtt_port = 1883;
 const char *mqttUser = "root_node";
+uint32_t device_id;
 
-std::vector<uint32_t> nodes;
+std::map<uint32_t, String> nodes;
 
 void receivedCallback(const uint32_t &from, const String &msg);
 void droppedConnectionCallback(uint32_t nodeId);
@@ -73,8 +74,10 @@ void mqttConnect() {
         }
     }
 
-    mqttClient.publish("/switch/0", "connected");
+    mqttClient.publish(("/switch/" + String(device_id)).c_str(), "connected");
+    mqttClient.subscribe("/switch/cmd/+");
     mqttClient.subscribe("/switch/cmd");
+    mqttClient.subscribe("/relay/cmd");
 }
 
 void serverInit() {
@@ -142,8 +145,8 @@ void meshInit() {
     mesh.setRoot(true);
     mesh.setContainsRoot(true);
 
-    uint32_t rootId = mesh.getNodeId();
-    Serial.println("ROOT:" + String(rootId));
+    device_id = mesh.getNodeId();
+    Serial.println("ROOT:" + String(device_id));
 }
 
 void mqttCallback(char *topic, byte *payload, unsigned int length) {
@@ -152,35 +155,72 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
         msg += (char)payload[i];
     }
 
-    if (String(topic) == "/switch/cmd" && msg == "U") {
-        Serial.println(
-            "MQTT: Received 'U' on /switch/cmd, sending 'U' to all mesh "
-            "nodes.");
-        for (auto nodeId : nodes) {
+    if (msg == "U") {
+        Serial.println("MQTT: Received 'U' on " + String(topic) +
+                       ", sending 'U' to not all mesh "
+                       "nodes.");
+        for (const auto &pair : nodes) {
+            uint32_t nodeId = pair.first;
+            String nodeType = pair.second;
+            if ((nodeType == "relay" && topic == "/switch/cmd") ||
+                (nodeType == "switch" && topic == "/relay/cmd")) {
+                Serial.println("Skipping node " + String(nodeId) + " of type " +
+                               nodeType + " for topic " + String(topic));
+                continue;
+            }
+
+            Serial.println("MQTT: Sending 'U' to node " + String(nodeId));
             mesh.sendSingle(nodeId, "U");
+        }
+    } else {
+        String topicStr = String(topic);
+        int lastSlash = topicStr.lastIndexOf('/');
+        if (lastSlash != -1 && lastSlash < topicStr.length() - 1) {
+            String nodeIdStr = topicStr.substring(lastSlash + 1);
+            uint32_t nodeId = strtoul(nodeIdStr.c_str(), NULL, 10);
+            if (nodeId != 0 && nodes.find(nodeId) != nodes.end()) {
+                Serial.println("MQTT: Sending '" + msg + "' to node " +
+                               String(nodeId));
+                mesh.sendSingle(nodeId, msg);
+            }
         }
     }
 }
 
 void droppedConnectionCallback(uint32_t nodeId) {
-    nodes.erase(std::remove(nodes.begin(), nodes.end(), nodeId), nodes.end());
+    nodes.erase(nodeId);
+    Serial.printf("Node %u disconnected, total nodes: %u\n", nodeId,
+                  mesh.getNodeList().size());
 }
 
 void newConnectionCallback(uint32_t nodeId) {
     uint32_t rootId = mesh.getNodeId();
 
-    nodes.push_back(nodeId);
     mesh.sendSingle(nodeId, String(rootId));
 }
 
 void receivedCallback(const uint32_t &from, const String &msg) {
     Serial.printf("bridge: Received from %u msg=%s\n", from, msg.c_str());
 
-    if (msg[0] >= 97) {
+    if (msg == "R") {
+        Serial.println("New node type: relay");
+        nodes[from] = "relay";
+    } else if (msg == "S") {
+        Serial.println("New node type: switch");
+        nodes[from] = "switch";
+    } else if (msg[0] >= 97 && msg[0] < 97 + NLIGHTS && msg.length() == 2) {
         if (WiFi.status() != WL_CONNECTED) return;
         if (!mqttClient.connected()) mqttConnect();
 
         String topic = "/switch/" + from;
+
+        Serial.println("Publishing to topic: " + topic);
+        mqttClient.publish(topic.c_str(), msg.c_str());
+    } else if (msg[0] >= 65 && msg[0] < 65 + NLIGHTS && msg.length() == 2) {
+        if (WiFi.status() != WL_CONNECTED) return;
+        if (!mqttClient.connected()) mqttConnect();
+
+        String topic = "/relay/state/" + from;
 
         Serial.println("Publishing to topic: " + topic);
         mqttClient.publish(topic.c_str(), msg.c_str());

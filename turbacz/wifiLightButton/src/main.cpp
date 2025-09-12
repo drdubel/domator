@@ -54,8 +54,7 @@ void updateLedStatus() {
 
 void performFirmwareUpdate() {
     Serial.println("[OTA] Stopping mesh...");
-    mesh.stop();  // stop mesh to free Wi-Fi
-
+    mesh.stop();
     Serial.println("[OTA] Switching to STA mode...");
     WiFi.mode(WIFI_STA);
     WiFi.begin(STATION_SSID, STATION_PASSWORD);
@@ -68,8 +67,7 @@ void performFirmwareUpdate() {
     Serial.println(" connected!");
 
     WiFiClientSecure client;
-    client
-        .setInsecure();  // disable cert check (use proper cert in production!)
+    client.setInsecure();
     HTTPClient http;
 
     Serial.println("[OTA] Connecting to update server...");

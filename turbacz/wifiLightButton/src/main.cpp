@@ -8,10 +8,6 @@
 #include <WiFiClient.h>
 #include <credentials.h>
 #include <painlessMesh.h>
-#include <webpage.h>
-
-#define HOSTNAME "20"
-#define DEVICE_ID "20"
 
 #define NLIGHTS 7
 #define LED_PIN 8
@@ -33,7 +29,8 @@ int debounceDelay = 250;
 char whichLight;
 int lastButtonState[NLIGHTS] = {HIGH, HIGH, HIGH, HIGH, HIGH, HIGH, HIGH};
 
-const char* firmware_url = "https://czupel.dry.pl/static/data/firmware.bin";
+const char* firmware_url =
+    "https://czupel.dry.pl/static/data/wifiLightButton.bin";
 
 char msg;
 
@@ -127,6 +124,8 @@ void receivedCallback(const uint32_t& from, const String& msg) {
     rootId = msg.toInt();
     Serial.print("New root ID: ");
     Serial.println(rootId);
+
+    mesh.sendSingle(from, "S");
 }
 
 void setup() {

@@ -28,6 +28,7 @@ std::vector<uint32_t> nodes;
 void receivedCallback(const uint32_t &from, const String &msg);
 void droppedConnectionCallback(uint32_t nodeId);
 void newConnectionCallback(uint32_t nodeId);
+void mqttCallback(char *topic, byte *payload, unsigned int length);
 
 Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 
@@ -59,6 +60,7 @@ void mqttConnect() {
     Serial.print(mqtt_broker);
     Serial.print(" with user ");
     Serial.println(mqttUser);
+    mqttClient.setCallback(mqttCallback);
 
     while (!mqttClient.connected()) {
         if (mqttClient.connect(mqttUser)) {
@@ -72,15 +74,14 @@ void mqttConnect() {
     }
 
     mqttClient.publish("/switch/0", "connected");
+    mqttClient.subscribe("/switch/cmd");
 }
 
 void serverInit() {
-    // Serve main page
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
         request->send(200, "text/html", webpage);
     });
 
-    // Handle update upload
     server.on(
         "/update", HTTP_POST,
         [](AsyncWebServerRequest *request) {
@@ -95,7 +96,6 @@ void serverInit() {
 
             if (success) {
                 Serial.println("OTA update finished, reboot in 5 seconds...");
-                // Restart AFTER sending response
                 xTaskCreate(
                     [](void *param) {
                         delay(5000);
@@ -146,19 +146,30 @@ void meshInit() {
     Serial.println("ROOT:" + String(rootId));
 }
 
-void droppedConnectionCallback(uint32_t nodeId) {
-    auto it = std::find(nodes.begin(), nodes.end(), nodeId);
-    if (it != nodes.end()) {
-        Serial.print("Node ");
-        Serial.print(nodeId);
-        Serial.println(" disconnected, removing from nodes map.");
-        nodes.erase(it);
+void mqttCallback(char *topic, byte *payload, unsigned int length) {
+    String msg;
+    for (unsigned int i = 0; i < length; i++) {
+        msg += (char)payload[i];
     }
+
+    if (String(topic) == "/switch/cmd" && msg == "U") {
+        Serial.println(
+            "MQTT: Received 'U' on /switch/cmd, sending 'U' to all mesh "
+            "nodes.");
+        for (auto nodeId : nodes) {
+            mesh.sendSingle(nodeId, "U");
+        }
+    }
+}
+
+void droppedConnectionCallback(uint32_t nodeId) {
+    nodes.erase(std::remove(nodes.begin(), nodes.end(), nodeId), nodes.end());
 }
 
 void newConnectionCallback(uint32_t nodeId) {
     uint32_t rootId = mesh.getNodeId();
 
+    nodes.push_back(nodeId);
     mesh.sendSingle(nodeId, String(rootId));
 }
 
@@ -173,12 +184,6 @@ void receivedCallback(const uint32_t &from, const String &msg) {
 
         Serial.println("Publishing to topic: " + topic);
         mqttClient.publish(topic.c_str(), msg.c_str());
-    } else {
-        nodes[from] = atoi(msg.c_str());
-        Serial.print("Node ");
-        Serial.print(from);
-        Serial.print(" registered as ");
-        Serial.println(msg);
     }
 }
 

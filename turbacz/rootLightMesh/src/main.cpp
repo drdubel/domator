@@ -13,15 +13,15 @@
 #include <algorithm>
 #include <map>
 
-#define HOSTNAME "ROOT_Node"
+#define HOSTNAME "mesh_root"
 
 #define NLIGHTS 7
 #define LED_PIN 8
 #define NUM_LEDS 1
 
-IPAddress mqtt_broker(192, 168, 3, 244);
+IPAddress mqtt_broker(192, 168, 3, 10);
 const int mqtt_port = 1883;
-const char *mqttUser = "root_node";
+const char *mqttUser = "mesh_root";
 uint32_t device_id;
 
 std::map<uint32_t, String> nodes;
@@ -66,7 +66,7 @@ void mqttConnect() {
     mqttClient.setCallback(mqttCallback);
 
     while (!mqttClient.connected()) {
-        if (mqttClient.connect(mqttUser)) {
+        if (mqttClient.connect(mqttUser, mqttUser, mqttPassword)) {
             Serial.println("Connected to MQTT broker");
         } else {
             setLedColor(0, 255, 0);
@@ -76,7 +76,7 @@ void mqttConnect() {
         }
     }
 
-    mqttClient.publish(("/switch/" + String(device_id)).c_str(), "connected");
+    mqttClient.publish("/switch/0", "connected");
     mqttClient.subscribe("/switch/cmd");
     mqttClient.subscribe("/relay/cmd/+");
     mqttClient.subscribe("/relay/cmd");
@@ -224,16 +224,14 @@ void receivedCallback(const uint32_t &from, const String &msg) {
         if (WiFi.status() != WL_CONNECTED) return;
         if (!mqttClient.connected()) mqttConnect();
 
-        String topic = "/switch/" + String(from);
+        String topic = "/switch/state/" + String(from);
 
         Serial.println("Publishing to topic: " + topic);
         mqttClient.publish(topic.c_str(), msg.c_str());
     } else if (msg[0] >= 65 && msg[0] < 65 + NLIGHTS && msg.length() == 2) {
-        Serial.println("0");
         if (WiFi.status() != WL_CONNECTED) return;
         if (!mqttClient.connected()) mqttConnect();
 
-        Serial.println("1");
         String topic = "/relay/state/" + String(from);
 
         Serial.println("Publishing to topic: " + topic);

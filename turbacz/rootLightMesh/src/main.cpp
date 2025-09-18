@@ -39,6 +39,8 @@ painlessMesh mesh;
 WiFiClient wifiClient;
 PubSubClient mqttClient(mqtt_broker, mqtt_port, wifiClient);
 
+static unsigned long lastPrint = 0;
+
 IPAddress getlocalIP() { return IPAddress(mesh.getStationIP()); }
 
 void setLedColor(uint8_t r, uint8_t g, uint8_t b) {
@@ -75,8 +77,8 @@ void mqttConnect() {
     }
 
     mqttClient.publish(("/switch/" + String(device_id)).c_str(), "connected");
-    mqttClient.subscribe("/switch/cmd/+");
     mqttClient.subscribe("/switch/cmd");
+    mqttClient.subscribe("/relay/cmd/+");
     mqttClient.subscribe("/relay/cmd");
 }
 
@@ -155,6 +157,8 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
         msg += (char)payload[i];
     }
 
+    Serial.printf("MQTT: Received message on %s: %s\n", topic, msg.c_str());
+
     if (msg == "U") {
         Serial.println("MQTT: Received 'U' on " + String(topic) +
                        ", sending 'U' to not all mesh "
@@ -173,16 +177,24 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
             mesh.sendSingle(nodeId, "U");
         }
     } else {
-        String topicStr = String(topic);
-        int lastSlash = topicStr.lastIndexOf('/');
-        if (lastSlash != -1 && lastSlash < topicStr.length() - 1) {
-            String nodeIdStr = topicStr.substring(lastSlash + 1);
-            uint32_t nodeId = strtoul(nodeIdStr.c_str(), NULL, 10);
-            if (nodeId != 0 && nodes.find(nodeId) != nodes.end()) {
-                Serial.println("MQTT: Sending '" + msg + "' to node " +
+        Serial.println("MQTT: Processing non-'U' message on topic " +
+                       String(topic) + " with msg: " + msg);
+        size_t lastSlash = String(topic).lastIndexOf('/');
+        if (lastSlash != -1 && lastSlash < strlen(topic) - 1) {
+            String idStr = String(topic).substring(lastSlash + 1);
+            uint32_t nodeId = idStr.toInt();
+            Serial.println("MQTT: Extracted nodeId " + String(nodeId) +
+                           " from topic");
+            if (nodes.count(nodeId)) {
+                Serial.println("MQTT: Sending msg '" + msg + "' to node " +
                                String(nodeId));
                 mesh.sendSingle(nodeId, msg);
+            } else {
+                Serial.println("MQTT: Node " + String(nodeId) +
+                               " not found in nodes map, skipping send");
             }
+        } else {
+            Serial.println("MQTT: Invalid topic format for nodeId extraction");
         }
     }
 }
@@ -212,15 +224,17 @@ void receivedCallback(const uint32_t &from, const String &msg) {
         if (WiFi.status() != WL_CONNECTED) return;
         if (!mqttClient.connected()) mqttConnect();
 
-        String topic = "/switch/" + from;
+        String topic = "/switch/" + String(from);
 
         Serial.println("Publishing to topic: " + topic);
         mqttClient.publish(topic.c_str(), msg.c_str());
     } else if (msg[0] >= 65 && msg[0] < 65 + NLIGHTS && msg.length() == 2) {
+        Serial.println("0");
         if (WiFi.status() != WL_CONNECTED) return;
         if (!mqttClient.connected()) mqttConnect();
 
-        String topic = "/relay/state/" + from;
+        Serial.println("1");
+        String topic = "/relay/state/" + String(from);
 
         Serial.println("Publishing to topic: " + topic);
         mqttClient.publish(topic.c_str(), msg.c_str());
@@ -253,5 +267,13 @@ void loop() {
         if (!mqttClient.connected()) mqttConnect();
 
         mqttClient.loop();
+    }
+
+    if (millis() - lastPrint >= 10000) {
+        lastPrint = millis();
+        Serial.println("Connected nodes:");
+        for (const auto &pair : nodes) {
+            Serial.printf("Node %u: %s\n", pair.first, pair.second.c_str());
+        }
     }
 }

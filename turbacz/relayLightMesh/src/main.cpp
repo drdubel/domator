@@ -133,6 +133,7 @@ void receivedCallback(const uint32_t& from, const String& msg) {
 void setup() {
     Serial.begin(115200);
 
+    delay(2000);
     meshInit();
 
     for (int i = 0; i < NLIGHTS; i++) {

@@ -1,0 +1,3 @@
+[submodule "turbacz/buttonLightMesh/components/esp_mesh_lite"]
+	path = turbacz/buttonLightMesh/components/esp_mesh_lite
+	url = https://github.com/espressif/esp-mesh-lite.git

@@ -1,3 +1,4 @@
+#include <Adafruit_NeoPixel.h>
 #include <Arduino.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
@@ -8,35 +9,52 @@
 #include <credentials.h>
 #include <painlessMesh.h>
 
-#define USE_BOARD 75
-#define NO_PWMPIN
-const byte wifiActivityPin = 255;
-
-#define NLIGHTS 8
+#define NLIGHTS 7
+#define LED_PIN 8
+#define NUM_LEDS 1
 
 void receivedCallback(const uint32_t& from, const String& msg);
+
+Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 IPAddress myIP(0, 0, 0, 0);
 AsyncWebServer server(80);
 painlessMesh mesh;
 
-uint32_t rootId = 522849561;
+uint32_t rootId;
 
-int relays[NLIGHTS] = {32, 33, 25, 26, 27, 14, 12, 13};
-int lights[NLIGHTS] = {0, 0, 0, 0, 0, 0, 0, 0};
+const int buttonPins[NLIGHTS] = {A0, A1, A3, A4, A5, 6, 7};
+int lastTimeClick[NLIGHTS];
+int debounceDelay = 250;
 char whichLight;
+int lastButtonState[NLIGHTS] = {HIGH, HIGH, HIGH, HIGH, HIGH, HIGH, HIGH};
 
-bool sentOnConnect = false;
-const char* firmware_url = "https://czupel.dry.pl/static/data/relay8wifi.bin";
+const char* firmware_url =
+    "https://czupel.dry.pl/static/data/wifiLightButton.bin";
 
-char message[2];
+char msg;
+
+void setLedColor(uint8_t r, uint8_t g, uint8_t b) {
+    pixels.setPixelColor(0, pixels.Color(r, g, b));
+    pixels.show();
+}
+
+// DO NAPRAWY
+void updateLedStatus() {
+    bool wifi_ok = (WiFi.status() == WL_CONNECTED);
+
+    if (wifi_ok)
+        setLedColor(255, 255, 255);
+    else
+        setLedColor(0, 0, 0);
+}
 
 void performFirmwareUpdate() {
     Serial.println("[OTA] Stopping mesh...");
     mesh.stop();
     Serial.println("[OTA] Switching to STA mode...");
     WiFi.mode(WIFI_STA);
-    WiFi.begin(STATION_SSID, STATION_PASSWORD);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
     Serial.print("[OTA] Connecting to WiFi");
     while (WiFi.status() != WL_CONNECTED) {
@@ -88,63 +106,62 @@ void performFirmwareUpdate() {
 }
 
 void meshInit() {
-    mesh.setDebugMsgTypes(ERROR | STARTUP | CONNECTION);
+    mesh.setDebugMsgTypes(ERROR | STARTUP | CONNECTION | COMMUNICATION |
+                          GENERAL);
 
     mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA, 6);
     mesh.onReceive(&receivedCallback);
-
-    Serial.printf("Mesh started with ID %u\n", mesh.getNodeId());
 }
 
 void receivedCallback(const uint32_t& from, const String& msg) {
     Serial.printf("bridge: Received from %u msg=%s\n", from, msg.c_str());
 
-    if (msg == "S") {
-        for (int i = 0; i < NLIGHTS; ++i) {
-            message[0] = 'A' + i;
-            message[1] = lights[i] ? '1' : '0';
-
-            mesh.sendSingle(from, String(message, 2));
-        }
-    } else if (msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS && msg.length() == 2) {
-        whichLight = (char)msg[0] - 'a';
-        lights[whichLight] = (char)msg[1] - '0';
-
-        digitalWrite(relays[whichLight], lights[whichLight] ? HIGH : LOW);
-
-        message[0] = 'A' + whichLight;
-        message[1] = lights[whichLight] ? '1' : '0';
-        mesh.sendSingle(from, String(message, 2));
-
-        Serial.print("Light ");
-        Serial.print('a' + whichLight);
-        Serial.print(" set to ");
-        Serial.println(lights[whichLight] ? "ON" : "OFF");
-    } else if (msg == "U") {
+    if (msg == "U") {
+        setLedColor(0, 0, 255);
         performFirmwareUpdate();
-    } else {
-        mesh.sendSingle(from, "R");
+        return;
     }
+
+    rootId = msg.toInt();
+    Serial.print("New root ID: ");
+    Serial.println(rootId);
+
+    mesh.sendSingle(from, "S");
 }
 
 void setup() {
     Serial.begin(115200);
 
-    delay(2000);
+    pixels.begin();
+    pixels.setBrightness(5);
+
     meshInit();
 
     for (int i = 0; i < NLIGHTS; i++) {
-        pinMode(relays[i], OUTPUT);
-        digitalWrite(relays[i], LOW);
+        pinMode(buttonPins[i], INPUT_PULLDOWN);
     }
-
-    pinMode(23, OUTPUT);
-    digitalWrite(23, LOW);
-
-    mesh.onNewConnection([](uint32_t nodeId) {
-        mesh.sendSingle(rootId, "R");
-        Serial.println("Sent 'R' to root!");
-    });
 }
 
-void loop() { mesh.update(); }
+void loop() {
+    mesh.update();
+
+    for (int i = 0; i < NLIGHTS; i++) {
+        int currentState = digitalRead(buttonPins[i]);
+
+        if (millis() - lastTimeClick[i] < debounceDelay) {
+            continue;
+        }
+
+        if (currentState == HIGH && lastButtonState[i] == LOW) {
+            lastTimeClick[i] = millis();
+
+            msg = 'a' + i;
+            Serial.print("Publishing message: ");
+            Serial.println(msg);
+
+            mesh.sendSingle(rootId, String(msg));
+        }
+
+        lastButtonState[i] = currentState;
+    }
+}

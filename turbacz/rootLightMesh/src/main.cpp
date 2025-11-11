@@ -1,4 +1,3 @@
-#include <Adafruit_NeoPixel.h>
 #include <Arduino.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
@@ -8,7 +7,6 @@
 #include <WiFiClient.h>
 #include <credentials.h>
 #include <painlessMesh.h>
-#include <webpage.h>
 
 #include <algorithm>
 #include <map>
@@ -16,22 +14,18 @@
 #define HOSTNAME "mesh_root"
 
 #define NLIGHTS 7
-#define LED_PIN 8
-#define NUM_LEDS 1
 
 IPAddress mqtt_broker(192, 168, 3, 10);
 const int mqtt_port = 1883;
-const char *mqttUser = "mesh_root";
+const char* mqttUser = "mesh_root";
 uint32_t device_id;
 
 std::map<uint32_t, String> nodes;
 
-void receivedCallback(const uint32_t &from, const String &msg);
+void receivedCallback(const uint32_t& from, const String& msg);
 void droppedConnectionCallback(uint32_t nodeId);
 void newConnectionCallback(uint32_t nodeId);
-void mqttCallback(char *topic, byte *payload, unsigned int length);
-
-Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
+void mqttCallback(char* topic, byte* payload, unsigned int length);
 
 IPAddress myIP(0, 0, 0, 0);
 AsyncWebServer server(80);
@@ -43,35 +37,18 @@ static unsigned long lastPrint = 0;
 
 IPAddress getlocalIP() { return IPAddress(mesh.getStationIP()); }
 
-void setLedColor(uint8_t r, uint8_t g, uint8_t b) {
-    pixels.setPixelColor(0, pixels.Color(r, g, b));
-    pixels.show();
-}
-
-// DO NAPRAWY
-void updateLedStatus() {
-    bool wifi_ok = (WiFi.status() == WL_CONNECTED);
-
-    if (wifi_ok)
-        setLedColor(255, 255, 255);
-    else
-        setLedColor(0, 0, 0);
-}
-
 void mqttConnect() {
     Serial.print("Connecting to MQTT broker at ");
     Serial.print(mqtt_broker);
     Serial.print(" with user ");
-    Serial.println(mqttUser);
+    Serial.println(String(device_id).c_str());
     mqttClient.setCallback(mqttCallback);
 
     while (!mqttClient.connected()) {
-        if (mqttClient.connect(mqttUser, mqttUser, mqttPassword)) {
+        if (mqttClient.connect(String(device_id).c_str(), MQTT_USER,
+                               MQTT_PASSWORD)) {
             Serial.println("Connected to MQTT broker");
         } else {
-            setLedColor(0, 255, 0);
-            delay(500);
-            setLedColor(0, 0, 0);
             delay(500);
         }
     }
@@ -82,76 +59,27 @@ void mqttConnect() {
     mqttClient.subscribe("/relay/cmd");
 }
 
-void serverInit() {
-    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send(200, "text/html", webpage);
-    });
-
-    server.on(
-        "/update", HTTP_POST,
-        [](AsyncWebServerRequest *request) {
-            bool success = !Update.hasError();
-
-            AsyncWebServerResponse *response = request->beginResponse(
-                200, "text/plain",
-                success ? "Update successful! Rebooting in 5s..."
-                        : "Update failed!");
-            response->addHeader("Connection", "close");
-            request->send(response);
-
-            if (success) {
-                Serial.println("OTA update finished, reboot in 5 seconds...");
-                xTaskCreate(
-                    [](void *param) {
-                        delay(5000);
-                        ESP.restart();
-                    },
-                    "rebootTask", 4096, NULL, 1, NULL);
-            }
-        },
-        [](AsyncWebServerRequest *request, String filename, size_t index,
-           uint8_t *data, size_t len, bool final) {
-            if (!index) {
-                Serial.printf("Update Start: %s\n", filename.c_str());
-                if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
-                    Update.printError(Serial);
-                }
-            }
-            if (Update.write(data, len) != len) {
-                Update.printError(Serial);
-            }
-            if (final) {
-                if (Update.end(true)) {
-                    Serial.printf("Update Success: %u bytes\n", index + len);
-                } else {
-                    Update.printError(Serial);
-                }
-            }
-        });
-
-    server.begin();
-    Serial.println("HTTP server started");
-}
-
 void meshInit() {
-    mesh.setDebugMsgTypes(ERROR | STARTUP | CONNECTION);
+    mesh.setDebugMsgTypes(ERROR | STARTUP | CONNECTION | COMMUNICATION |
+                          GENERAL);
 
     mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA, 6);
     mesh.onReceive(&receivedCallback);
     mesh.onNewConnection(&newConnectionCallback);
     mesh.onDroppedConnection(&droppedConnectionCallback);
 
-    mesh.stationManual(STATION_SSID, STATION_PASSWORD);
-    mesh.setHostname(HOSTNAME);
-
+    mesh.stationManual(WIFI_SSID, WIFI_PASSWORD);
+    delay(2000);
     mesh.setRoot(true);
     mesh.setContainsRoot(true);
+
+    mesh.setHostname(HOSTNAME);
 
     device_id = mesh.getNodeId();
     Serial.println("ROOT:" + String(device_id));
 }
 
-void mqttCallback(char *topic, byte *payload, unsigned int length) {
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
     String msg;
     for (unsigned int i = 0; i < length; i++) {
         msg += (char)payload[i];
@@ -163,7 +91,7 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
         Serial.println("MQTT: Received 'U' on " + String(topic) +
                        ", sending 'U' to not all mesh "
                        "nodes.");
-        for (const auto &pair : nodes) {
+        for (const auto& pair : nodes) {
             uint32_t nodeId = pair.first;
             String nodeType = pair.second;
             if ((nodeType == "relay" && topic == "/switch/cmd") ||
@@ -205,13 +133,7 @@ void droppedConnectionCallback(uint32_t nodeId) {
                   mesh.getNodeList().size());
 }
 
-void newConnectionCallback(uint32_t nodeId) {
-    uint32_t rootId = mesh.getNodeId();
-
-    mesh.sendSingle(nodeId, String(rootId));
-}
-
-void receivedCallback(const uint32_t &from, const String &msg) {
+void receivedCallback(const uint32_t& from, const String& msg) {
     Serial.printf("bridge: Received from %u msg=%s\n", from, msg.c_str());
 
     if (msg == "R") {
@@ -242,10 +164,6 @@ void receivedCallback(const uint32_t &from, const String &msg) {
 void setup() {
     Serial.begin(115200);
 
-    pixels.begin();
-    pixels.setBrightness(5);
-    setLedColor(0, 0, 0);
-
     meshInit();
 }
 
@@ -257,7 +175,6 @@ void loop() {
         myIP = getlocalIP();
         Serial.println("My IP is " + myIP.toString());
 
-        serverInit();
         mqttConnect();
     }
 
@@ -268,9 +185,13 @@ void loop() {
     }
 
     if (millis() - lastPrint >= 10000) {
+        if (WiFi.status() != WL_CONNECTED) {
+            Serial.println("Not connected to WiFi, skipping node printout");
+        }
+
         lastPrint = millis();
         Serial.println("Connected nodes:");
-        for (const auto &pair : nodes) {
+        for (const auto& pair : nodes) {
             Serial.printf("Node %u: %s\n", pair.first, pair.second.c_str());
         }
     }

@@ -2,50 +2,60 @@
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <HTTPClient.h>
+#include <PubSubClient.h>
 #include <Update.h>
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <credentials.h>
 #include <painlessMesh.h>
 
-// Hardware definitions
-#define USE_BOARD 75
-#define NO_PWMPIN
-const byte wifiActivityPin = 255;
+#include <algorithm>
+#include <map>
 
-#define NLIGHTS 8
+#define HOSTNAME "mesh_root"
+#define NLIGHTS 7
 
 // Timing constants
-#define STATUS_PRINT_INTERVAL 30000
+#define MQTT_RECONNECT_INTERVAL 30000
+#define NODE_PRINT_INTERVAL 10000
 #define WIFI_CONNECT_TIMEOUT 20000
-#define REGISTRATION_RETRY_INTERVAL 10000
+#define MQTT_CONNECT_TIMEOUT 5
+
+IPAddress mqtt_broker(192, 168, 3, 10);
+const int mqtt_port = 1883;
+const char* mqttUser = "mesh_root";
+uint32_t device_id;
+
+std::map<uint32_t, String> nodes;
 
 // Function declarations
 void receivedCallback(const uint32_t& from, const String& msg);
+void droppedConnectionCallback(uint32_t nodeId);
+void mqttCallback(char* topic, byte* payload, unsigned int length);
+void mqttConnect();
 void meshInit();
 void performFirmwareUpdate();
-void printStatus();
-void sendRegistration();
-void syncLightStates(uint32_t targetNodeId);
+IPAddress getlocalIP();
 
+IPAddress myIP(0, 0, 0, 0);
 painlessMesh mesh;
+WiFiClient wifiClient;
+PubSubClient mqttClient(mqtt_broker, mqtt_port, wifiClient);
 
-// Root node ID - will be discovered dynamically
-uint32_t rootId = 0;
-uint32_t deviceId = 0;
-
-const int relays[NLIGHTS] = {32, 33, 25, 26, 27, 14, 12, 13};
-int lights[NLIGHTS] = {0, 0, 0, 0, 0, 0, 0, 0};
-
-bool registeredWithRoot = false;
-unsigned long lastRegistrationAttempt = 0;
-unsigned long lastStatusPrint = 0;
+// Timing variables
+static unsigned long lastPrint = 0;
+static unsigned long lastMqttReconnect = 0;
 
 const char* firmware_url =
-    "https://czupel.dry.pl/static/data/relay/firmware.bin";
+    "https://czupel.dry.pl/static/data/root/firmware.bin";
 
 void performFirmwareUpdate() {
     Serial.println("[OTA] Starting firmware update...");
+
+    // Clean up existing connections
+    if (mqttClient.connected()) {
+        mqttClient.disconnect();
+    }
 
     Serial.println("[OTA] Stopping mesh...");
     mesh.stop();
@@ -55,7 +65,7 @@ void performFirmwareUpdate() {
     Serial.println("[OTA] Switching to STA mode...");
     WiFi.disconnect(true);
     WiFi.mode(WIFI_STA);
-    WiFi.begin(STATION_SSID, STATION_PASSWORD);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
     Serial.print("[OTA] Connecting to WiFi");
     unsigned long startTime = millis();
@@ -147,141 +157,218 @@ void performFirmwareUpdate() {
     ESP.restart();
 }
 
+IPAddress getlocalIP() { return IPAddress(mesh.getStationIP()); }
+
+void mqttConnect() {
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("MQTT: WiFi not connected, skipping MQTT connection");
+        return;
+    }
+
+    Serial.printf("MQTT: Connecting to broker at %s:%d as %u\n",
+                  mqtt_broker.toString().c_str(), mqtt_port, device_id);
+
+    mqttClient.setCallback(mqttCallback);
+    mqttClient.setKeepAlive(90);
+    mqttClient.setSocketTimeout(30);
+
+    int retries = 0;
+    while (!mqttClient.connected() && retries < MQTT_CONNECT_TIMEOUT) {
+        String clientId = String(device_id);
+
+        if (mqttClient.connect(clientId.c_str(), MQTT_USER, MQTT_PASSWORD)) {
+            Serial.println("MQTT: Connected successfully");
+
+            // Subscribe to topics
+            mqttClient.subscribe("/switch/cmd/+");
+            mqttClient.subscribe("/switch/cmd");
+            mqttClient.subscribe("/relay/cmd/+");
+            mqttClient.subscribe("/relay/cmd");
+
+            // Publish connection state
+            mqttClient.publish("/switch/state/root", "connected", true);
+
+            Serial.printf("MQTT: Free heap after connect: %d bytes\n",
+                          ESP.getFreeHeap());
+            return;
+        } else {
+            Serial.printf("MQTT: Connection failed, rc=%d, retry %d/%d\n",
+                          mqttClient.state(), retries + 1,
+                          MQTT_CONNECT_TIMEOUT);
+            retries++;
+            delay(1000);
+        }
+    }
+
+    if (!mqttClient.connected()) {
+        Serial.println("MQTT: Failed to connect after retries");
+    }
+}
+
 void meshInit() {
     mesh.setDebugMsgTypes(ERROR | STARTUP | CONNECTION);
 
-    mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA, 6, 0, 20);
-    mesh.onReceive(&receivedCallback);
+    // Initialize with longer timeout and more retries
+    // Parameters: (prefix, password, port, connectivity, channel, hidden,
+    // maxConnections)
+    mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA, 6, 0, 10);
+    mesh.stationManual(WIFI_SSID, WIFI_PASSWORD);
 
-    deviceId = mesh.getNodeId();
-    Serial.printf("RELAY: Device ID: %u\n", deviceId);
-    Serial.printf("RELAY: Free heap: %d bytes\n", ESP.getFreeHeap());
+    mesh.setRoot(true);
+    mesh.setContainsRoot(true);
+    mesh.setHostname(HOSTNAME);
+
+    mesh.onReceive(&receivedCallback);
+    mesh.onDroppedConnection(&droppedConnectionCallback);
+
+    device_id = mesh.getNodeId();
+    Serial.printf("ROOT: Device ID: %u\n", device_id);
+    Serial.printf("ROOT: Free heap: %d bytes\n", ESP.getFreeHeap());
 }
 
-void syncLightStates(uint32_t targetNodeId) {
-    Serial.printf("RELAY: Syncing all light states to node %u\n", targetNodeId);
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+    // Build message string
+    String msg;
+    msg.reserve(length + 1);
+    for (unsigned int i = 0; i < length; i++) {
+        msg += (char)payload[i];
+    }
 
-    for (int i = 0; i < NLIGHTS; i++) {
-        char message[3];
-        message[0] = 'A' + i;
-        message[1] = lights[i] ? '1' : '0';
-        message[2] = '\0';
+    Serial.printf("MQTT: [%s] %s\n", topic, msg.c_str());
 
-        if (mesh.sendSingle(targetNodeId, String(message))) {
-            Serial.printf("RELAY: Sent state %s to node %u\n", message,
-                          targetNodeId);
-        } else {
-            Serial.printf("RELAY: Failed to send state %s to node %u\n",
-                          message, targetNodeId);
+    // Handle firmware update command
+    if (msg == "U") {
+        if (strcmp(topic, "/switch/cmd/root") == 0) {
+            Serial.println("MQTT: Firmware update requested for root node");
+            performFirmwareUpdate();
+            return;
         }
 
-        delay(50);  // Small delay between messages to prevent flooding
+        // Broadcast update to mesh nodes
+        Serial.println("MQTT: Broadcasting firmware update to mesh nodes");
+
+        for (const auto& pair : nodes) {
+            uint32_t nodeId = pair.first;
+            String nodeType = pair.second;
+
+            // Skip nodes that don't match the topic type
+            if ((nodeType == "relay" && strcmp(topic, "/switch/cmd") == 0) ||
+                (nodeType == "switch" && strcmp(topic, "/relay/cmd") == 0)) {
+                Serial.printf(
+                    "MQTT: Skipping node %u (type: %s) for topic %s\n", nodeId,
+                    nodeType.c_str(), topic);
+                continue;
+            }
+
+            Serial.printf("MQTT: Sending update command to node %u\n", nodeId);
+            mesh.sendSingle(nodeId, "U");
+        }
+        return;
     }
+
+    // Handle regular commands to specific nodes
+    size_t lastSlash = String(topic).lastIndexOf('/');
+    if (lastSlash != -1 && lastSlash < strlen(topic) - 1) {
+        String idStr = String(topic).substring(lastSlash + 1);
+        uint32_t nodeId = idStr.toInt();
+
+        if (nodeId == 0 && idStr != "0") {
+            Serial.printf("MQTT: Invalid node ID in topic: %s\n", topic);
+            return;
+        }
+
+        if (nodes.count(nodeId)) {
+            Serial.printf("MQTT: Forwarding to node %u: %s\n", nodeId,
+                          msg.c_str());
+            mesh.sendSingle(nodeId, msg);
+        } else {
+            Serial.printf("MQTT: Node %u not found in mesh\n", nodeId);
+        }
+    } else {
+        Serial.printf("MQTT: Cannot extract node ID from topic: %s\n", topic);
+    }
+}
+
+void droppedConnectionCallback(uint32_t nodeId) {
+    if (nodes.erase(nodeId)) {
+        Serial.printf("MESH: Node %u disconnected (removed from registry)\n",
+                      nodeId);
+
+        // Publish disconnection to MQTT if available
+        if (WiFi.status() == WL_CONNECTED && mqttClient.connected()) {
+            String topic = "/node/disconnect/" + String(nodeId);
+            mqttClient.publish(topic.c_str(), "offline", true);
+        }
+    }
+    Serial.printf("MESH: Total nodes: %u\n", mesh.getNodeList().size());
+    Serial.printf("MESH: Free heap after disconnect: %d bytes\n",
+                  ESP.getFreeHeap());
 }
 
 void receivedCallback(const uint32_t& from, const String& msg) {
     Serial.printf("MESH: [%u] %s\n", from, msg.c_str());
 
-    // Handle sync request from switch nodes
+    // Handle node type registration
+    if (msg == "R") {
+        nodes[from] = "relay";
+        Serial.printf("MESH: Registered node %u as relay\n", from);
+        return;
+    }
+
     if (msg == "S") {
-        Serial.printf("MESH: Switch node %u requesting state sync\n", from);
-        syncLightStates(from);
+        nodes[from] = "switch";
+        Serial.printf("MESH: Registered node %u as switch\n", from);
         return;
     }
 
-    // Handle firmware update command
-    if (msg == "U") {
-        Serial.println("MESH: Firmware update command received");
-        performFirmwareUpdate();
-        return;
-    }
-
-    // Handle light control messages (e.g., "a0", "b1", etc.)
+    // Handle switch state messages (lowercase letters a-g)
     if (msg.length() == 2 && msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
-        int lightIndex = msg[0] - 'a';
-        int newState = msg[1] - '0';
-
-        if (newState != 0 && newState != 1) {
-            Serial.printf("MESH: Invalid state '%c' in message from %u\n",
-                          msg[1], from);
+        if (WiFi.status() != WL_CONNECTED) {
+            Serial.println("MESH: WiFi not connected, cannot publish to MQTT");
             return;
         }
 
-        lights[lightIndex] = newState;
-        digitalWrite(relays[lightIndex], newState ? HIGH : LOW);
+        if (!mqttClient.connected()) {
+            Serial.println("MESH: MQTT not connected, cannot publish");
+            return;
+        }
 
-        Serial.printf("RELAY: Light %c set to %s by node %u\n",
-                      'a' + lightIndex, newState ? "ON" : "OFF", from);
-
-        // Send confirmation back
-        char response[3];
-        response[0] = 'A' + lightIndex;
-        response[1] = newState ? '1' : '0';
-        response[2] = '\0';
-
-        if (mesh.sendSingle(from, String(response))) {
-            Serial.printf("RELAY: Sent confirmation %s to node %u\n", response,
-                          from);
+        String topic = "/switch/state/" + String(from);
+        if (mqttClient.publish(topic.c_str(), msg.c_str())) {
+            Serial.printf("MQTT: Published [%s] %s\n", topic.c_str(),
+                          msg.c_str());
+        } else {
+            Serial.printf("MQTT: Failed to publish [%s] %s\n", topic.c_str(),
+                          msg.c_str());
         }
         return;
     }
 
-    // Unknown message - respond with registration
-    Serial.printf("MESH: Unknown message from %u, sending registration\n",
-                  from);
-    mesh.sendSingle(from, "R");
-}
+    // Handle relay state messages (uppercase letters A-G)
+    if (msg.length() == 2 && msg[0] >= 'A' && msg[0] < 'A' + NLIGHTS) {
+        if (WiFi.status() != WL_CONNECTED) {
+            Serial.println("MESH: WiFi not connected, cannot publish to MQTT");
+            return;
+        }
 
-void sendRegistration() {
-    auto nodes = mesh.getNodeList();
+        if (!mqttClient.connected()) {
+            Serial.println("MESH: MQTT not connected, cannot publish");
+            return;
+        }
 
-    if (nodes.empty()) {
-        Serial.println("MESH: No nodes connected, cannot register");
-        registeredWithRoot = false;
+        String topic = "/relay/state/" + String(from);
+        if (mqttClient.publish(topic.c_str(), msg.c_str())) {
+            Serial.printf("MQTT: Published [%s] %s\n", topic.c_str(),
+                          msg.c_str());
+        } else {
+            Serial.printf("MQTT: Failed to publish [%s] %s\n", topic.c_str(),
+                          msg.c_str());
+        }
         return;
     }
 
-    // Always broadcast registration to ensure root receives it
-    Serial.println("MESH: Broadcasting registration 'R' to all nodes");
-    mesh.sendBroadcast("R");
-
-    // If we have a known root ID, also send directly
-    if (rootId != 0) {
-        Serial.printf("MESH: Also sending 'R' directly to root %u\n", rootId);
-        mesh.sendSingle(rootId, "R");
-    } else {
-        // Try to identify root - it's usually the first node in list
-        rootId = nodes.front();
-        Serial.printf("MESH: Assuming node %u as root\n", rootId);
-        delay(500);
-        mesh.sendSingle(rootId, "R");
-    }
-
-    registeredWithRoot = true;
-    Serial.println("MESH: Registration sent");
-}
-
-void printStatus() {
-    Serial.println("\n--- Status Report ---");
-    Serial.printf("Device ID: %u\n", deviceId);
-    Serial.printf("Root ID: %u\n", rootId);
-    Serial.printf("Registered: %s\n", registeredWithRoot ? "Yes" : "No");
-    Serial.printf("Free Heap: %d bytes\n", ESP.getFreeHeap());
-    Serial.printf("Uptime: %lu seconds\n", millis() / 1000);
-
-    Serial.println("\nRelay States:");
-    for (int i = 0; i < NLIGHTS; i++) {
-        Serial.printf("  Light %c (Pin %d): %s\n", 'a' + i, relays[i],
-                      lights[i] ? "ON" : "OFF");
-    }
-
-    auto nodes = mesh.getNodeList();
-    Serial.printf("\nMesh Network: %u node(s)\n", nodes.size());
-    for (auto node : nodes) {
-        Serial.printf("  Node: %u%s\n", node,
-                      (node == rootId) ? " (ROOT)" : "");
-    }
-    Serial.println("-------------------\n");
+    Serial.printf("MESH: Unknown message format from %u: %s\n", from,
+                  msg.c_str());
 }
 
 void setup() {
@@ -289,7 +376,7 @@ void setup() {
     delay(1000);
 
     Serial.println("\n\n========================================");
-    Serial.println("ESP32 Mesh Relay Node Starting...");
+    Serial.println("ESP32 Mesh Root Node Starting...");
     Serial.printf("Chip Model: %s\n", ESP.getChipModel());
     Serial.printf("Chip Revision: %d\n", ESP.getChipRevision());
     Serial.printf("CPU Frequency: %d MHz\n", ESP.getCpuFreqMHz());
@@ -297,81 +384,66 @@ void setup() {
     Serial.printf("Flash Size: %d bytes\n", ESP.getFlashChipSize());
     Serial.println("========================================\n");
 
-    // Initialize relay pins
-    for (int i = 0; i < NLIGHTS; i++) {
-        pinMode(relays[i], OUTPUT);
-        digitalWrite(relays[i], LOW);
-        Serial.printf("RELAY: Initialized relay %d (Pin %d)\n", i, relays[i]);
-    }
-
-    // Initialize additional pin
-    pinMode(23, OUTPUT);
-    digitalWrite(23, LOW);
-
-    // Initialize mesh
     meshInit();
-
-    // Setup new connection callback
-    mesh.onNewConnection([](uint32_t nodeId) {
-        Serial.printf("MESH: New connection from node %u\n", nodeId);
-
-        // Update root ID if not set
-        if (rootId == 0) {
-            rootId = nodeId;
-            Serial.printf("MESH: Setting root ID to %u\n", rootId);
-        }
-
-        // Send registration multiple times to ensure delivery
-        delay(1000);  // Wait for connection to stabilize
-        for (int i = 0; i < 3; i++) {
-            mesh.sendBroadcast("R");
-            Serial.printf("MESH: Sent registration 'R' (attempt %d/3)\n",
-                          i + 1);
-            delay(500);
-        }
-
-        registeredWithRoot = true;
-    });
-
-    // Setup dropped connection callback
-    mesh.onDroppedConnection([](uint32_t nodeId) {
-        Serial.printf("MESH: Lost connection to node %u\n", nodeId);
-
-        // If we lost connection to root, reset registration
-        if (nodeId == rootId) {
-            Serial.println("MESH: Lost connection to root, resetting");
-            registeredWithRoot = false;
-            rootId = 0;
-        }
-    });
-
-    Serial.println("RELAY: Setup complete, waiting for mesh connections...");
 }
 
 void loop() {
     mesh.update();
 
-    unsigned long currentMillis = millis();
+    // Check for WiFi connection and get IP
+    IPAddress currentIP = getlocalIP();
+    if (myIP != currentIP && currentIP != IPAddress(0, 0, 0, 0)) {
+        myIP = currentIP;
+        Serial.println("WiFi: Connected to external network");
+        Serial.printf("WiFi: IP address: %s\n", myIP.toString().c_str());
 
-    // Periodic registration retry if not registered
-    if (!registeredWithRoot &&
-        currentMillis - lastRegistrationAttempt > REGISTRATION_RETRY_INTERVAL) {
-        lastRegistrationAttempt = currentMillis;
+        // Attempt immediate MQTT connection
+        mqttConnect();
+        lastMqttReconnect = millis();
+    }
 
-        auto nodes = mesh.getNodeList();
-        if (!nodes.empty()) {
-            Serial.println("MESH: Retrying registration (broadcasting 'R')...");
-            mesh.sendBroadcast("R");
-
-            if (rootId != 0) {
-                mesh.sendSingle(rootId, "R");
+    // Handle MQTT connection and loop
+    if (WiFi.status() == WL_CONNECTED) {
+        if (!mqttClient.connected()) {
+            unsigned long now = millis();
+            if (now - lastMqttReconnect > MQTT_RECONNECT_INTERVAL) {
+                lastMqttReconnect = now;
+                Serial.println("MQTT: Attempting reconnection...");
+                mqttConnect();
             }
+        } else {
+            mqttClient.loop();
         }
     }
 
     // Periodic status report
-    if (currentMillis - lastStatusPrint >= STATUS_PRINT_INTERVAL) {
-        lastStatusPrint = currentMillis;
-        printStatus();
+    if (millis() - lastPrint >= NODE_PRINT_INTERVAL) {
+        lastPrint = millis();
+
+        Serial.println("\n--- Status Report ---");
+        Serial.printf("WiFi: %s\n", WiFi.status() == WL_CONNECTED
+                                        ? "Connected"
+                                        : "Disconnected");
+        Serial.printf("MQTT: %s\n",
+                      mqttClient.connected() ? "Connected" : "Disconnected");
+        Serial.printf("Free Heap: %d bytes\n", ESP.getFreeHeap());
+        Serial.printf("Uptime: %lu seconds\n", millis() / 1000);
+
+        Serial.println("\nRegistered Nodes:");
+        if (nodes.empty()) {
+            Serial.println("  (none)");
+        } else {
+            for (const auto& pair : nodes) {
+                Serial.printf("  Node %u: %s\n", pair.first,
+                              pair.second.c_str());
+            }
+        }
+
+        auto meshNodes = mesh.getNodeList();
+        Serial.printf("\nMesh Network: %u node(s)\n", meshNodes.size());
+        for (auto node : meshNodes) {
+            Serial.printf("  %u\n", node);
+        }
+        Serial.println("-------------------\n");
     }
 }

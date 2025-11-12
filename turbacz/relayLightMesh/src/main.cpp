@@ -226,10 +226,9 @@ void receivedCallback(const uint32_t& from, const String& msg) {
         return;
     }
 
-    // Unknown message - respond with registration
-    Serial.printf("MESH: Unknown message from %u, sending registration\n",
+    // Unknown message - just log it, don't respond
+    Serial.printf("MESH: Unknown/unhandled message '%s' from %u\n", msg.c_str(),
                   from);
-    mesh.sendSingle(from, "R");
 }
 
 void sendRegistration() {
@@ -319,18 +318,21 @@ void setup() {
         if (rootId == 0) {
             rootId = nodeId;
             Serial.printf("MESH: Setting root ID to %u\n", rootId);
-        }
 
-        // Send registration multiple times to ensure delivery
-        delay(1000);  // Wait for connection to stabilize
-        for (int i = 0; i < 3; i++) {
-            mesh.sendBroadcast("R");
-            Serial.printf("MESH: Sent registration 'R' (attempt %d/3)\n",
-                          i + 1);
-            delay(500);
-        }
+            // Only send registration if we don't have a root yet
+            delay(1000);  // Wait for connection to stabilize
+            for (int i = 0; i < 3; i++) {
+                mesh.sendBroadcast("R");
+                Serial.printf("MESH: Sent registration 'R' (attempt %d/3)\n",
+                              i + 1);
+                delay(500);
+            }
 
-        registeredWithRoot = true;
+            registeredWithRoot = true;
+        } else {
+            // Just acknowledge we saw a new connection
+            Serial.printf("MESH: Already registered with root %u\n", rootId);
+        }
     });
 
     // Setup dropped connection callback
@@ -360,12 +362,17 @@ void loop() {
 
         auto nodes = mesh.getNodeList();
         if (!nodes.empty()) {
-            Serial.println("MESH: Retrying registration (broadcasting 'R')...");
+            Serial.println("MESH: Not registered yet, broadcasting 'R'...");
             mesh.sendBroadcast("R");
 
             if (rootId != 0) {
+                Serial.printf(
+                    "MESH: Also sending 'R' directly to suspected root %u\n",
+                    rootId);
                 mesh.sendSingle(rootId, "R");
             }
+        } else {
+            Serial.println("MESH: No nodes connected, cannot register");
         }
     }
 

@@ -208,7 +208,10 @@ void mqttConnect() {
 void meshInit() {
     mesh.setDebugMsgTypes(ERROR | STARTUP | CONNECTION);
 
-    mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA, 6, 0, 20);
+    // Initialize with longer timeout and more retries
+    // Parameters: (prefix, password, port, connectivity, channel, hidden,
+    // maxConnections)
+    mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA, 6, 0, 10);
     mesh.stationManual(WIFI_SSID, WIFI_PASSWORD);
 
     mesh.setRoot(true);
@@ -292,6 +295,8 @@ void droppedConnectionCallback(uint32_t nodeId) {
                       nodeId);
     }
     Serial.printf("MESH: Total nodes: %u\n", mesh.getNodeList().size());
+    Serial.printf("MESH: Free heap after disconnect: %d bytes\n",
+                  ESP.getFreeHeap());
 }
 
 void receivedCallback(const uint32_t& from, const String& msg) {

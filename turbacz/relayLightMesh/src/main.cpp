@@ -55,7 +55,7 @@ void performFirmwareUpdate() {
     Serial.println("[OTA] Switching to STA mode...");
     WiFi.disconnect(true);
     WiFi.mode(WIFI_STA);
-    WiFi.begin(STATION_SSID, STATION_PASSWORD);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
     Serial.print("[OTA] Connecting to WiFi");
     unsigned long startTime = millis();

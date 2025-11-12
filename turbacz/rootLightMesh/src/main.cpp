@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
+#include <HTTPClient.h>
 #include <PubSubClient.h>
 #include <Update.h>
 #include <WiFi.h>
@@ -24,7 +25,6 @@ std::map<uint32_t, String> nodes;
 
 void receivedCallback(const uint32_t& from, const String& msg);
 void droppedConnectionCallback(uint32_t nodeId);
-void newConnectionCallback(uint32_t nodeId);
 void mqttCallback(char* topic, byte* payload, unsigned int length);
 
 IPAddress myIP(0, 0, 0, 0);
@@ -34,6 +34,65 @@ WiFiClient wifiClient;
 PubSubClient mqttClient(mqtt_broker, mqtt_port, wifiClient);
 
 static unsigned long lastPrint = 0;
+
+const char* firmware_url =
+    "https://czupel.dry.pl/static/data/root/firmware.bin";
+
+void performFirmwareUpdate() {
+    Serial.println("[OTA] Stopping mesh...");
+    mesh.stop();
+    Serial.println("[OTA] Switching to STA mode...");
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+    Serial.print("[OTA] Connecting to WiFi");
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(300);
+        Serial.print(".");
+    }
+    Serial.println(" connected!");
+
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
+
+    Serial.println("[OTA] Connecting to update server...");
+    if (http.begin(client, firmware_url)) {
+        int httpCode = http.GET();
+        if (httpCode == HTTP_CODE_OK) {
+            int contentLength = http.getSize();
+            Serial.printf("[OTA] Firmware size: %d bytes\n", contentLength);
+
+            if (Update.begin(contentLength)) {
+                Serial.println("[OTA] Writing firmware...");
+                size_t written = Update.writeStream(*http.getStreamPtr());
+
+                Serial.printf("[OTA] Written %d/%d bytes\n", (int)written,
+                              contentLength);
+
+                if (Update.end()) {
+                    if (Update.isFinished()) {
+                        Serial.println("[OTA] Update finished, restarting...");
+                        ESP.restart();
+                    } else {
+                        Serial.println(
+                            "[OTA] Update not finished, something went wrong.");
+                    }
+                } else {
+                    Serial.printf("[OTA] Update error: %d\n",
+                                  Update.getError());
+                }
+            } else {
+                Serial.println("[OTA] Not enough space for OTA.");
+            }
+        } else {
+            Serial.printf("[OTA] HTTP GET failed, code: %d\n", httpCode);
+        }
+        http.end();
+    } else {
+        Serial.println("[OTA] Unable to connect to update server!");
+    }
+}
 
 IPAddress getlocalIP() { return IPAddress(mesh.getStationIP()); }
 
@@ -53,7 +112,8 @@ void mqttConnect() {
         }
     }
 
-    mqttClient.publish("/switch/0", "connected");
+    mqttClient.publish("/switch/state/root", "connected");
+    mqttClient.subscribe("/switch/cmd/+");
     mqttClient.subscribe("/switch/cmd");
     mqttClient.subscribe("/relay/cmd/+");
     mqttClient.subscribe("/relay/cmd");
@@ -63,17 +123,16 @@ void meshInit() {
     mesh.setDebugMsgTypes(ERROR | STARTUP | CONNECTION | COMMUNICATION |
                           GENERAL);
 
-    mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA, 6);
-    mesh.onReceive(&receivedCallback);
-    mesh.onNewConnection(&newConnectionCallback);
-    mesh.onDroppedConnection(&droppedConnectionCallback);
+    mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA, 6, 0, 20);
 
     mesh.stationManual(WIFI_SSID, WIFI_PASSWORD);
-    delay(2000);
+
     mesh.setRoot(true);
     mesh.setContainsRoot(true);
-
     mesh.setHostname(HOSTNAME);
+
+    mesh.onReceive(&receivedCallback);
+    mesh.onDroppedConnection(&droppedConnectionCallback);
 
     device_id = mesh.getNodeId();
     Serial.println("ROOT:" + String(device_id));
@@ -88,9 +147,19 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     Serial.printf("MQTT: Received message on %s: %s\n", topic, msg.c_str());
 
     if (msg == "U") {
+        if (strcmp(topic, "/switch/cmd/root") == 0) {
+            Serial.println(
+                "MQTT: 'U' command received for root node, "
+                "performing firmware update.");
+            performFirmwareUpdate();
+
+            return;
+        }
+
         Serial.println("MQTT: Received 'U' on " + String(topic) +
-                       ", sending 'U' to not all mesh "
+                       ", sending 'U' to some mesh "
                        "nodes.");
+
         for (const auto& pair : nodes) {
             uint32_t nodeId = pair.first;
             String nodeType = pair.second;
@@ -193,6 +262,11 @@ void loop() {
         Serial.println("Connected nodes:");
         for (const auto& pair : nodes) {
             Serial.printf("Node %u: %s\n", pair.first, pair.second.c_str());
+        }
+
+        auto real_nodes = mesh.getNodeList();
+        for (auto node : real_nodes) {
+            Serial.printf("Mesh reports node: %u\n", node);
         }
     }
 }

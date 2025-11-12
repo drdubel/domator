@@ -21,16 +21,17 @@ IPAddress myIP(0, 0, 0, 0);
 AsyncWebServer server(80);
 painlessMesh mesh;
 
-uint32_t rootId;
+uint32_t rootId = 522849561;
 
 const int buttonPins[NLIGHTS] = {A0, A1, A3, A4, A5, 6, 7};
 int lastTimeClick[NLIGHTS];
 int debounceDelay = 250;
 char whichLight;
 int lastButtonState[NLIGHTS] = {HIGH, HIGH, HIGH, HIGH, HIGH, HIGH, HIGH};
+bool sentOnConnect = false;
 
 const char* firmware_url =
-    "https://czupel.dry.pl/static/data/wifiLightButton.bin";
+    "https://czupel.dry.pl/static/data/switch/firmware.bin";
 
 char msg;
 
@@ -106,10 +107,9 @@ void performFirmwareUpdate() {
 }
 
 void meshInit() {
-    mesh.setDebugMsgTypes(ERROR | STARTUP | CONNECTION | COMMUNICATION |
-                          GENERAL);
+    mesh.setDebugMsgTypes(ERROR | STARTUP | CONNECTION | COMMUNICATION);
 
-    mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA, 6);
+    mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA, 6, 0, 20);
     mesh.onReceive(&receivedCallback);
 }
 
@@ -121,12 +121,14 @@ void receivedCallback(const uint32_t& from, const String& msg) {
         performFirmwareUpdate();
         return;
     }
+}
 
-    rootId = msg.toInt();
-    Serial.print("New root ID: ");
-    Serial.println(rootId);
-
-    mesh.sendSingle(from, "S");
+void printNodes() {
+    Serial.println("Connected nodes:");
+    auto nodes = mesh.getNodeList();
+    for (auto node : nodes) {
+        Serial.printf(" - %u\n", node);
+    }
 }
 
 void setup() {
@@ -140,6 +142,13 @@ void setup() {
     for (int i = 0; i < NLIGHTS; i++) {
         pinMode(buttonPins[i], INPUT_PULLDOWN);
     }
+
+    mesh.onNewConnection([](uint32_t nodeId) {
+        Serial.printf("New connection, nodeId = %u\n", nodeId);
+
+        mesh.sendSingle(rootId, "S");
+        Serial.println("Sent 'S' to root!");
+    });
 }
 
 void loop() {
@@ -155,11 +164,13 @@ void loop() {
         if (currentState == HIGH && lastButtonState[i] == LOW) {
             lastTimeClick[i] = millis();
 
+            printNodes();
+
             msg = 'a' + i;
             Serial.print("Publishing message: ");
             Serial.println(msg);
 
-            mesh.sendSingle(rootId, String(msg));
+            mesh.sendBroadcast(String(msg));
         }
 
         lastButtonState[i] = currentState;

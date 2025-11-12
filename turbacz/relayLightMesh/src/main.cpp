@@ -27,7 +27,8 @@ int lights[NLIGHTS] = {0, 0, 0, 0, 0, 0, 0, 0};
 char whichLight;
 
 bool sentOnConnect = false;
-const char* firmware_url = "https://czupel.dry.pl/static/data/relay8wifi.bin";
+const char* firmware_url =
+    "https://czupel.dry.pl/static/data/relay/firmware.bin";
 
 char message[2];
 
@@ -90,7 +91,7 @@ void performFirmwareUpdate() {
 void meshInit() {
     mesh.setDebugMsgTypes(ERROR | STARTUP | CONNECTION);
 
-    mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA, 6);
+    mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA, 6, 0, 20);
     mesh.onReceive(&receivedCallback);
 
     Serial.printf("Mesh started with ID %u\n", mesh.getNodeId());
@@ -142,6 +143,8 @@ void setup() {
     digitalWrite(23, LOW);
 
     mesh.onNewConnection([](uint32_t nodeId) {
+        Serial.printf("New connection, nodeId = %u\n!", nodeId);
+
         mesh.sendSingle(rootId, "R");
         Serial.println("Sent 'R' to root!");
     });

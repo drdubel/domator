@@ -8,84 +8,143 @@
 #include <credentials.h>
 #include <painlessMesh.h>
 
+// Hardware definitions
 #define USE_BOARD 75
 #define NO_PWMPIN
 const byte wifiActivityPin = 255;
 
 #define NLIGHTS 8
 
-void receivedCallback(const uint32_t& from, const String& msg);
+// Timing constants
+#define STATUS_PRINT_INTERVAL 30000
+#define WIFI_CONNECT_TIMEOUT 20000
+#define REGISTRATION_RETRY_INTERVAL 10000
 
-IPAddress myIP(0, 0, 0, 0);
-AsyncWebServer server(80);
+// Function declarations
+void receivedCallback(const uint32_t& from, const String& msg);
+void meshInit();
+void performFirmwareUpdate();
+void printStatus();
+void sendRegistration();
+void syncLightStates(uint32_t targetNodeId);
+
 painlessMesh mesh;
 
-uint32_t rootId = 522849561;
+// Root node ID - will be discovered dynamically
+uint32_t rootId = 0;
+uint32_t deviceId = 0;
 
-int relays[NLIGHTS] = {32, 33, 25, 26, 27, 14, 12, 13};
+const int relays[NLIGHTS] = {32, 33, 25, 26, 27, 14, 12, 13};
 int lights[NLIGHTS] = {0, 0, 0, 0, 0, 0, 0, 0};
-char whichLight;
 
-bool sentOnConnect = false;
+bool registeredWithRoot = false;
+unsigned long lastRegistrationAttempt = 0;
+unsigned long lastStatusPrint = 0;
+
 const char* firmware_url =
     "https://czupel.dry.pl/static/data/relay/firmware.bin";
 
-char message[2];
-
 void performFirmwareUpdate() {
+    Serial.println("[OTA] Starting firmware update...");
+
     Serial.println("[OTA] Stopping mesh...");
     mesh.stop();
+
+    delay(1000);  // Give time for cleanup
+
     Serial.println("[OTA] Switching to STA mode...");
+    WiFi.disconnect(true);
     WiFi.mode(WIFI_STA);
     WiFi.begin(STATION_SSID, STATION_PASSWORD);
 
     Serial.print("[OTA] Connecting to WiFi");
+    unsigned long startTime = millis();
     while (WiFi.status() != WL_CONNECTED) {
-        delay(300);
+        if (millis() - startTime > WIFI_CONNECT_TIMEOUT) {
+            Serial.println("\n[OTA] WiFi connection timeout, restarting...");
+            ESP.restart();
+            return;
+        }
+        delay(500);
         Serial.print(".");
     }
     Serial.println(" connected!");
+    Serial.printf("[OTA] IP: %s\n", WiFi.localIP().toString().c_str());
 
-    WiFiClientSecure client;
-    client.setInsecure();
+    WiFiClientSecure* client = new WiFiClientSecure();
+    if (!client) {
+        Serial.println("[OTA] Failed to allocate WiFiClientSecure");
+        ESP.restart();
+        return;
+    }
+
+    client->setInsecure();
     HTTPClient http;
+    http.setTimeout(30000);  // 30 second timeout
 
     Serial.println("[OTA] Connecting to update server...");
-    if (http.begin(client, firmware_url)) {
-        int httpCode = http.GET();
-        if (httpCode == HTTP_CODE_OK) {
-            int contentLength = http.getSize();
-            Serial.printf("[OTA] Firmware size: %d bytes\n", contentLength);
+    if (!http.begin(*client, firmware_url)) {
+        Serial.println("[OTA] Failed to begin HTTP connection");
+        delete client;
+        ESP.restart();
+        return;
+    }
 
-            if (Update.begin(contentLength)) {
-                Serial.println("[OTA] Writing firmware...");
-                size_t written = Update.writeStream(*http.getStreamPtr());
+    int httpCode = http.GET();
+    if (httpCode == HTTP_CODE_OK) {
+        int contentLength = http.getSize();
+        Serial.printf("[OTA] Firmware size: %d bytes\n", contentLength);
 
-                Serial.printf("[OTA] Written %d/%d bytes\n", (int)written,
-                              contentLength);
+        if (contentLength <= 0) {
+            Serial.println("[OTA] Invalid content length");
+            http.end();
+            delete client;
+            ESP.restart();
+            return;
+        }
 
-                if (Update.end()) {
-                    if (Update.isFinished()) {
-                        Serial.println("[OTA] Update finished, restarting...");
-                        ESP.restart();
-                    } else {
-                        Serial.println(
-                            "[OTA] Update not finished, something went wrong.");
-                    }
-                } else {
-                    Serial.printf("[OTA] Update error: %d\n",
-                                  Update.getError());
-                }
+        if (!Update.begin(contentLength)) {
+            Serial.printf(
+                "[OTA] Not enough space. Required: %d, Available: %d\n",
+                contentLength, ESP.getFreeSketchSpace());
+            http.end();
+            delete client;
+            ESP.restart();
+            return;
+        }
+
+        Serial.println("[OTA] Writing firmware...");
+        WiFiClient* stream = http.getStreamPtr();
+        size_t written = Update.writeStream(*stream);
+
+        Serial.printf("[OTA] Written %d/%d bytes\n", (int)written,
+                      contentLength);
+
+        if (Update.end()) {
+            if (Update.isFinished()) {
+                Serial.println("[OTA] Update finished successfully!");
+                http.end();
+                delete client;
+                delay(1000);
+                ESP.restart();
             } else {
-                Serial.println("[OTA] Not enough space for OTA.");
+                Serial.println("[OTA] Update not finished properly");
+                Update.printError(Serial);
             }
         } else {
-            Serial.printf("[OTA] HTTP GET failed, code: %d\n", httpCode);
+            Serial.printf("[OTA] Update error: %d\n", Update.getError());
+            Update.printError(Serial);
         }
-        http.end();
     } else {
-        Serial.println("[OTA] Unable to connect to update server!");
+        Serial.printf("[OTA] HTTP GET failed, code: %d\n", httpCode);
     }
+
+    http.end();
+    delete client;
+
+    Serial.println("[OTA] Update failed, restarting...");
+    delay(1000);
+    ESP.restart();
 }
 
 void meshInit() {
@@ -94,60 +153,225 @@ void meshInit() {
     mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA, 6, 0, 20);
     mesh.onReceive(&receivedCallback);
 
-    Serial.printf("Mesh started with ID %u\n", mesh.getNodeId());
+    deviceId = mesh.getNodeId();
+    Serial.printf("RELAY: Device ID: %u\n", deviceId);
+    Serial.printf("RELAY: Free heap: %d bytes\n", ESP.getFreeHeap());
+}
+
+void syncLightStates(uint32_t targetNodeId) {
+    Serial.printf("RELAY: Syncing all light states to node %u\n", targetNodeId);
+
+    for (int i = 0; i < NLIGHTS; i++) {
+        char message[3];
+        message[0] = 'A' + i;
+        message[1] = lights[i] ? '1' : '0';
+        message[2] = '\0';
+
+        if (mesh.sendSingle(targetNodeId, String(message))) {
+            Serial.printf("RELAY: Sent state %s to node %u\n", message,
+                          targetNodeId);
+        } else {
+            Serial.printf("RELAY: Failed to send state %s to node %u\n",
+                          message, targetNodeId);
+        }
+
+        delay(50);  // Small delay between messages to prevent flooding
+    }
 }
 
 void receivedCallback(const uint32_t& from, const String& msg) {
-    Serial.printf("bridge: Received from %u msg=%s\n", from, msg.c_str());
+    Serial.printf("MESH: [%u] %s\n", from, msg.c_str());
 
+    // Handle sync request from switch nodes
     if (msg == "S") {
-        for (int i = 0; i < NLIGHTS; ++i) {
-            message[0] = 'A' + i;
-            message[1] = lights[i] ? '1' : '0';
-
-            mesh.sendSingle(from, String(message, 2));
-        }
-    } else if (msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS && msg.length() == 2) {
-        whichLight = (char)msg[0] - 'a';
-        lights[whichLight] = (char)msg[1] - '0';
-
-        digitalWrite(relays[whichLight], lights[whichLight] ? HIGH : LOW);
-
-        message[0] = 'A' + whichLight;
-        message[1] = lights[whichLight] ? '1' : '0';
-        mesh.sendSingle(from, String(message, 2));
-
-        Serial.print("Light ");
-        Serial.print('a' + whichLight);
-        Serial.print(" set to ");
-        Serial.println(lights[whichLight] ? "ON" : "OFF");
-    } else if (msg == "U") {
-        performFirmwareUpdate();
-    } else {
-        mesh.sendSingle(from, "R");
+        Serial.printf("MESH: Switch node %u requesting state sync\n", from);
+        syncLightStates(from);
+        return;
     }
+
+    // Handle firmware update command
+    if (msg == "U") {
+        Serial.println("MESH: Firmware update command received");
+        performFirmwareUpdate();
+        return;
+    }
+
+    // Handle light control messages (e.g., "a0", "b1", etc.)
+    if (msg.length() == 2 && msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
+        int lightIndex = msg[0] - 'a';
+        int newState = msg[1] - '0';
+
+        if (newState != 0 && newState != 1) {
+            Serial.printf("MESH: Invalid state '%c' in message from %u\n",
+                          msg[1], from);
+            return;
+        }
+
+        lights[lightIndex] = newState;
+        digitalWrite(relays[lightIndex], newState ? HIGH : LOW);
+
+        Serial.printf("RELAY: Light %c set to %s by node %u\n",
+                      'a' + lightIndex, newState ? "ON" : "OFF", from);
+
+        // Send confirmation back
+        char response[3];
+        response[0] = 'A' + lightIndex;
+        response[1] = newState ? '1' : '0';
+        response[2] = '\0';
+
+        if (mesh.sendSingle(from, String(response))) {
+            Serial.printf("RELAY: Sent confirmation %s to node %u\n", response,
+                          from);
+        }
+        return;
+    }
+
+    // Unknown message - respond with registration
+    Serial.printf("MESH: Unknown message from %u, sending registration\n",
+                  from);
+    mesh.sendSingle(from, "R");
+}
+
+void sendRegistration() {
+    auto nodes = mesh.getNodeList();
+
+    if (nodes.empty()) {
+        Serial.println("MESH: No nodes connected, cannot register");
+        registeredWithRoot = false;
+        return;
+    }
+
+    // Always broadcast registration to ensure root receives it
+    Serial.println("MESH: Broadcasting registration 'R' to all nodes");
+    mesh.sendBroadcast("R");
+
+    // If we have a known root ID, also send directly
+    if (rootId != 0) {
+        Serial.printf("MESH: Also sending 'R' directly to root %u\n", rootId);
+        mesh.sendSingle(rootId, "R");
+    } else {
+        // Try to identify root - it's usually the first node in list
+        rootId = nodes.front();
+        Serial.printf("MESH: Assuming node %u as root\n", rootId);
+        delay(500);
+        mesh.sendSingle(rootId, "R");
+    }
+
+    registeredWithRoot = true;
+    Serial.println("MESH: Registration sent");
+}
+
+void printStatus() {
+    Serial.println("\n--- Status Report ---");
+    Serial.printf("Device ID: %u\n", deviceId);
+    Serial.printf("Root ID: %u\n", rootId);
+    Serial.printf("Registered: %s\n", registeredWithRoot ? "Yes" : "No");
+    Serial.printf("Free Heap: %d bytes\n", ESP.getFreeHeap());
+    Serial.printf("Uptime: %lu seconds\n", millis() / 1000);
+
+    Serial.println("\nRelay States:");
+    for (int i = 0; i < NLIGHTS; i++) {
+        Serial.printf("  Light %c (Pin %d): %s\n", 'a' + i, relays[i],
+                      lights[i] ? "ON" : "OFF");
+    }
+
+    auto nodes = mesh.getNodeList();
+    Serial.printf("\nMesh Network: %u node(s)\n", nodes.size());
+    for (auto node : nodes) {
+        Serial.printf("  Node: %u%s\n", node,
+                      (node == rootId) ? " (ROOT)" : "");
+    }
+    Serial.println("-------------------\n");
 }
 
 void setup() {
     Serial.begin(115200);
+    delay(1000);
 
-    delay(2000);
-    meshInit();
+    Serial.println("\n\n========================================");
+    Serial.println("ESP32 Mesh Relay Node Starting...");
+    Serial.printf("Chip Model: %s\n", ESP.getChipModel());
+    Serial.printf("Chip Revision: %d\n", ESP.getChipRevision());
+    Serial.printf("CPU Frequency: %d MHz\n", ESP.getCpuFreqMHz());
+    Serial.printf("Free Heap: %d bytes\n", ESP.getFreeHeap());
+    Serial.printf("Flash Size: %d bytes\n", ESP.getFlashChipSize());
+    Serial.println("========================================\n");
 
+    // Initialize relay pins
     for (int i = 0; i < NLIGHTS; i++) {
         pinMode(relays[i], OUTPUT);
         digitalWrite(relays[i], LOW);
+        Serial.printf("RELAY: Initialized relay %d (Pin %d)\n", i, relays[i]);
     }
 
+    // Initialize additional pin
     pinMode(23, OUTPUT);
     digitalWrite(23, LOW);
 
-    mesh.onNewConnection([](uint32_t nodeId) {
-        Serial.printf("New connection, nodeId = %u\n!", nodeId);
+    // Initialize mesh
+    meshInit();
 
-        mesh.sendSingle(rootId, "R");
-        Serial.println("Sent 'R' to root!");
+    // Setup new connection callback
+    mesh.onNewConnection([](uint32_t nodeId) {
+        Serial.printf("MESH: New connection from node %u\n", nodeId);
+
+        // Update root ID if not set
+        if (rootId == 0) {
+            rootId = nodeId;
+            Serial.printf("MESH: Setting root ID to %u\n", rootId);
+        }
+
+        // Send registration multiple times to ensure delivery
+        delay(1000);  // Wait for connection to stabilize
+        for (int i = 0; i < 3; i++) {
+            mesh.sendBroadcast("R");
+            Serial.printf("MESH: Sent registration 'R' (attempt %d/3)\n",
+                          i + 1);
+            delay(500);
+        }
+
+        registeredWithRoot = true;
     });
+
+    // Setup dropped connection callback
+    mesh.onDroppedConnection([](uint32_t nodeId) {
+        Serial.printf("MESH: Lost connection to node %u\n", nodeId);
+
+        // If we lost connection to root, reset registration
+        if (nodeId == rootId) {
+            Serial.println("MESH: Lost connection to root, resetting");
+            registeredWithRoot = false;
+            rootId = 0;
+        }
+    });
+
+    Serial.println("RELAY: Setup complete, waiting for mesh connections...");
 }
 
-void loop() { mesh.update(); }
+void loop() {
+    mesh.update();
+
+    unsigned long currentMillis = millis();
+
+    // Periodic registration retry if not registered
+    if (!registeredWithRoot &&
+        currentMillis - lastRegistrationAttempt > REGISTRATION_RETRY_INTERVAL) {
+        lastRegistrationAttempt = currentMillis;
+
+        auto nodes = mesh.getNodeList();
+        if (!nodes.empty()) {
+            Serial.println("MESH: Retrying registration (broadcasting 'R')...");
+            mesh.sendBroadcast("R");
+
+            if (rootId != 0) {
+                mesh.sendSingle(rootId, "R");
+            }
+        }
+    }
+
+    // Periodic status report
+    if (currentMillis - lastStatusPrint >= STATUS_PRINT_INTERVAL) {
+        lastStatusPrint = currentMillis;
+        printStatus();
+    }
+}

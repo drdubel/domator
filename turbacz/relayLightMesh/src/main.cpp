@@ -25,13 +25,12 @@ void receivedCallback(const uint32_t& from, const String& msg);
 void meshInit();
 void performFirmwareUpdate();
 void printStatus();
-void sendRegistration();
 void syncLightStates(uint32_t targetNodeId);
 
 painlessMesh mesh;
 
 // Root node ID - will be discovered dynamically
-uint32_t rootId = 0;
+uint32_t rootId = 522849561;
 uint32_t deviceId = 0;
 
 const int relays[NLIGHTS] = {32, 33, 25, 26, 27, 14, 12, 13};
@@ -162,10 +161,9 @@ void syncLightStates(uint32_t targetNodeId) {
     Serial.printf("RELAY: Syncing all light states to node %u\n", targetNodeId);
 
     for (int i = 0; i < NLIGHTS; i++) {
-        char message[3];
+        char message[2];
         message[0] = 'A' + i;
         message[1] = lights[i] ? '1' : '0';
-        message[2] = '\0';
 
         if (mesh.sendSingle(targetNodeId, String(message))) {
             Serial.printf("RELAY: Sent state %s to node %u\n", message,
@@ -226,38 +224,38 @@ void receivedCallback(const uint32_t& from, const String& msg) {
         return;
     }
 
-    // Unknown message - just log it, don't respond
-    Serial.printf("MESH: Unknown/unhandled message '%s' from %u\n", msg.c_str(),
-                  from);
-}
+    // Handle light control messages (e.g., "a", "b", etc.)
+    if (msg.length() == 1 && msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
+        int lightIndex = msg[0] - 'a';
+        lights[lightIndex] = !lights[lightIndex];
+        digitalWrite(relays[lightIndex], lights[lightIndex] ? HIGH : LOW);
 
-void sendRegistration() {
-    auto nodes = mesh.getNodeList();
+        Serial.printf("RELAY: Light %c toggled to %s by node %u\n",
+                      'a' + lightIndex, lights[lightIndex] ? "ON" : "OFF",
+                      from);
 
-    if (nodes.empty()) {
-        Serial.println("MESH: No nodes connected, cannot register");
-        registeredWithRoot = false;
+        // Send confirmation back
+        char response[3];
+        response[0] = 'A' + lightIndex;
+        response[1] = lights[lightIndex] ? '1' : '0';
+        response[2] = '\0';
+
+        if (mesh.sendSingle(from, String(response))) {
+            Serial.printf("RELAY: Sent confirmation %s to node %u\n", response,
+                          from);
+        }
         return;
     }
 
-    // Always broadcast registration to ensure root receives it
-    Serial.println("MESH: Broadcasting registration 'R' to all nodes");
-    mesh.sendBroadcast("R");
-
-    // If we have a known root ID, also send directly
-    if (rootId != 0) {
-        Serial.printf("MESH: Also sending 'R' directly to root %u\n", rootId);
-        mesh.sendSingle(rootId, "R");
-    } else {
-        // Try to identify root - it's usually the first node in list
-        rootId = nodes.front();
-        Serial.printf("MESH: Assuming node %u as root\n", rootId);
-        delay(500);
-        mesh.sendSingle(rootId, "R");
+    if (msg == "A") {
+        Serial.println("MESH: Registration accepted by root");
+        registeredWithRoot = true;
+        return;
     }
 
-    registeredWithRoot = true;
-    Serial.println("MESH: Registration sent");
+    // Unknown message - just log it, don't respond
+    Serial.printf("MESH: Unknown/unhandled message '%s' from %u\n", msg.c_str(),
+                  from);
 }
 
 void printStatus() {
@@ -315,36 +313,17 @@ void setup() {
         Serial.printf("MESH: New connection from node %u\n", nodeId);
 
         // Update root ID if not set
-        if (rootId == 0) {
-            rootId = nodeId;
-            Serial.printf("MESH: Setting root ID to %u\n", rootId);
-
-            // Only send registration if we don't have a root yet
-            delay(1000);  // Wait for connection to stabilize
-            for (int i = 0; i < 3; i++) {
-                mesh.sendBroadcast("R");
-                Serial.printf("MESH: Sent registration 'R' (attempt %d/3)\n",
-                              i + 1);
-                delay(500);
-            }
-
-            registeredWithRoot = true;
-        } else {
-            // Just acknowledge we saw a new connection
-            Serial.printf("MESH: Already registered with root %u\n", rootId);
-        }
+        delay(1000);  // Wait for connection to stabilize
+        mesh.sendSingle(rootId, "R");
+        Serial.printf("MESH: Sent registration 'R' to root %u\n", rootId);
     });
 
     // Setup dropped connection callback
     mesh.onDroppedConnection([](uint32_t nodeId) {
         Serial.printf("MESH: Lost connection to node %u\n", nodeId);
 
-        // If we lost connection to root, reset registration
-        if (nodeId == rootId) {
-            Serial.println("MESH: Lost connection to root, resetting");
-            registeredWithRoot = false;
-            rootId = 0;
-        }
+        Serial.println("MESH: Lost connection to root, resetting");
+        registeredWithRoot = false;
     });
 
     Serial.println("RELAY: Setup complete, waiting for mesh connections...");
@@ -355,30 +334,22 @@ void loop() {
 
     unsigned long currentMillis = millis();
 
-    // Periodic registration retry if not registered
-    if (!registeredWithRoot &&
-        currentMillis - lastRegistrationAttempt > REGISTRATION_RETRY_INTERVAL) {
-        lastRegistrationAttempt = currentMillis;
-
-        auto nodes = mesh.getNodeList();
-        if (!nodes.empty()) {
-            Serial.println("MESH: Not registered yet, broadcasting 'R'...");
-            mesh.sendBroadcast("R");
-
-            if (rootId != 0) {
-                Serial.printf(
-                    "MESH: Also sending 'R' directly to suspected root %u\n",
-                    rootId);
-                mesh.sendSingle(rootId, "R");
-            }
-        } else {
-            Serial.println("MESH: No nodes connected, cannot register");
-        }
-    }
-
     // Periodic status report
     if (currentMillis - lastStatusPrint >= STATUS_PRINT_INTERVAL) {
         lastStatusPrint = currentMillis;
         printStatus();
+    }
+
+    if (!registeredWithRoot && currentMillis - lastRegistrationAttempt >=
+                                   REGISTRATION_RETRY_INTERVAL) {
+        lastRegistrationAttempt = currentMillis;
+        Serial.println("MESH: Attempting registration with root...");
+
+        mesh.sendSingle(rootId, "R");
+        Serial.printf("MESH: Sent registration 'R' to root %u\n", rootId);
+    }
+
+    if (mesh.getNodeList().empty()) {
+        registeredWithRoot = false;
     }
 }

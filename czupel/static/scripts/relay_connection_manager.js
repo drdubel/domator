@@ -26,29 +26,6 @@ let wsId = Math.floor(Math.random() * 2000000000);
 let wsConnected = false;
 let reconnectTimeout = null;
 
-// Auto-positioning system
-let nextPosition = { x: 50, y: 50 };
-const gridSpacing = { x: 280, y: 250 };
-const maxColumns = 4;
-
-function getNextPosition() {
-    const pos = { ...nextPosition };
-
-    // Move to next column
-    nextPosition.x += gridSpacing.x;
-
-    // If we've filled a row, move to next row
-    if (nextPosition.x > gridSpacing.x * maxColumns) {
-        nextPosition.x = 50;
-        nextPosition.y += gridSpacing.y;
-    }
-
-    return pos;
-}
-
-function resetPositioning() {
-    nextPosition = { x: 50, y: 50 };
-}
 
 // Wait for jsPlumb to load with better error handling
 function waitForJsPlumb() {
@@ -193,22 +170,6 @@ function resetZoom() {
     updateCanvasTransform();
 }
 
-// Add clear button functionality
-function clearCanvas() {
-    if (confirm('⚠️ Clear all devices and connections?')) {
-        resetPositioning();
-        instance.deleteEveryConnection();
-        document.querySelectorAll('.device-box').forEach(el => el.remove());
-        switches = {};
-        relays = {};
-        deviceNames = {};
-        switchCounter = 0;
-        updateConnectionCount();
-        autoSave();
-        console.log('🗑️ Canvas cleared');
-    }
-}
-
 function updateCanvasTransform() {
     const canvas = document.getElementById('canvas');
     canvas.style.transform = `translate(${panX}px, ${panY}px) scale(${currentZoom})`;
@@ -326,9 +287,8 @@ function addSwitch(buttonCount = 4, customName = null, customId = null, position
         box.style.left = position.x + 'px';
         box.style.top = position.y + 'px';
     } else {
-        const autoPos = getNextPosition();
-        box.style.left = autoPos.x + 'px';
-        box.style.top = autoPos.y + 'px';
+        box.style.left = (100 + switches.length * 50) + 'px';
+        box.style.top = (100 + switches.length * 30) + 'px';
     }
 
     // Header
@@ -458,9 +418,8 @@ function addRelay(customName = null, customId = null, position = null) {
         box.style.left = position.x + 'px';
         box.style.top = position.y + 'px';
     } else {
-        const autoPos = getNextPosition();
-        box.style.left = autoPos.x + 'px';
-        box.style.top = autoPos.y + 'px';
+        box.style.left = (600 + relays.length * 50) + 'px';
+        box.style.top = (100 + relays.length * 30) + 'px';
     }
 
     // Header

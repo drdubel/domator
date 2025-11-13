@@ -20,7 +20,12 @@ const data = {
 		data: [],
 		fill: false,
 		borderColor: 'rgb(200, 0, 0)',
-	}]
+	}, {
+        label: 'Target water temperature',
+        data: [],
+        fill: false,
+        borderColor: 'rgb(105, 200, 20)',
+    }]
 }
 
 fetch("/static/data/heating_chart.json")
@@ -29,8 +34,9 @@ fetch("/static/data/heating_chart.json")
 		const json_chart_data = data;
 		chart.data.labels = json_chart_data["labels"]
 		chart.data.datasets[0].data = json_chart_data["cold"]
-		chart.data.datasets[1].data = json_chart_data["mixed"]
+        chart.data.datasets[1].data = json_chart_data["mixed"]
 		chart.data.datasets[2].data = json_chart_data["hot"]
+        chart.data.datasets[3].data = json_chart_data["target"]
 	});
 
 const ctx = document.getElementById('myChart');
@@ -86,6 +92,7 @@ ws.onmessage = function (event) {
 	chart.data.datasets[0].data.push(msg["cold"])
 	chart.data.datasets[1].data.push(msg["mixed"])
 	chart.data.datasets[2].data.push(msg["hot"])
+	chart.data.datasets[3].data.push(msg["target"])
 	chart.update()
 	for (let id in msg) {
 		console.log(id, msg[id]);

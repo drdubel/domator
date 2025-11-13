@@ -1,31 +1,56 @@
+import json
 import logging
 import os
+import shutil
+from pathlib import Path
 from pickle import dump, load
 from secrets import token_urlsafe
 from typing import Optional
 
-import requests
 from aioprometheus.asgi.middleware import MetricsMiddleware
 from aioprometheus.asgi.starlette import metrics
 from authlib.integrations.starlette_client import OAuth, OAuthError
-from fastapi import Cookie, FastAPI, Response, WebSocket
+from fastapi import Cookie, FastAPI, File, Response, UploadFile, WebSocket
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 from starlette.config import Config
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
+from starlette.types import ASGIApp
 
-from .broker import mqtt
-from .data.authorized import authorized
-from .websocket import ws_manager
+from czupel.broker import mqtt
+from czupel.data.authorized import authorized
+from czupel.websocket import ws_manager
 
 logger = logging.getLogger(__name__)
+
+
+class CustomRequestSizeMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app: ASGIApp, max_content_size: int):
+        super().__init__(app)
+        self.max_content_size = max_content_size
+
+    async def dispatch(self, request: Request, call_next: callable) -> Response:
+        content_length = int(request.headers.get("content-length", 0))
+        if content_length > self.max_content_size:
+            return Response(
+                content="Request body too large",
+                status_code=413,
+                media_type="text/plain",
+            )
+        return await call_next(request)
+
+
+MAX_REQUEST_SIZE = 10_000_000
 
 app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key="!secret")
 app.add_middleware(MetricsMiddleware)
+app.add_middleware(CustomRequestSizeMiddleware, max_content_size=MAX_REQUEST_SIZE)
 app.add_route("/metrics", metrics)
 mqtt.init_app(app)
 
@@ -35,6 +60,7 @@ oauth = OAuth(config)
 background_task_started = False
 
 app.mount("/static", StaticFiles(directory="./static", html=True), name="static")
+
 
 CONF_URL = "https://accounts.google.com/.well-known/openid-configuration"
 oauth.register(
@@ -64,6 +90,41 @@ async def homepage(request: Request, access_token: Optional[str] = Cookie(None))
     return HTMLResponse('<a href="/login">login</a>')
 
 
+@app.get("/upload")
+async def upload_page(request: Request, access_token: Optional[str] = Cookie(None)):
+    user = request.session.get("user")
+    if not (user and access_token in access_cookies):
+        return RedirectResponse(url="/")
+
+    with open(os.path.join("static", "upload.html")) as fh:
+        data = fh.read()
+
+    return Response(content=data, media_type="text/html")
+
+
+@app.post("/upload/{device}")
+async def upload_firmware(
+    request: Request,
+    device: str,
+    file: UploadFile = File(...),
+    access_token: Optional[str] = Cookie(None),
+):
+    user = request.session.get("user")
+    if not (user and access_token in access_cookies):
+        return RedirectResponse(url="/")
+
+    if device not in ["switch", "relay", "root"]:
+        return JSONResponse(
+            {"status": "error", "reason": "unknown device"}, status_code=400
+        )
+
+    save_path = Path(f"static/data/{device}/firmware.bin")
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(save_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    return JSONResponse({"status": "ok", "device": device})
+
+
 @app.get("/auto")
 async def main(request: Request, access_token: Optional[str] = Cookie(None)):
     user = request.session.get("user")
@@ -72,91 +133,6 @@ async def main(request: Request, access_token: Optional[str] = Cookie(None)):
             data = fh.read()
         return Response(content=data, media_type="text/html")
     return RedirectResponse(url="/")
-
-
-@app.get("/api/temperatures")
-async def get_temperatures(request: Request, start: int, end: int, step: int):
-    response1 = requests.get(
-        "http://127.0.0.1:8428/api/v1/query_range",
-        params={
-            "start": start,
-            "end": end,
-            "query": "water_temperature",
-            "step": step,
-        },
-    )
-
-    response2 = requests.get(
-        "http://127.0.0.1:8428/api/v1/query_range",
-        params={
-            "start": start,
-            "end": end,
-            "query": "pid_target",
-            "step": step,
-        },
-    )
-
-    if response1.status_code != 200 or response2.status_code != 200:
-        return "connection not working"
-
-    water_temperatures = (
-        response1.json()["data"]["result"] + response2.json()["data"]["result"]
-    )
-
-    result = [
-        {
-            "timestamp": water_temperatures[0]["values"][i][0],
-            "cold": water_temperatures[0]["values"][i][1],
-            "hot": water_temperatures[1]["values"][i][1],
-            "mixed": water_temperatures[2]["values"][i][1],
-            "target": water_temperatures[3]["values"][i][1],
-        }
-        for i in range(len(water_temperatures[0]["values"]))
-    ]
-
-    return result
-
-
-@app.get("/api/heating_data")
-async def get_heating_data(request: Request):
-    response1 = requests.get(
-        "http://127.0.0.1:8428/api/v1/query?query=water_temperature"
-    )
-    response2 = requests.get("http://127.0.0.1:8428/api/v1/query?query=pid_target")
-    response3 = requests.get("http://127.0.0.1:8428/api/v1/query?query=pid_integral")
-    response4 = requests.get("http://127.0.0.1:8428/api/v1/query?query=pid_output")
-    response5 = requests.get("http://127.0.0.1:8428/api/v1/query?query=pid_multiplier")
-
-    if (
-        response1.status_code != 200
-        or response2.status_code != 200
-        or response3.status_code != 200
-        or response4.status_code != 200
-        or response5.status_code != 200
-    ):
-        return "connection not working"
-
-    heating_data = (
-        response1.json()["data"]["result"]
-        + response2.json()["data"]["result"]
-        + response3.json()["data"]["result"]
-        + response4.json()["data"]["result"]
-        + response5.json()["data"]["result"]
-    )
-
-    result = {
-        "cold": heating_data[0]["value"][1],
-        "hot": heating_data[1]["value"][1],
-        "mixed": heating_data[2]["value"][1],
-        "target": heating_data[3]["value"][1],
-        "integral": heating_data[4]["value"][1],
-        "pid": heating_data[5]["value"][1],
-        "kd": heating_data[6]["value"][1],
-        "ki": heating_data[7]["value"][1],
-        "kp": heating_data[8]["value"][1],
-    }
-
-    return result
 
 
 @app.get("/heating")
@@ -281,6 +257,7 @@ async def websocket_heating(websocket: WebSocket, access_token=Cookie()):
 async def websocket_lights(websocket: WebSocket, access_token=Cookie()):
     await ws_manager.connect(websocket)
     mqtt.publish("/switch/1/cmd", "S")
+    mqtt.publish("/relay/cmd/1074130365", "S")
 
     async def receive_command(websocket: WebSocket):
         async for cmd in websocket.iter_json():
@@ -290,8 +267,37 @@ async def websocket_lights(websocket: WebSocket, access_token=Cookie()):
                 logger.error("Cannot parse %s %s", cmd, err)
                 continue
             logger.debug("putting %s in command queue", cmd)
-            print(f"{chg.id}{chg.state}")
-            mqtt.client.publish("/switch/1/cmd", f"{chg.id}{chg.state}")
+            chg.id = int(chg.id[1:])
+            if chg.id < 9:
+                chg.id = chr(chg.id + 97)
+                print(f"{chg.id}{chg.state}")
+                mqtt.client.publish("/switch/1/cmd", f"{chg.id}{chg.state}")
+
+            else:
+                chg.id = chr(chg.id - 9 + 97)
+                print(f"{chg.id}{chg.state}")
+                mqtt.client.publish("/relay/cmd/1074130365", f"{chg.id}{chg.state}")
+
+    if access_token in access_cookies:
+        await receive_command(websocket)
+
+
+@app.websocket("/rcm/ws/{client_id}")
+async def websocket_rcm(websocket: WebSocket, access_token=Cookie()):
+    await ws_manager.connect(websocket)
+
+    with open("czupel/data/connections.json", "r", encoding="utf-8") as f:
+        rcm_config = json.load(f)
+        print(rcm_config)
+
+        await ws_manager.send_personal_message(rcm_config, websocket)
+
+    async def receive_command(websocket: WebSocket):
+        async for cmd in websocket.iter_json():
+            logger.debug("putting %s in command queue", cmd)
+
+            with open("czupel/data/connections.json", "w", encoding="utf-8") as f:
+                json.dump(cmd, f, ensure_ascii=False, indent=2)
 
     if access_token in access_cookies:
         await receive_command(websocket)
@@ -301,7 +307,11 @@ def start():
     import uvicorn
 
     logging.basicConfig(level=logging.DEBUG)
-    uvicorn.run(app, host="127.0.0.1", port=8002)
+    uvicorn.run(
+        app,
+        host="127.0.0.1",
+        port=8002,
+    )
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@
 #include <map>
 
 #define HOSTNAME "mesh_root"
-#define NLIGHTS 7
+#define NLIGHTS 8
 
 // Timing constants
 #define MQTT_RECONNECT_INTERVAL 30000
@@ -306,17 +306,21 @@ void receivedCallback(const uint32_t& from, const String& msg) {
     if (msg == "R") {
         nodes[from] = "relay";
         Serial.printf("MESH: Registered node %u as relay\n", from);
+
+        mesh.sendSingle(from, "A");  // Acknowledge registration
         return;
     }
 
     if (msg == "S") {
         nodes[from] = "switch";
         Serial.printf("MESH: Registered node %u as switch\n", from);
+
+        mesh.sendSingle(from, "A");  // Acknowledge registration
         return;
     }
 
     // Handle switch state messages (lowercase letters a-g)
-    if (msg.length() == 2 && msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
+    if (msg.length() == 1 && msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
         if (WiFi.status() != WL_CONNECTED) {
             Serial.println("MESH: WiFi not connected, cannot publish to MQTT");
             return;

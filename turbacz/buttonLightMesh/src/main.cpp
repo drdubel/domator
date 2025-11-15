@@ -241,12 +241,6 @@ void setup() {
     mesh.onNewConnection([](uint32_t nodeId) {
         Serial.printf("MESH: New connection from node %u\n", nodeId);
 
-        // Update root ID if not set
-        if (rootId == 0) {
-            rootId = nodeId;
-            Serial.printf("MESH: Setting root ID to %u\n", rootId);
-        }
-
         // Send registration multiple times to ensure delivery
         delay(1000);  // Wait for connection to stabilize
         mesh.sendSingle(rootId, "S");
@@ -263,7 +257,6 @@ void setup() {
 
         Serial.println("MESH: Lost connection to root, resetting");
         registeredWithRoot = false;
-        rootId = 0;
 
         updateLedStatus();
     });
@@ -308,28 +301,21 @@ void loop() {
                 continue;
             }
 
-            // Send to root if known, otherwise broadcast
-            if (rootId != 0) {
-                String message =
-                    String(msg);  // Format: just the letter (e.g., 'a')
-                if (mesh.sendSingle(rootId, message)) {
-                    Serial.printf("BUTTON: Sent '%s' to root %u\n",
-                                  message.c_str(), rootId);
+            String message =
+                String(msg);  // Format: just the letter (e.g., 'a')
+            if (mesh.sendSingle(rootId, message)) {
+                Serial.printf("BUTTON: Sent '%s' to root %u\n", message.c_str(),
+                              rootId);
 
-                    // Flash LED to confirm
-                    setLedColor(0, 255, 255);  // Cyan flash
-                    delay(50);
-                    updateLedStatus();
-                } else {
-                    Serial.println("BUTTON: Failed to send message");
-                    setLedColor(255, 128, 0);  // Orange flash
-                    delay(100);
-                    updateLedStatus();
-                }
+                // Flash LED to confirm
+                setLedColor(0, 255, 255);  // Cyan flash
+                delay(50);
+                updateLedStatus();
             } else {
-                String message = String(msg);
-                mesh.sendBroadcast(message);
-                Serial.printf("BUTTON: Broadcast '%s'\n", message.c_str());
+                Serial.println("BUTTON: Failed to send message");
+                setLedColor(255, 128, 0);  // Orange flash
+                delay(100);
+                updateLedStatus();
             }
         }
 

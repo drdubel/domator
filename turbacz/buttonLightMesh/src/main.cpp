@@ -333,6 +333,7 @@ void loop() {
         Serial.printf("Registered: %s\n", registeredWithRoot ? "Yes" : "No");
         Serial.printf("Free Heap: %d bytes\n", ESP.getFreeHeap());
         Serial.printf("Uptime: %lu seconds\n", currentMillis / 1000);
+        Serial.printf("WiFi RSSI: %d dBm\n", WiFi.RSSI());
 
         printNodes();
         Serial.println("-------------------\n");

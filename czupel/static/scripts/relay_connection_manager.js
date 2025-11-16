@@ -141,7 +141,6 @@ function bindJsPlumbEvents() {
 
     instance.bind('dragstop', function (params) {
         console.log('✅ Drag stopped:', params.el.id);
-        autoSave();
     });
 
     console.log('✅ Events bound');
@@ -271,6 +270,8 @@ function confirmAddSwitch() {
 // Add switch
 function addSwitch(buttonCount = 4, customName = null, customId = null, position = null) {
     if (!instance) return;
+    console.log('🔵 addSwitch called:', { buttonCount, customName, position });
+    console.trace();
 
     const switchId = customId || generateId();
     const switchName = customName || `Switch ${switchCounter}`;
@@ -716,7 +717,6 @@ function updateConnectionMap() {
 
     document.getElementById('output').textContent = formatted;
     console.log('✅ Connection map updated');
-    autoSave();
 }
 
 // In updateCanvasTransform, add at the end:
@@ -728,7 +728,6 @@ function updateCanvasTransform() {
     if (instance) {
         instance.setZoom(currentZoom);
     }
-    autoSave(); // Add this line
 }
 
 // In makeEditable, add autoSave in the save function:
@@ -755,7 +754,6 @@ function makeEditable(element, getValue, setValue, placeholder = '') {
             input.replaceWith(newElement);
 
             makeEditable(newElement, getValue, setValue, placeholder);
-            autoSave(); // Add this line
         }
 
         input.addEventListener('blur', save);
@@ -880,33 +878,6 @@ function clearAllConnections() {
     }
 }
 
-// Initialize with sample data
-function initializeSampleData() {
-    addSwitch(4, 'Living Room', null, { x: 100, y: 100 });
-    addSwitch(3, 'Bedroom', null, { x: 100, y: 400 });
-    addRelay('Main Relay', null, { x: 600, y: 100 });
-    addRelay('Secondary Relay', null, { x: 600, y: 500 });
-}
-
-// Auto-save to localStorage
-function autoSave() {
-    clearTimeout(saveTimeout);
-    saveTimeout = setTimeout(() => {
-        saveToLocalStorage();
-    }, AUTOSAVE_DELAY);
-}
-
-// Save current state to localStorage
-function saveToLocalStorage() {
-    try {
-        const data = getCurrentState();
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-        console.log('✅ Auto-saved');
-    } catch (error) {
-        console.error('Failed to save:', error);
-    }
-}
-
 // Get current state
 function getCurrentState() {
     const connections = {};
@@ -969,21 +940,6 @@ function getCurrentState() {
     };
 }
 
-// Load from localStorage
-function loadFromLocalStorage() {
-    try {
-        const saved = localStorage.getItem(STORAGE_KEY);
-        if (!saved) return false;
-
-        const data = JSON.parse(saved);
-        restoreState(data);
-        console.log('✅ Loaded from auto-save');
-        return true;
-    } catch (error) {
-        console.error('Failed to load:', error);
-        return false;
-    }
-}
 
 // Restore state from data
 function restoreState(data) {
@@ -1085,13 +1041,6 @@ function restoreState(data) {
     }, 500);
 }
 
-// Clear localStorage
-function clearLocalStorage() {
-    if (confirm('Clear all saved data? This will reload the page with sample data.')) {
-        localStorage.removeItem(STORAGE_KEY);
-        location.reload();
-    }
-}
 
 // WebSocket functions
 function initWebSocket() {
@@ -1193,45 +1142,40 @@ function handleConfigFromWS(config) {
         console.error('No configuration received');
         return;
     }
+    try {
+        console.log('🔄 Auto-loading configuration from server...');
 
-    if (confirm('📨 New configuration received from server. Load it?\n\nThis will replace your current configuration.')) {
-        try {
-            console.log('🔄 Clearing everything before loading from server...');
+        // Complete reset - clear everything
+        document.getElementById('canvas').innerHTML = '';
+        switches = [];
+        relays = [];
+        switchCounter = 0;
+        relayCounter = 0;
+        deviceNames = {};
+        outputNames = {};
 
-            // Complete reset - clear everything
-            document.getElementById('canvas').innerHTML = '';
-            switches = [];
-            relays = [];
-            switchCounter = 0;
-            relayCounter = 0;
-            deviceNames = {};
-            outputNames = {};
-
-            // Reset jsPlumb completely
-            if (instance) {
-                instance.reset();
-            }
-
-            // Re-initialize jsPlumb with fresh event bindings
-            initializeJsPlumb();
-
-            // Small delay to ensure everything is cleared
-            setTimeout(() => {
-                restoreState(config);
-                saveToLocalStorage();
-
-                const statusElement = document.getElementById('wsStatus');
-                const originalText = statusElement.textContent;
-                statusElement.textContent = '✅ Loaded!';
-                setTimeout(() => {
-                    statusElement.textContent = originalText;
-                }, 2000);
-            }, 100);
-
-        } catch (error) {
-            console.error('Failed to load configuration:', error);
-            alert('❌ Failed to load: ' + error.message);
+        // Reset jsPlumb completely
+        if (instance) {
+            instance.reset();
         }
+
+        // Re-initialize jsPlumb with fresh event bindings
+        initializeJsPlumb();
+
+        // Small delay to ensure everything is cleared
+        setTimeout(() => {
+            restoreState(config);
+
+            const statusElement = document.getElementById('wsStatus');
+            if (statusElement) {
+                const originalText = statusElement.textContent;
+                statusElement.textContent = '✅ Loaded';
+                setTimeout(() => { statusElement.textContent = originalText; }, 2000);
+            }
+        }, 100);
+
+    } catch (error) {
+        console.error('Failed to auto-load configuration:', error);
     }
 }
 
@@ -1269,18 +1213,6 @@ async function init() {
 
         initializeJsPlumb();
         console.log('jsPlumb initialized');
-
-        // Try to load from localStorage first
-        const loaded = loadFromLocalStorage();
-
-        // If nothing saved, initialize with sample data
-        if (!loaded) {
-            console.log('No saved data, loading sample data');
-            initializeSampleData();
-        }
-
-        updateConnectionMap();
-        updateConnectionCount();
 
         // Initialize WebSocket connection
         initWebSocket();

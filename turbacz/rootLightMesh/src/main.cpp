@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <HTTPClient.h>
@@ -11,6 +12,8 @@
 
 #include <algorithm>
 #include <map>
+#include <utility>
+#include <vector>
 
 #define HOSTNAME "mesh_root"
 #define NLIGHTS 8
@@ -32,6 +35,8 @@ const char* mqttUser = "mesh_root";
 uint32_t device_id;
 
 std::map<uint32_t, String> nodes;
+std::map<String, std::map<String, std::vector<std::pair<String, String>>>>
+    connections;
 
 // Function declarations
 void receivedCallback(const uint32_t& from, const String& msg);
@@ -243,6 +248,39 @@ void performFirmwareUpdate() {
 
 IPAddress getlocalIP() { return IPAddress(mesh.getStationIP()); }
 
+bool isValidJson(const String& s) {
+    JsonDocument doc;  // Small doc is enough for validation
+    DeserializationError err = deserializeJson(doc, s);
+    return !err;
+}
+
+void parseConnections(JsonObject root) {
+    if (root.isNull()) return;
+
+    for (JsonPair idPair : root) {
+        String id = idPair.key().c_str();
+        JsonObject letterObj = idPair.value().as<JsonObject>();
+
+        for (JsonPair letterPair : letterObj) {
+            String letter = letterPair.key().c_str();
+            JsonArray arr = letterPair.value().as<JsonArray>();
+
+            std::vector<std::pair<String, String>> vec;
+            vec.reserve(arr.size());
+
+            for (JsonArray item : arr) {
+                if (item.size() >= 2) {
+                    String first = item[0].as<const char*>();
+                    String second = item[1].as<const char*>();
+                    vec.emplace_back(first, second);
+                }
+            }
+
+            connections[id][letter] = std::move(vec);
+        }
+    }
+}
+
 void mqttConnect() {
     if (WiFi.status() != WL_CONNECTED) {
         DEBUG_PRINTLN("MQTT: WiFi not connected, skipping MQTT connection");
@@ -313,13 +351,27 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
     DEBUG_PRINTF("MQTT: [%s] %s\n", topic, msg.c_str());
 
-    if (msg == "U") {
-        if (strcmp(topic, "/switch/cmd/root") == 0) {
+    if (strcmp(topic, "/switch/cmd/root") == 0) {
+        if (msg == "U") {
             DEBUG_PRINTLN("MQTT: Firmware update requested for root node");
             performFirmwareUpdate();
+
             return;
         }
 
+        if (isValidJson(msg)) {
+            DEBUG_PRINTLN("MQTT: Updating connections from JSON");
+            JsonDocument doc;
+            deserializeJson(doc, msg);
+
+            parseConnections(doc["connections"].as<JsonObject>());
+            DEBUG_PRINTLN("MQTT: Connections updated from JSON");
+
+            return;
+        }
+    }
+
+    if (msg == "U") {
         DEBUG_PRINTLN("MQTT: Broadcasting firmware update to mesh nodes");
 
         for (const auto& pair : nodes) {

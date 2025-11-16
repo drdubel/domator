@@ -423,6 +423,45 @@ void droppedConnectionCallback(uint32_t nodeId) {
                  ESP.getFreeHeap());
 }
 
+void handleSwitchMessage(const uint32_t& from, const String& msg) {
+    DEBUG_PRINTF("MESH: Switch message from %u: %s\n", from, msg.c_str());
+
+    std::vector<std::pair<String, String>> targets =
+        connections[String(from)][msg];
+
+    for (const auto& target : targets) {
+        String relayIdStr = target.first;
+        String command = target.second;
+
+        uint32_t relayId = relayIdStr.toInt();
+        mesh.sendSingle(relayId, command);
+        DEBUG_PRINTF("MESH: Sent to relay %s command %s\n", relayIdStr.c_str(),
+                     command.c_str());
+    }
+}
+
+void handleRelayMessage(const uint32_t& from, const String& msg) {
+    DEBUG_PRINTF("MESH: Relay message from %u: %s\n", from, msg.c_str());
+
+    if (WiFi.status() != WL_CONNECTED) {
+        DEBUG_PRINTLN("MESH: WiFi not connected, cannot publish to MQTT");
+        return;
+    }
+
+    if (!mqttClient.connected()) {
+        DEBUG_PRINTLN("MESH: MQTT not connected, cannot publish");
+        return;
+    }
+
+    String topic = "/relay/state/" + String(from);
+    if (mqttClient.publish(topic.c_str(), msg.c_str())) {
+        DEBUG_PRINTF("MQTT: Published [%s] %s\n", topic.c_str(), msg.c_str());
+    } else {
+        DEBUG_PRINTF("MQTT: Failed to publish [%s] %s\n", topic.c_str(),
+                     msg.c_str());
+    }
+}
+
 void receivedCallback(const uint32_t& from, const String& msg) {
     DEBUG_PRINTF("MESH: [%u] %s\n", from, msg.c_str());
 
@@ -441,46 +480,12 @@ void receivedCallback(const uint32_t& from, const String& msg) {
     }
 
     if (msg.length() == 1 && msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
-        if (WiFi.status() != WL_CONNECTED) {
-            DEBUG_PRINTLN("MESH: WiFi not connected, cannot publish to MQTT");
-            return;
-        }
-
-        if (!mqttClient.connected()) {
-            DEBUG_PRINTLN("MESH: MQTT not connected, cannot publish");
-            return;
-        }
-
-        String topic = "/switch/state/" + String(from);
-        if (mqttClient.publish(topic.c_str(), msg.c_str())) {
-            DEBUG_PRINTF("MQTT: Published [%s] %s\n", topic.c_str(),
-                         msg.c_str());
-        } else {
-            DEBUG_PRINTF("MQTT: Failed to publish [%s] %s\n", topic.c_str(),
-                         msg.c_str());
-        }
+        handleSwitchMessage(from, msg);
         return;
     }
 
     if (msg.length() == 2 && msg[0] >= 'A' && msg[0] < 'A' + NLIGHTS) {
-        if (WiFi.status() != WL_CONNECTED) {
-            DEBUG_PRINTLN("MESH: WiFi not connected, cannot publish to MQTT");
-            return;
-        }
-
-        if (!mqttClient.connected()) {
-            DEBUG_PRINTLN("MESH: MQTT not connected, cannot publish");
-            return;
-        }
-
-        String topic = "/relay/state/" + String(from);
-        if (mqttClient.publish(topic.c_str(), msg.c_str())) {
-            DEBUG_PRINTF("MQTT: Published [%s] %s\n", topic.c_str(),
-                         msg.c_str());
-        } else {
-            DEBUG_PRINTF("MQTT: Failed to publish [%s] %s\n", topic.c_str(),
-                         msg.c_str());
-        }
+        handleRelayMessage(from, msg);
         return;
     }
 

@@ -15,8 +15,17 @@
 #include <utility>
 #include <vector>
 
+#include "esp_spi_flash.h"
+#include "mbedtls/sha256.h"
+
 #define HOSTNAME "mesh_root"
 #define NLIGHTS 8
+
+// Adjust according to your board's partition table
+#define APP_START 0x10000  // Typical start of app partition
+#define APP_SIZE \
+    0x100000  // Approximate max size (1MB here, adjust to your firmware size)
+#define BUFFER_SIZE 1024  // Read buffer size
 
 // Timing constants
 #define MQTT_RECONNECT_INTERVAL 30000
@@ -61,6 +70,45 @@ static unsigned long lastMqttReconnect = 0;
 
 const char* firmware_url =
     "https://czupel.dry.pl/static/data/root/firmware.bin";
+
+String calculateFirmwareSHA256() {
+    uint8_t buffer[BUFFER_SIZE];
+    mbedtls_sha256_context ctx;
+    mbedtls_sha256_init(&ctx);
+    mbedtls_sha256_starts_ret(&ctx, 0);  // 0 = SHA-256
+
+    size_t offset = 0;
+    while (offset < APP_SIZE) {
+        size_t chunkSize = BUFFER_SIZE;
+        if (offset + chunkSize > APP_SIZE) {
+            chunkSize = APP_SIZE - offset;
+        }
+
+        // Read flash
+        esp_err_t err =
+            spi_flash_read(APP_START + offset, (uint32_t*)buffer, chunkSize);
+        if (err != ESP_OK) {
+            Serial.println("Flash read error!");
+            mbedtls_sha256_free(&ctx);
+            return "";
+        }
+
+        mbedtls_sha256_update_ret(&ctx, buffer, chunkSize);
+        offset += chunkSize;
+    }
+
+    uint8_t hash[32];
+    mbedtls_sha256_finish_ret(&ctx, hash);
+    mbedtls_sha256_free(&ctx);
+
+    // Convert to hex string
+    String hashStr;
+    for (int i = 0; i < 32; i++) {
+        if (hash[i] < 16) hashStr += '0';
+        hashStr += String(hash[i], HEX);
+    }
+    return hashStr;
+}
 
 // Telnet helper functions
 void telnetPrint(const String& msg) {
@@ -505,6 +553,9 @@ void setup() {
     DEBUG_PRINTF("Free Heap: %d bytes\n", ESP.getFreeHeap());
     DEBUG_PRINTF("Flash Size: %d bytes\n", ESP.getFlashChipSize());
     DEBUG_PRINTLN("========================================\n");
+
+    String firmwareHash = calculateFirmwareSHA256();
+    DEBUG_PRINTF("Firmware SHA-256: %s\n", firmwareHash.c_str());
 
     meshInit();
 }

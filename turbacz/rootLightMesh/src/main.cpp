@@ -524,6 +524,79 @@ void receivedCallback(const uint32_t& from, const String& msg) {
                  msg.c_str());
 }
 
+void checkWiFi() {
+    IPAddress currentIP = getlocalIP();
+    if (myIP != currentIP && currentIP != IPAddress(0, 0, 0, 0)) {
+        myIP = currentIP;
+        DEBUG_PRINTLN("WiFi: Connected to external network");
+        DEBUG_PRINTF("WiFi: IP address: %s\n", myIP.toString().c_str());
+
+        // Start Telnet server
+        telnetServer.begin();
+        telnetServer.setNoDelay(true);
+        DEBUG_PRINTLN("Telnet: Server started on port 23");
+        DEBUG_PRINTF("Telnet: Connect using: telnet %s\n",
+                     myIP.toString().c_str());
+
+        mqttConnect();
+        lastMqttReconnect = millis();
+    }
+}
+
+void checkMQTT() {
+    if (WiFi.status() != WL_CONNECTED) {
+        return;
+    }
+
+    if (!mqttClient.connected()) {
+        unsigned long now = millis();
+        if (now - lastMqttReconnect > MQTT_RECONNECT_INTERVAL) {
+            lastMqttReconnect = now;
+            DEBUG_PRINTLN("MQTT: Attempting reconnection...");
+            mqttConnect();
+        }
+    } else {
+        mqttClient.loop();
+    }
+}
+
+void meshStatusReport() {
+    DEBUG_PRINTLN("\nRegistered Nodes:");
+    if (nodes.empty()) {
+        DEBUG_PRINTLN("  (none)");
+    } else {
+        for (const auto& pair : nodes) {
+            DEBUG_PRINTF("  Node %u: %s\n", pair.first, pair.second.c_str());
+        }
+    }
+
+    auto meshNodes = mesh.getNodeList();
+    DEBUG_PRINTF("\nMesh Network: %u node(s)\n", meshNodes.size());
+    for (auto node : meshNodes) {
+        DEBUG_PRINTF("  %u\n", node);
+    }
+
+    painlessmesh::protocol::NodeTree tree = mesh.asNodeTree();
+    DEBUG_PRINTLN("MESH: Current Node Tree:");
+    DEBUG_PRINTF("%s\n", tree.toString().c_str());  // <-- Use toString()
+}
+
+void statusReport() {
+    lastPrint = millis();
+
+    DEBUG_PRINTLN("\n--- Status Report ---");
+    DEBUG_PRINTF("Firmware MD5: %s\n", fw_md5.c_str());
+    DEBUG_PRINTF("WiFi: %s\n",
+                 WiFi.status() == WL_CONNECTED ? "Connected" : "Disconnected");
+    DEBUG_PRINTF("MQTT: %s\n",
+                 mqttClient.connected() ? "Connected" : "Disconnected");
+    DEBUG_PRINTF("Free Heap: %d bytes\n", ESP.getFreeHeap());
+    DEBUG_PRINTF("Uptime: %lu seconds\n", millis() / 1000);
+
+    meshStatusReport();
+    DEBUG_PRINTLN("-------------------\n");
+}
+
 void setup() {
     Serial.begin(115200);
     delay(1000);
@@ -548,66 +621,13 @@ void loop() {
     handleTelnet();
 
     // Check for WiFi connection and get IP
-    IPAddress currentIP = getlocalIP();
-    if (myIP != currentIP && currentIP != IPAddress(0, 0, 0, 0)) {
-        myIP = currentIP;
-        DEBUG_PRINTLN("WiFi: Connected to external network");
-        DEBUG_PRINTF("WiFi: IP address: %s\n", myIP.toString().c_str());
+    checkWiFi();
 
-        // Start Telnet server
-        telnetServer.begin();
-        telnetServer.setNoDelay(true);
-        DEBUG_PRINTLN("Telnet: Server started on port 23");
-        DEBUG_PRINTF("Telnet: Connect using: telnet %s\n",
-                     myIP.toString().c_str());
-
-        mqttConnect();
-        lastMqttReconnect = millis();
-    }
-
-    // Handle MQTT connection and loop
-    if (WiFi.status() == WL_CONNECTED) {
-        if (!mqttClient.connected()) {
-            unsigned long now = millis();
-            if (now - lastMqttReconnect > MQTT_RECONNECT_INTERVAL) {
-                lastMqttReconnect = now;
-                DEBUG_PRINTLN("MQTT: Attempting reconnection...");
-                mqttConnect();
-            }
-        } else {
-            mqttClient.loop();
-        }
-    }
+    // Handle MQTT communication
+    checkMQTT();
 
     // Periodic status report
     if (millis() - lastPrint >= NODE_PRINT_INTERVAL) {
-        lastPrint = millis();
-
-        DEBUG_PRINTLN("\n--- Status Report ---");
-        DEBUG_PRINTF("Firmware MD5: %s\n", fw_md5.c_str());
-        DEBUG_PRINTF("WiFi: %s\n", WiFi.status() == WL_CONNECTED
-                                       ? "Connected"
-                                       : "Disconnected");
-        DEBUG_PRINTF("MQTT: %s\n",
-                     mqttClient.connected() ? "Connected" : "Disconnected");
-        DEBUG_PRINTF("Free Heap: %d bytes\n", ESP.getFreeHeap());
-        DEBUG_PRINTF("Uptime: %lu seconds\n", millis() / 1000);
-
-        DEBUG_PRINTLN("\nRegistered Nodes:");
-        if (nodes.empty()) {
-            DEBUG_PRINTLN("  (none)");
-        } else {
-            for (const auto& pair : nodes) {
-                DEBUG_PRINTF("  Node %u: %s\n", pair.first,
-                             pair.second.c_str());
-            }
-        }
-
-        auto meshNodes = mesh.getNodeList();
-        DEBUG_PRINTF("\nMesh Network: %u node(s)\n", meshNodes.size());
-        for (auto node : meshNodes) {
-            DEBUG_PRINTF("  %u\n", node);
-        }
-        DEBUG_PRINTLN("-------------------\n");
+        statusReport();
     }
 }

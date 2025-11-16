@@ -72,7 +72,7 @@ void performFirmwareUpdate() {
     Serial.println("[OTA] Stopping mesh...");
     mesh.stop();
 
-    delay(1000);  // Give time for cleanup
+    vTaskDelay(1000 / portTICK_PERIOD_MS);  // Give time for cleanup
 
     Serial.println("[OTA] Switching to STA mode...");
     WiFi.disconnect(true);
@@ -87,7 +87,7 @@ void performFirmwareUpdate() {
             ESP.restart();
             return;
         }
-        delay(500);
+        vTaskDelay(500 / portTICK_PERIOD_MS);
         Serial.print(".");
     }
     Serial.println(" connected!");
@@ -147,7 +147,7 @@ void performFirmwareUpdate() {
                 Serial.println("[OTA] Update finished successfully!");
                 http.end();
                 delete client;
-                delay(1000);
+                vTaskDelay(1000 / portTICK_PERIOD_MS);
                 ESP.restart();
             } else {
                 Serial.println("[OTA] Update not finished properly");
@@ -166,7 +166,7 @@ void performFirmwareUpdate() {
 
     Serial.println("[OTA] Update failed, restarting...");
     setLedColor(255, 0, 0);  // Red on failure
-    delay(2000);
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
     ESP.restart();
 }
 
@@ -213,7 +213,7 @@ void printNodes() {
 
 void setup() {
     Serial.begin(115200);
-    delay(1000);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
 
     Serial.println("\n\n========================================");
     Serial.println("ESP32-C3 Mesh Switch Node Starting...");
@@ -242,7 +242,8 @@ void setup() {
         Serial.printf("MESH: New connection from node %u\n", nodeId);
 
         // Send registration multiple times to ensure delivery
-        delay(1000);  // Wait for connection to stabilize
+        vTaskDelay(1000 /
+                   portTICK_PERIOD_MS);  // Wait for connection to stabilize
         mesh.sendSingle(rootId, "S");
         Serial.printf("MESH: Sent registration 'S' to root %u\n", rootId);
 
@@ -296,7 +297,7 @@ void loop() {
             if (mesh.getNodeList().empty()) {
                 Serial.println("BUTTON: No mesh connection, message not sent");
                 setLedColor(255, 0, 0);  // Flash red
-                delay(100);
+                vTaskDelay(100 / portTICK_PERIOD_MS);
                 updateLedStatus();
                 continue;
             }
@@ -309,12 +310,12 @@ void loop() {
 
                 // Flash LED to confirm
                 setLedColor(0, 255, 255);  // Cyan flash
-                delay(50);
+                vTaskDelay(50 / portTICK_PERIOD_MS);
                 updateLedStatus();
             } else {
                 Serial.println("BUTTON: Failed to send message");
                 setLedColor(255, 128, 0);  // Orange flash
-                delay(100);
+                vTaskDelay(100 / portTICK_PERIOD_MS);
                 updateLedStatus();
             }
         }

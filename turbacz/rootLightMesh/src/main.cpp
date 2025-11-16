@@ -166,7 +166,7 @@ void performFirmwareUpdate() {
             ESP.restart();
             return;
         }
-        delay(500);
+        vTaskDelay(500 / portTICK_PERIOD_MS);
         DEBUG_PRINT(".");
     }
     DEBUG_PRINTLN(" connected!");
@@ -217,6 +217,16 @@ void performFirmwareUpdate() {
         DEBUG_PRINTLN("[OTA] Writing firmware...");
         WiFiClient* stream = http.getStreamPtr();
         size_t written = Update.writeStream(*stream);
+        if (written != contentLength) {
+            DEBUG_PRINTF(
+                "[OTA] Written bytes mismatch! Expected: %d, got: %d\n",
+                contentLength, written);
+            Update.abort();
+            http.end();
+            delete client;
+            ESP.restart();
+            return;
+        }
 
         DEBUG_PRINTF("[OTA] Written %d/%d bytes\n", (int)written,
                      contentLength);
@@ -226,7 +236,7 @@ void performFirmwareUpdate() {
                 DEBUG_PRINTLN("[OTA] Update finished successfully!");
                 http.end();
                 delete client;
-                delay(1000);
+                vTaskDelay(1000 / portTICK_PERIOD_MS);
                 ESP.restart();
             } else {
                 DEBUG_PRINTLN("[OTA] Update not finished properly");
@@ -244,7 +254,7 @@ void performFirmwareUpdate() {
     delete client;
 
     DEBUG_PRINTLN("[OTA] Update failed, restarting...");
-    delay(1000);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
     ESP.restart();
 }
 
@@ -281,6 +291,25 @@ void parseConnections(JsonObject root) {
             connections[id][letter] = std::move(vec);
         }
     }
+
+    // Debug print all parsed connections
+    DEBUG_PRINTLN("Connections dump:");
+    for (const auto& idEntry : connections) {
+        DEBUG_PRINTF("Node %s:\n", idEntry.first.c_str());
+        for (const auto& letterEntry : idEntry.second) {
+            DEBUG_PRINTF("  %s =>", letterEntry.first.c_str());
+            if (letterEntry.second.empty()) {
+                DEBUG_PRINTLN(" (none)");
+                continue;
+            }
+            for (size_t i = 0; i < letterEntry.second.size(); ++i) {
+                const auto& p = letterEntry.second[i];
+                DEBUG_PRINTF(" [%s,%s]", p.first.c_str(), p.second.c_str());
+            }
+            DEBUG_PRINTLN("");
+        }
+    }
+    DEBUG_PRINTF("Total connection roots: %d\n", (int)connections.size());
 }
 
 void mqttConnect() {
@@ -317,7 +346,7 @@ void mqttConnect() {
             DEBUG_PRINTF("MQTT: Connection failed, rc=%d, retry %d/%d\n",
                          mqttClient.state(), retries + 1, MQTT_CONNECT_TIMEOUT);
             retries++;
-            delay(1000);
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
         }
     }
 
@@ -366,7 +395,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
             JsonDocument doc;
             deserializeJson(doc, msg);
 
-            parseConnections(doc["connections"].as<JsonObject>());
+            parseConnections(doc.as<JsonObject>());
             DEBUG_PRINTLN("MQTT: Connections updated from JSON");
 
             return;

@@ -211,6 +211,9 @@ void printNodes() {
     }
 }
 
+void IRAM_ATTR Ext_INT1_ISR() {
+}
+
 void setup() {
     Serial.begin(115200);
     vTaskDelay(1000 / portTICK_PERIOD_MS);
@@ -235,6 +238,7 @@ void setup() {
     // Setup button pins
     for (int i = 0; i < NLIGHTS; i++) {
         pinMode(buttonPins[i], INPUT_PULLDOWN);
+        attachInterrupt(buttonPins[i], Ext_INT1_ISR, RISING);
     }
 
     // Setup new connection callback

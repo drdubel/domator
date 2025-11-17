@@ -634,7 +634,7 @@ void sendNodeStatusReport() {
 
     JsonObject rootNode = nodesDict[String(mesh.getNodeId())].to<JsonObject>();
     rootNode["last_seen"] = "0";
-    rootNode["RSSI"] = String(WiFi.RSSI());
+    rootNode["rssi"] = String(WiFi.RSSI());
     rootNode["uptime"] = String(millis() / 1000);
     rootNode["clicks"] = "0";
     rootNode["firmware"] = fw_md5;

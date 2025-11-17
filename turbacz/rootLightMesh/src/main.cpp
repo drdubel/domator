@@ -63,6 +63,9 @@ static unsigned long lastPrint = 0;
 static unsigned long lastMqttReconnect = 0;
 static unsigned long lastNodeStatusReport = 0;
 
+// Node-parent mapping
+std::map<uint32_t, uint32_t> nodeParentMap;
+
 const char* firmware_url =
     "https://czupel.dry.pl/static/data/root/firmware.bin";
 
@@ -590,6 +593,14 @@ void checkMQTT() {
     }
 }
 
+void buildParentMap(const painlessmesh::protocol::NodeTree& node,
+                    uint32_t parent = 0) {
+    nodeParentMap[node.nodeId] = parent;
+    for (const auto& child : node.subs) {
+        buildParentMap(child, node.nodeId);
+    }
+}
+
 void sendNodeStatusReport() {
     lastNodeStatusReport = millis();
     if (WiFi.status() != WL_CONNECTED || !mqttClient.connected()) {
@@ -599,42 +610,38 @@ void sendNodeStatusReport() {
     }
 
     JsonDocument doc;
-    JsonObject root = doc.to<JsonObject>();
-
-    JsonObject nodesDict = root["nodes"].to<JsonObject>();
+    JsonObject nodesDict = doc.to<JsonObject>();
 
     auto meshNodes = mesh.getNodeList();
+    painlessmesh::protocol::NodeTree tree = mesh.asNodeTree();
+    buildParentMap(tree);
 
     for (auto nodeId : meshNodes) {
         JsonObject status = nodesDict[String(nodeId)].to<JsonObject>();
 
-        status["RSSI"] = nodesStatus[nodeId][0];
+        status["rssi"] = nodesStatus[nodeId][0];
         status["uptime"] = nodesStatus[nodeId][1];
         status["clicks"] = nodesStatus[nodeId][2];
         status["firmware"] = nodesStatus[nodeId][3];
         status["disconnects"] = nodesStatus[nodeId][4];
         status["last_seen"] =
-            (millis() - nodesStatus[nodeId][5].toInt()) / 1000;
+            String((millis() - nodesStatus[nodeId][5].toInt()) / 1000);
         status["type"] = nodes[nodeId];
-        status["root"] = false;
         status["status"] =
             status["last_seen"].as<uint32_t>() < 60 ? "online" : "offline";
+        status["parent"] = String(nodeParentMap[nodeId]);
     }
 
     JsonObject rootNode = nodesDict[String(mesh.getNodeId())].to<JsonObject>();
-    rootNode["last_seen"] = 0;
-    rootNode["RSSI"] = WiFi.RSSI();
-    rootNode["uptime"] = millis() / 1000;
-    rootNode["clicks"] = 0;
+    rootNode["last_seen"] = "0";
+    rootNode["RSSI"] = String(WiFi.RSSI());
+    rootNode["uptime"] = String(millis() / 1000);
+    rootNode["clicks"] = "0";
     rootNode["firmware"] = fw_md5;
-    rootNode["disconnects"] = 0;
+    rootNode["disconnects"] = "0";
     rootNode["type"] = "root";
-    rootNode["root"] = true;
     rootNode["status"] = "online";
-
-    JsonObject meshTree = root["mesh_tree"].to<JsonObject>();
-    painlessmesh::protocol::NodeTree tree = mesh.asNodeTree();
-    meshTree["tree"] = tree.toString();
+    rootNode["parent"] = "0";
 
     String message;
     serializeJson(doc, message);

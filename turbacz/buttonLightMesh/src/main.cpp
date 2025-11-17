@@ -378,9 +378,13 @@ void loop() {
     // Handle button presses
     handleButtons();
 
-    // Periodic status report
+    // Periodic status print
     if (millis() - lastStatusPrint >= STATUS_PRINT_INTERVAL) {
         statusPrint();
+
+        if (mesh.getNodeList().empty()) {
+            registeredWithRoot = false;
+        }
     }
 
     if (!registeredWithRoot &&
@@ -390,10 +394,6 @@ void loop() {
 
         mesh.sendSingle(rootId, "S");
         Serial.printf("MESH: Sent registration 'S' to root %u\n", rootId);
-    }
-
-    if (mesh.getNodeList().empty()) {
-        registeredWithRoot = false;
     }
 
     if (millis() - lastStatusReport >= STATUS_REPORT_INTERVAL &&

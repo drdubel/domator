@@ -250,6 +250,7 @@ void setup() {
     Serial.println("\n\n========================================");
     Serial.println("ESP32-C3 Mesh Switch Node Starting...");
     Serial.printf("Chip Model: %s\n", ESP.getChipModel());
+    Serial.printf("Sketch MD5: %s\n", fw_md5.c_str());
     Serial.printf("Chip Revision: %d\n", ESP.getChipRevision());
     Serial.printf("CPU Frequency: %d MHz\n", ESP.getCpuFreqMHz());
     Serial.printf("Free Heap: %d bytes\n", ESP.getFreeHeap());

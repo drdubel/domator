@@ -19,6 +19,7 @@
 #define NLIGHTS 8
 
 // Timing constants
+#define NODE_STATUS_REPORT_INTERVAL 30000
 #define MQTT_RECONNECT_INTERVAL 30000
 #define NODE_PRINT_INTERVAL 10000
 #define WIFI_CONNECT_TIMEOUT 20000
@@ -34,6 +35,7 @@ const int mqtt_port = 1883;
 const char* mqttUser = "mesh_root";
 uint32_t device_id;
 
+std::map<uint32_t, String[6]> nodesStatus;
 std::map<uint32_t, String> nodes;
 std::map<String, std::map<String, std::vector<std::pair<String, String>>>>
     connections;
@@ -42,6 +44,7 @@ std::map<String, std::map<String, std::vector<std::pair<String, String>>>>
 void receivedCallback(const uint32_t& from, const String& msg);
 void droppedConnectionCallback(uint32_t nodeId);
 void mqttCallback(char* topic, byte* payload, unsigned int length);
+void sendNodeStatusReport();
 void mqttConnect();
 void meshInit();
 void performFirmwareUpdate();
@@ -58,11 +61,12 @@ PubSubClient mqttClient(mqtt_broker, mqtt_port, wifiClient);
 // Timing variables
 static unsigned long lastPrint = 0;
 static unsigned long lastMqttReconnect = 0;
+static unsigned long lastNodeStatusReport = 0;
 
 const char* firmware_url =
     "https://czupel.dry.pl/static/data/root/firmware.bin";
 
-String fw_md5 = ESP.getSketchMD5();  // MD5 of the firmware as flashed
+String fw_md5;  // MD5 of the firmware as flashed
 
 // Telnet helper functions
 void telnetPrint(const String& msg) {
@@ -88,7 +92,7 @@ void telnetPrintln(const String& msg) { telnetPrint(msg + "\n"); }
     } while (0)
 #define DEBUG_PRINTF(fmt, ...)                          \
     do {                                                \
-        char buf[256];                                  \
+        char buf[1024];                                 \
         snprintf(buf, sizeof(buf), fmt, ##__VA_ARGS__); \
         Serial.print(buf);                              \
         telnetPrint(String(buf));                       \
@@ -493,18 +497,28 @@ void handleRelayMessage(const uint32_t& from, const String& msg) {
     }
 }
 
+void createNode(uint32_t nodeId, char type) {
+    nodes[nodeId] = String(type == 'R' ? "relay" : "switch");
+    nodesStatus[nodeId][0] = "-1";
+    nodesStatus[nodeId][1] = "-1";
+    nodesStatus[nodeId][2] = "-1";
+    nodesStatus[nodeId][3] = "-1";
+    nodesStatus[nodeId][4] = "-1";
+    nodesStatus[nodeId][5] = String(millis());
+}
+
 void receivedCallback(const uint32_t& from, const String& msg) {
     DEBUG_PRINTF("MESH: [%u] %s\n", from, msg.c_str());
 
     if (msg == "R") {
-        nodes[from] = "relay";
+        createNode(from, 'R');
         DEBUG_PRINTF("MESH: Registered node %u as relay\n", from);
         mesh.sendSingle(from, "A");
         return;
     }
 
     if (msg == "S") {
-        nodes[from] = "switch";
+        createNode(from, 'S');
         DEBUG_PRINTF("MESH: Registered node %u as switch\n", from);
         mesh.sendSingle(from, "A");
         return;
@@ -517,6 +531,22 @@ void receivedCallback(const uint32_t& from, const String& msg) {
 
     if (msg.length() == 2 && msg[0] >= 'A' && msg[0] < 'A' + NLIGHTS) {
         handleRelayMessage(from, msg);
+        return;
+    }
+
+    if (isValidJson(msg)) {
+        DEBUG_PRINTLN("MESH: Received JSON message, updating node status");
+        JsonDocument doc;
+        deserializeJson(doc, msg);
+
+        JsonArray obj = doc.as<JsonArray>();
+        for (int i = 0; i < 6; i++) {
+            nodesStatus[from][i] = obj[i].as<String>();
+        }
+        nodesStatus[from][5] = String(millis());
+
+        DEBUG_PRINTF("MESH: Updated status for node %u\n", from);
+
         return;
     }
 
@@ -560,6 +590,63 @@ void checkMQTT() {
     }
 }
 
+void sendNodeStatusReport() {
+    lastNodeStatusReport = millis();
+    if (WiFi.status() != WL_CONNECTED || !mqttClient.connected()) {
+        DEBUG_PRINTLN(
+            "MESH: WiFi or MQTT not connected, cannot send node status report");
+        return;
+    }
+
+    JsonDocument doc;
+    JsonObject root = doc.to<JsonObject>();
+
+    JsonObject nodesDict = root["nodes"].to<JsonObject>();
+
+    auto meshNodes = mesh.getNodeList();
+
+    for (auto nodeId : meshNodes) {
+        JsonObject status = nodesDict[String(nodeId)].to<JsonObject>();
+
+        status["RSSI"] = nodesStatus[nodeId][0];
+        status["uptime"] = nodesStatus[nodeId][1];
+        status["clicks"] = nodesStatus[nodeId][2];
+        status["firmware"] = nodesStatus[nodeId][3];
+        status["disconnects"] = nodesStatus[nodeId][4];
+        status["last_seen"] =
+            (millis() - nodesStatus[nodeId][5].toInt()) / 1000;
+        status["type"] = nodes[nodeId];
+        status["root"] = false;
+        status["status"] =
+            status["last_seen"].as<uint32_t>() < 60 ? "online" : "offline";
+    }
+
+    JsonObject rootNode = nodesDict[String(mesh.getNodeId())].to<JsonObject>();
+    rootNode["last_seen"] = 0;
+    rootNode["RSSI"] = WiFi.RSSI();
+    rootNode["uptime"] = millis() / 1000;
+    rootNode["clicks"] = 0;
+    rootNode["firmware"] = fw_md5;
+    rootNode["disconnects"] = 0;
+    rootNode["type"] = "root";
+    rootNode["root"] = true;
+    rootNode["status"] = "online";
+
+    JsonObject meshTree = root["mesh_tree"].to<JsonObject>();
+    painlessmesh::protocol::NodeTree tree = mesh.asNodeTree();
+    meshTree["tree"] = tree.toString();
+
+    String message;
+    serializeJson(doc, message);
+    DEBUG_PRINTF("MESH: Node status report JSON: %s\n", message.c_str());
+
+    if (mqttClient.publish("/switch/state/root", message.c_str())) {
+        DEBUG_PRINTLN("MESH: Node status report sent successfully");
+    } else {
+        DEBUG_PRINTLN("MESH: Failed to send node status report");
+    }
+}
+
 void meshStatusReport() {
     DEBUG_PRINTLN("\nRegistered Nodes:");
     if (nodes.empty()) {
@@ -599,7 +686,9 @@ void statusReport() {
 
 void setup() {
     Serial.begin(115200);
-    delay(1000);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+
+    fw_md5 = ESP.getSketchMD5();  // MD5 of the firmware as flashed
 
     DEBUG_PRINTLN("\n\n========================================");
     DEBUG_PRINTLN("ESP32 Mesh Root Node Starting...");
@@ -629,5 +718,11 @@ void loop() {
     // Periodic status report
     if (millis() - lastPrint >= NODE_PRINT_INTERVAL) {
         statusReport();
+    }
+
+    // Periodic node status report
+    if (millis() - lastNodeStatusReport >= NODE_STATUS_REPORT_INTERVAL) {
+        DEBUG_PRINTLN("MESH: Performing periodic node status report...");
+        sendNodeStatusReport();
     }
 }

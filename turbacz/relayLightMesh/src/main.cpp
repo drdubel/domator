@@ -19,6 +19,7 @@ const byte wifiActivityPin = 255;
 #define STATUS_PRINT_INTERVAL 30000
 #define WIFI_CONNECT_TIMEOUT 20000
 #define REGISTRATION_RETRY_INTERVAL 10000
+#define STATUS_REPORT_INTERVAL 15000
 
 // Function declarations
 void receivedCallback(const uint32_t& from, const String& msg);
@@ -30,8 +31,10 @@ void syncLightStates(uint32_t targetNodeId);
 painlessMesh mesh;
 
 // Root node ID - will be discovered dynamically
-uint32_t rootId = 522849561;
+uint32_t rootId = 2101544389;
 uint32_t deviceId = 0;
+uint32_t disconnects = 0;
+uint32_t clicks = 0;
 
 const int relays[NLIGHTS] = {32, 33, 25, 26, 27, 14, 12, 13};
 int lights[NLIGHTS] = {0, 0, 0, 0, 0, 0, 0, 0};
@@ -39,6 +42,8 @@ int lights[NLIGHTS] = {0, 0, 0, 0, 0, 0, 0, 0};
 bool registeredWithRoot = false;
 unsigned long lastRegistrationAttempt = 0;
 unsigned long lastStatusPrint = 0;
+unsigned long lastStatusReport = 0;
+String fw_md5;  // MD5 of the firmware as flashed
 
 const char* firmware_url =
     "https://czupel.dry.pl/static/data/relay/firmware.bin";
@@ -157,6 +162,29 @@ void meshInit() {
     Serial.printf("RELAY: Free heap: %d bytes\n", ESP.getFreeHeap());
 }
 
+void sendStatusReport() {
+    lastStatusReport = millis();
+    Serial.println("MESH: Sending status report to root");
+
+    JsonDocument doc;
+    JsonArray statusArray = doc.to<JsonArray>();
+
+    statusArray.add(String(WiFi.RSSI()));
+    statusArray.add(String(millis() / 1000));
+    statusArray.add(String(clicks));
+    statusArray.add(fw_md5);
+    statusArray.add(String(disconnects));
+
+    String message;
+    serializeJson(statusArray, message);
+
+    if (mesh.sendSingle(rootId, message)) {
+        Serial.println("MESH: Status report sent successfully");
+    } else {
+        Serial.println("MESH: Failed to send status report");
+    }
+}
+
 void syncLightStates(uint32_t targetNodeId) {
     Serial.printf("RELAY: Syncing all light states to node %u\n", targetNodeId);
 
@@ -206,6 +234,7 @@ void receivedCallback(const uint32_t& from, const String& msg) {
         }
 
         lights[lightIndex] = newState;
+        clicks++;
         digitalWrite(relays[lightIndex], newState ? HIGH : LOW);
 
         Serial.printf("RELAY: Light %c set to %s by node %u\n",
@@ -228,6 +257,7 @@ void receivedCallback(const uint32_t& from, const String& msg) {
     if (msg.length() == 1 && msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
         int lightIndex = msg[0] - 'a';
         lights[lightIndex] = !lights[lightIndex];
+        clicks++;
         digitalWrite(relays[lightIndex], lights[lightIndex] ? HIGH : LOW);
 
         Serial.printf("RELAY: Light %c toggled to %s by node %u\n",
@@ -258,13 +288,16 @@ void receivedCallback(const uint32_t& from, const String& msg) {
                   from);
 }
 
-void printStatus() {
+void statusPrint() {
+    lastStatusPrint = millis();
+
     Serial.println("\n--- Status Report ---");
     Serial.printf("Device ID: %u\n", deviceId);
     Serial.printf("Root ID: %u\n", rootId);
     Serial.printf("Registered: %s\n", registeredWithRoot ? "Yes" : "No");
     Serial.printf("Free Heap: %d bytes\n", ESP.getFreeHeap());
     Serial.printf("Uptime: %lu seconds\n", millis() / 1000);
+    Serial.printf("Sketch MD5: %s\n", fw_md5.c_str());
 
     Serial.println("\nRelay States:");
     for (int i = 0; i < NLIGHTS; i++) {
@@ -285,9 +318,12 @@ void setup() {
     Serial.begin(115200);
     delay(1000);
 
+    fw_md5 = ESP.getSketchMD5();
+
     Serial.println("\n\n========================================");
     Serial.println("ESP32 Mesh Relay Node Starting...");
     Serial.printf("Chip Model: %s\n", ESP.getChipModel());
+    Serial.printf("Sketch MD5: %s\n", fw_md5.c_str());
     Serial.printf("Chip Revision: %d\n", ESP.getChipRevision());
     Serial.printf("CPU Frequency: %d MHz\n", ESP.getCpuFreqMHz());
     Serial.printf("Free Heap: %d bytes\n", ESP.getFreeHeap());
@@ -323,6 +359,7 @@ void setup() {
         Serial.printf("MESH: Lost connection to node %u\n", nodeId);
 
         Serial.println("MESH: Lost connection to root, resetting");
+        disconnects++;
         registeredWithRoot = false;
     });
 
@@ -332,24 +369,26 @@ void setup() {
 void loop() {
     mesh.update();
 
-    unsigned long currentMillis = millis();
+    // Periodic status print
+    if (millis() - lastStatusPrint >= STATUS_PRINT_INTERVAL) {
+        statusPrint();
 
-    // Periodic status report
-    if (currentMillis - lastStatusPrint >= STATUS_PRINT_INTERVAL) {
-        lastStatusPrint = currentMillis;
-        printStatus();
+        if (mesh.getNodeList().empty()) {
+            registeredWithRoot = false;
+        }
     }
 
-    if (!registeredWithRoot && currentMillis - lastRegistrationAttempt >=
-                                   REGISTRATION_RETRY_INTERVAL) {
-        lastRegistrationAttempt = currentMillis;
+    if (!registeredWithRoot &&
+        millis() - lastRegistrationAttempt >= REGISTRATION_RETRY_INTERVAL) {
+        lastRegistrationAttempt = millis();
         Serial.println("MESH: Attempting registration with root...");
 
         mesh.sendSingle(rootId, "R");
         Serial.printf("MESH: Sent registration 'R' to root %u\n", rootId);
     }
 
-    if (mesh.getNodeList().empty()) {
-        registeredWithRoot = false;
+    if (millis() - lastStatusReport >= STATUS_REPORT_INTERVAL &&
+        registeredWithRoot) {
+        sendStatusReport();
     }
 }

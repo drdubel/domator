@@ -1,5 +1,6 @@
 #include <Adafruit_NeoPixel.h>
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <HTTPClient.h>
@@ -10,7 +11,7 @@
 #include <painlessMesh.h>
 
 // Pin and hardware definitions
-#define NLIGHTS 7
+#define NLIGHTS 5
 #define LED_PIN 8
 #define NUM_LEDS 1
 
@@ -19,6 +20,7 @@
 #define STATUS_PRINT_INTERVAL 30000
 #define WIFI_CONNECT_TIMEOUT 20000
 #define REGISTRATION_RETRY_INTERVAL 10000
+#define STATUS_REPORT_INTERVAL 15000
 
 // Function declarations
 void receivedCallback(const uint32_t& from, const String& msg);
@@ -33,15 +35,20 @@ Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 painlessMesh mesh;
 
 // Root node ID - will be discovered dynamically
-uint32_t rootId = 522849561;
+uint32_t rootId = 2101544389;
 uint32_t deviceId = 0;
+uint32_t disconnects = 0;
+uint32_t clicks = 0;
 
-const int buttonPins[NLIGHTS] = {A0, A1, A3, A4, A5, 6, 7};
+String fw_md5;  // MD5 of the firmware as flashed
+
+const int buttonPins[NLIGHTS] = {A0, A1, A3, A4, A5};
 unsigned long lastTimeClick[NLIGHTS] = {0};
-int lastButtonState[NLIGHTS] = {HIGH, HIGH, HIGH, HIGH, HIGH, HIGH, HIGH};
+int lastButtonState[NLIGHTS] = {HIGH, HIGH, HIGH, HIGH, HIGH};
 bool registeredWithRoot = false;
 unsigned long lastRegistrationAttempt = 0;
 unsigned long lastStatusPrint = 0;
+unsigned long lastStatusReport = 0;
 
 const char* firmware_url =
     "https://czupel.dry.pl/static/data/switch/firmware.bin";
@@ -181,6 +188,29 @@ void meshInit() {
     Serial.printf("SWITCH: Free heap: %d bytes\n", ESP.getFreeHeap());
 }
 
+void sendStatusReport() {
+    lastStatusReport = millis();
+    Serial.println("MESH: Sending status report to root");
+
+    JsonDocument doc;
+    JsonArray statusArray = doc.to<JsonArray>();
+
+    statusArray.add(String(WiFi.RSSI()));
+    statusArray.add(String(millis() / 1000));
+    statusArray.add(String(clicks));
+    statusArray.add(fw_md5);
+    statusArray.add(String(disconnects));
+
+    String message;
+    serializeJson(statusArray, message);
+
+    if (mesh.sendSingle(rootId, message)) {
+        Serial.println("MESH: Status report sent successfully");
+    } else {
+        Serial.println("MESH: Failed to send status report");
+    }
+}
+
 void receivedCallback(const uint32_t& from, const String& msg) {
     Serial.printf("MESH: [%u] %s\n", from, msg.c_str());
 
@@ -214,6 +244,8 @@ void printNodes() {
 void setup() {
     Serial.begin(115200);
     vTaskDelay(1000 / portTICK_PERIOD_MS);
+
+    fw_md5 = ESP.getSketchMD5();
 
     Serial.println("\n\n========================================");
     Serial.println("ESP32-C3 Mesh Switch Node Starting...");
@@ -258,6 +290,7 @@ void setup() {
 
         Serial.println("MESH: Lost connection to root, resetting");
         registeredWithRoot = false;
+        disconnects++;
 
         updateLedStatus();
     });
@@ -265,19 +298,9 @@ void setup() {
     Serial.println("SWITCH: Setup complete, waiting for mesh connections...");
 }
 
-void loop() {
-    mesh.update();
-
+void handleButtons() {
     unsigned long currentMillis = millis();
 
-    // Update LED status periodically
-    static unsigned long lastLedUpdate = 0;
-    if (currentMillis - lastLedUpdate > 5000) {
-        lastLedUpdate = currentMillis;
-        updateLedStatus();
-    }
-
-    // Handle button presses
     for (int i = 0; i < NLIGHTS; i++) {
         int currentState = digitalRead(buttonPins[i]);
 
@@ -289,6 +312,7 @@ void loop() {
         // Detect button press (LOW to HIGH transition)
         if (currentState == HIGH && lastButtonState[i] == LOW) {
             lastTimeClick[i] = currentMillis;
+            clicks++;
 
             char msg = 'a' + i;
             Serial.printf("BUTTON: Button %d pressed, sending '%c'\n", i, msg);
@@ -322,26 +346,45 @@ void loop() {
 
         lastButtonState[i] = currentState;
     }
+}
 
-    // Periodic status report
-    if (currentMillis - lastStatusPrint >= STATUS_PRINT_INTERVAL) {
-        lastStatusPrint = currentMillis;
+void statusPrint() {
+    lastStatusPrint = millis();
 
-        Serial.println("\n--- Status Report ---");
-        Serial.printf("Device ID: %u\n", deviceId);
-        Serial.printf("Root ID: %u\n", rootId);
-        Serial.printf("Registered: %s\n", registeredWithRoot ? "Yes" : "No");
-        Serial.printf("Free Heap: %d bytes\n", ESP.getFreeHeap());
-        Serial.printf("Uptime: %lu seconds\n", currentMillis / 1000);
-        Serial.printf("WiFi RSSI: %d dBm\n", WiFi.RSSI());
+    Serial.println("\n--- Status Report ---");
+    Serial.printf("Device ID: %u\n", deviceId);
+    Serial.printf("Firmware MD5: %s\n", fw_md5.c_str());
+    Serial.printf("Root ID: %u\n", rootId);
+    Serial.printf("Registered: %s\n", registeredWithRoot ? "Yes" : "No");
+    Serial.printf("Free Heap: %d bytes\n", ESP.getFreeHeap());
+    Serial.printf("Uptime: %lu seconds\n", millis() / 1000);
+    Serial.printf("WiFi RSSI: %d dBm\n", WiFi.RSSI());
 
-        printNodes();
-        Serial.println("-------------------\n");
+    printNodes();
+    Serial.println("-------------------\n");
+}
+
+void loop() {
+    mesh.update();
+
+    // Update LED status periodically
+    static unsigned long lastLedUpdate = 0;
+    if (millis() - lastLedUpdate > 5000) {
+        lastLedUpdate = millis();
+        updateLedStatus();
     }
 
-    if (!registeredWithRoot && currentMillis - lastRegistrationAttempt >=
-                                   REGISTRATION_RETRY_INTERVAL) {
-        lastRegistrationAttempt = currentMillis;
+    // Handle button presses
+    handleButtons();
+
+    // Periodic status report
+    if (millis() - lastStatusPrint >= STATUS_PRINT_INTERVAL) {
+        statusPrint();
+    }
+
+    if (!registeredWithRoot &&
+        millis() - lastRegistrationAttempt >= REGISTRATION_RETRY_INTERVAL) {
+        lastRegistrationAttempt = millis();
         Serial.println("MESH: Attempting registration with root...");
 
         mesh.sendSingle(rootId, "S");
@@ -350,5 +393,10 @@ void loop() {
 
     if (mesh.getNodeList().empty()) {
         registeredWithRoot = false;
+    }
+
+    if (millis() - lastStatusReport >= STATUS_REPORT_INTERVAL &&
+        registeredWithRoot) {
+        sendStatusReport();
     }
 }

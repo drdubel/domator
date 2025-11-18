@@ -3,8 +3,9 @@ import os
 from pickle import dump, load
 from secrets import token_urlsafe
 from typing import Optional
+import asyncio
 
-import requests
+import httpx
 from aioprometheus.asgi.middleware import MetricsMiddleware
 from aioprometheus.asgi.starlette import metrics
 from authlib.integrations.starlette_client import OAuth, OAuthError
@@ -22,6 +23,8 @@ from .data.authorized import authorized
 from .websocket import ws_manager
 
 logger = logging.getLogger(__name__)
+
+VICTORIA_METRICS_URL = "http://127.0.0.1:8428"
 
 app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key="!secret")
@@ -74,36 +77,37 @@ async def main(request: Request, access_token: Optional[str] = Cookie(None)):
     return RedirectResponse(url="/")
 
 
+async def vm_query(query):
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{VICTORIA_METRICS_URL}/api/v1/query?query={query}"
+        )
+        assert resp.status_code == 200
+    return resp.json()["data"]["result"]
+
+
+async def vm_query_range(query, start, end, step):
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{VICTORIA_METRICS_URL}/api/v1/query_range",
+            params={
+                "start": start,
+                "end": end,
+                "query": query,
+                "step": step,
+            },
+        )
+        assert resp.status_code == 200
+    return resp.json()["data"]["result"]
+
+
 @app.get("/api/temperatures")
-async def get_temperatures(request: Request, start: int, end: int, step: int):
-    response1 = requests.get(
-        "http://127.0.0.1:8428/api/v1/query_range",
-        params={
-            "start": start,
-            "end": end,
-            "query": "water_temperature",
-            "step": step,
-        },
-    )
-
-    response2 = requests.get(
-        "http://127.0.0.1:8428/api/v1/query_range",
-        params={
-            "start": start,
-            "end": end,
-            "query": "pid_target",
-            "step": step,
-        },
-    )
-
-    if response1.status_code != 200 or response2.status_code != 200:
-        return "connection not working"
-
-    water_temperatures = (
-        response1.json()["data"]["result"] + response2.json()["data"]["result"]
-    )
-
-    result = [
+async def get_temperatures(start: int, end: int, step: int):
+    water_temperatures = sum(await asyncio.gather(
+        vm_query_range("water_temperatures", start, end, step),
+        vm_query_range("pid_target", start, end, step),
+    ), start=[])
+    return [
         {
             "timestamp": water_temperatures[0]["values"][i][0],
             "cold": water_temperatures[0]["values"][i][1],
@@ -114,37 +118,16 @@ async def get_temperatures(request: Request, start: int, end: int, step: int):
         for i in range(len(water_temperatures[0]["values"]))
     ]
 
-    return result
-
 
 @app.get("/api/heating_data")
-async def get_heating_data(request: Request):
-    response1 = requests.get(
-        "http://127.0.0.1:8428/api/v1/query?query=water_temperature"
-    )
-    response2 = requests.get("http://127.0.0.1:8428/api/v1/query?query=pid_target")
-    response3 = requests.get("http://127.0.0.1:8428/api/v1/query?query=pid_integral")
-    response4 = requests.get("http://127.0.0.1:8428/api/v1/query?query=pid_output")
-    response5 = requests.get("http://127.0.0.1:8428/api/v1/query?query=pid_multiplier")
-
-    if (
-        response1.status_code != 200
-        or response2.status_code != 200
-        or response3.status_code != 200
-        or response4.status_code != 200
-        or response5.status_code != 200
-    ):
-        return "connection not working"
-
-    heating_data = (
-        response1.json()["data"]["result"]
-        + response2.json()["data"]["result"]
-        + response3.json()["data"]["result"]
-        + response4.json()["data"]["result"]
-        + response5.json()["data"]["result"]
-    )
-
-    result = {
+async def get_heating_data():
+    heating_data = sum(await asyncio.gather(
+        vm_query("pid_target"),
+        vm_query("pid_integral"),
+        vm_query("pid_ouput"),
+        vm_query("pid_multiplier"),
+    ), start=[])
+    return {
         "cold": heating_data[0]["value"][1],
         "hot": heating_data[1]["value"][1],
         "mixed": heating_data[2]["value"][1],
@@ -155,8 +138,6 @@ async def get_heating_data(request: Request):
         "ki": heating_data[7]["value"][1],
         "kp": heating_data[8]["value"][1],
     }
-
-    return result
 
 
 @app.get("/heating")

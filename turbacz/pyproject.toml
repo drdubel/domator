@@ -15,6 +15,7 @@ dependencies = [
     "uvloop",
     "aioprometheus",
     "wsproto",
+    "pydantic-settings>=2.12.0",
 ]
 
 [project.scripts]

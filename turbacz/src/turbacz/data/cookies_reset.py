@@ -1,4 +1,1 @@
-from pickle import dump
-
-with open("turbacz/data/cookies.pickle", "wb") as cookies:
-    dump({}, cookies)
+mqtt_password = 'eiruceetiegie6eiCug4zohgahchuu9J'

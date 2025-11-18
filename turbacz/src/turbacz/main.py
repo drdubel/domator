@@ -12,42 +12,47 @@ from authlib.integrations.starlette_client import OAuth, OAuthError
 from fastapi import Cookie, FastAPI, Response, WebSocket
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
-from starlette.config import Config
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
 
 from .broker import mqtt
-from .data.authorized import authorized
+from .config import settings
 from .websocket import ws_manager
 
 logger = logging.getLogger(__name__)
 
-VICTORIA_METRICS_URL = "http://127.0.0.1:8428"
-
 app = FastAPI()
-app.add_middleware(SessionMiddleware, secret_key="!secret")
+app.add_middleware(SessionMiddleware, secret_key=settings.session_secret)
 app.add_middleware(MetricsMiddleware)
 app.add_route("/metrics", metrics)
 mqtt.init_app(app)
 
-config = Config("turbacz/data/.env")
-oauth = OAuth(config)
+oauth = OAuth()
+oauth.register(
+    name="google",
+    client_id=settings.oauth.client_id,
+    client_secret=settings.oauth.client_secret,
+    server_metadata_url=settings.oauth.configuration_url,
+    client_kwargs={"scope": "openid email profile"},
+)
 
 background_task_started = False
 
 app.mount("/static", StaticFiles(directory="./static", html=True), name="static")
 
-CONF_URL = "https://accounts.google.com/.well-known/openid-configuration"
-oauth.register(
-    name="google",
-    server_metadata_url=CONF_URL,
-    client_kwargs={"scope": "openid email profile"},
-)
 
-with open("turbacz/data/cookies.pickle", "rb") as cookies:
-    access_cookies: dict = load(cookies)
+def save_cookies(cookies):
+    with open(settings.cookies_path, "wb") as cookies:
+        dump(access_cookies, cookies)
+
+def load_cookies():
+    with open(settings.cookies_path, "rb") as cookies:
+        return load(cookies)
+
+
+access_cookies = load_cookies()
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -80,7 +85,7 @@ async def main(request: Request, access_token: Optional[str] = Cookie(None)):
 async def vm_query(query):
     async with httpx.AsyncClient() as client:
         resp = await client.get(
-            f"{VICTORIA_METRICS_URL}/api/v1/query?query={query}"
+            f"{settings.victoria_metrics_url}/api/v1/query?query={query}"
         )
         assert resp.status_code == 200
     return resp.json()["data"]["result"]
@@ -89,7 +94,7 @@ async def vm_query(query):
 async def vm_query_range(query, start, end, step):
     async with httpx.AsyncClient() as client:
         resp = await client.get(
-            f"{VICTORIA_METRICS_URL}/api/v1/query_range",
+            f"{settings.victoria_metrics_url}/api/v1/query_range",
             params={
                 "start": start,
                 "end": end,
@@ -185,11 +190,10 @@ async def auth(request: Request):
     user = token.get("userinfo")
     if user:
         request.session["user"] = dict(user)
-        if user["email"] in authorized:
+        if user["email"] in settings.authorized_users:
             access_token = token_urlsafe()
             access_cookies[access_token] = user["email"]
-            with open("turbacz/data/cookies.pickle", "wb") as cookies:
-                dump(access_cookies, cookies)
+            save_cookies(access_cookies)
             response = RedirectResponse(url="/auto")
             response.set_cookie("access_token", access_token, max_age=3600 * 24 * 14)
             return response
@@ -202,8 +206,7 @@ async def logout(
     request: Request, response: Response, access_token: Optional[str] = Cookie(None)
 ):
     access_cookies.pop(access_token)
-    with open("turbacz/data/cookies.pickle", "wb") as cookies:
-        dump(access_cookies, cookies)
+    save_cookies(access_cookies)
     request.session.pop("user", None)
     response.delete_cookie(key="access_token")
     return RedirectResponse(url="/")

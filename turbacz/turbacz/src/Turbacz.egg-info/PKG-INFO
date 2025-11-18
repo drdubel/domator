@@ -1,0 +1,16 @@
+Metadata-Version: 2.4
+Name: Turbacz
+Version: 0.2.0
+Summary: IoT logic and user interface
+Author-email: DrDubel <antek.suszko@gmail.com>
+Requires-Python: ~=3.13.5
+Requires-Dist: fastapi>=0.79.0
+Requires-Dist: fastapi-mqtt<2,>=1.0.5
+Requires-Dist: uvicorn<2.0.0
+Requires-Dist: Authlib<2,>=1.1.0
+Requires-Dist: itsdangerous<3,>=2.1.2
+Requires-Dist: httpx>=0.23.0
+Requires-Dist: aioconsole>=0.5.1
+Requires-Dist: aioprometheus>=22.5.0
+Requires-Dist: wsproto<2,>=1.2.0
+Requires-Dist: requests>=2.32.4

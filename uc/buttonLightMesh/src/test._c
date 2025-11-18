@@ -1,0 +1,9 @@
+
+#define ISR_button(button) void IRAM_ATTR ISR_button_##button() { on_button_press(button); }
+
+ISR_button(A0)
+ISR_button(A1)
+
+int main(void) {
+  return 0;
+}

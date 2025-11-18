@@ -8,7 +8,6 @@ authorized*
 *.pickle
 .vscode
 target
-*.lock
 secrets*
 heating_chart.json
 .pio

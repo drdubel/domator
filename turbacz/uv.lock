@@ -745,7 +745,7 @@ wheels = [
 [[package]]
 name = "turbacz"
 version = "0.2.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "aioconsole" },
     { name = "aioprometheus" },

@@ -4,7 +4,6 @@ version = "0.2.0"
 description = "IoT logic and user interface"
 authors = [{ name = "DrDubel", email = "antek.suszko@gmail.com" }]
 requires-python = ">=3.10,<4"
-license = "Apache 2.0"
 dependencies = [
     "fastapi",
     "fastapi-mqtt",
@@ -16,6 +15,7 @@ dependencies = [
     "uvloop",
     "aioprometheus",
     "wsproto",
+    "pydantic-settings>=2.12.0",
 ]
 
 [project.scripts]
@@ -26,3 +26,6 @@ dev = [
     "black",
     "isort",
 ]
+
+[tool.uv]
+package = true

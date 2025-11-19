@@ -11,9 +11,9 @@
 #define uint unsigned int
 
 // MQTT Broker
-const char *mqtt_broker = "192.168.3.10";
+const char* mqtt_broker = "192.168.3.10";
 const int mqtt_port = 1883;
-const char *mqttUser = "blinds-wifi";
+const char* mqttUser = "blinds-wifi";
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -22,7 +22,7 @@ char out_buff[5] = {0, 0, 0, 0, 0};
 char in_buff[5] = {0, 0, 0, 0, 0};
 int cmd_ptr;
 
-void callback(char *topic, uint8_t *payload, int length);
+void callback(char* topic, uint8_t* payload, int length);
 
 void wifi_connect() {
     WiFi.begin(ssid, password);
@@ -76,7 +76,7 @@ void ser_cmd(int in_byte) {
     }
 }
 
-void callback(char *topic, uint8_t *payload, int length) {
+void callback(char* topic, uint8_t* payload, int length) {
     Serial.println("-----------------------");
     Serial.print("Message arrived in topic: ");
     Serial.println(topic);

@@ -3,56 +3,48 @@ import os
 from pickle import dump, load
 from secrets import token_urlsafe
 from typing import Optional
-import asyncio
 
-import httpx
+import requests
 from aioprometheus.asgi.middleware import MetricsMiddleware
 from aioprometheus.asgi.starlette import metrics
 from authlib.integrations.starlette_client import OAuth, OAuthError
 from fastapi import Cookie, FastAPI, Response, WebSocket
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
+from starlette.config import Config
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
 
 from .broker import mqtt
-from .config import settings
+from .data.authorized import authorized
 from .websocket import ws_manager
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
-app.add_middleware(SessionMiddleware, secret_key=settings.session_secret)
+app.add_middleware(SessionMiddleware, secret_key="!secret")
 app.add_middleware(MetricsMiddleware)
 app.add_route("/metrics", metrics)
 mqtt.init_app(app)
 
-oauth = OAuth()
-oauth.register(
-    name="google",
-    client_id=settings.oauth.client_id,
-    client_secret=settings.oauth.client_secret,
-    server_metadata_url=settings.oauth.configuration_url,
-    client_kwargs={"scope": "openid email profile"},
-)
+config = Config("turbacz/data/.env")
+oauth = OAuth(config)
 
 background_task_started = False
 
 app.mount("/static", StaticFiles(directory="./static", html=True), name="static")
 
+CONF_URL = "https://accounts.google.com/.well-known/openid-configuration"
+oauth.register(
+    name="google",
+    server_metadata_url=CONF_URL,
+    client_kwargs={"scope": "openid email profile"},
+)
 
-def save_cookies(cookies):
-    with open(settings.cookies_path, "wb") as cookies:
-        dump(access_cookies, cookies)
-
-def load_cookies():
-    with open(settings.cookies_path, "rb") as cookies:
-        return load(cookies)
-
-
-access_cookies = load_cookies()
+with open("turbacz/data/cookies.pickle", "rb") as cookies:
+    access_cookies: dict = load(cookies)
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -82,37 +74,36 @@ async def main(request: Request, access_token: Optional[str] = Cookie(None)):
     return RedirectResponse(url="/")
 
 
-async def vm_query(query):
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{settings.victoria_metrics_url}/api/v1/query?query={query}"
-        )
-        assert resp.status_code == 200
-    return resp.json()["data"]["result"]
-
-
-async def vm_query_range(query, start, end, step):
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{settings.victoria_metrics_url}/api/v1/query_range",
-            params={
-                "start": start,
-                "end": end,
-                "query": query,
-                "step": step,
-            },
-        )
-        assert resp.status_code == 200
-    return resp.json()["data"]["result"]
-
-
 @app.get("/api/temperatures")
-async def get_temperatures(start: int, end: int, step: int):
-    water_temperatures = sum(await asyncio.gather(
-        vm_query_range("water_temperatures", start, end, step),
-        vm_query_range("pid_target", start, end, step),
-    ), start=[])
-    return [
+async def get_temperatures(request: Request, start: int, end: int, step: int):
+    response1 = requests.get(
+        "http://127.0.0.1:8428/api/v1/query_range",
+        params={
+            "start": start,
+            "end": end,
+            "query": "water_temperature",
+            "step": step,
+        },
+    )
+
+    response2 = requests.get(
+        "http://127.0.0.1:8428/api/v1/query_range",
+        params={
+            "start": start,
+            "end": end,
+            "query": "pid_target",
+            "step": step,
+        },
+    )
+
+    if response1.status_code != 200 or response2.status_code != 200:
+        return "connection not working"
+
+    water_temperatures = (
+        response1.json()["data"]["result"] + response2.json()["data"]["result"]
+    )
+
+    result = [
         {
             "timestamp": water_temperatures[0]["values"][i][0],
             "cold": water_temperatures[0]["values"][i][1],
@@ -123,16 +114,37 @@ async def get_temperatures(start: int, end: int, step: int):
         for i in range(len(water_temperatures[0]["values"]))
     ]
 
+    return result
+
 
 @app.get("/api/heating_data")
-async def get_heating_data():
-    heating_data = sum(await asyncio.gather(
-        vm_query("pid_target"),
-        vm_query("pid_integral"),
-        vm_query("pid_ouput"),
-        vm_query("pid_multiplier"),
-    ), start=[])
-    return {
+async def get_heating_data(request: Request):
+    response1 = requests.get(
+        "http://127.0.0.1:8428/api/v1/query?query=water_temperature"
+    )
+    response2 = requests.get("http://127.0.0.1:8428/api/v1/query?query=pid_target")
+    response3 = requests.get("http://127.0.0.1:8428/api/v1/query?query=pid_integral")
+    response4 = requests.get("http://127.0.0.1:8428/api/v1/query?query=pid_output")
+    response5 = requests.get("http://127.0.0.1:8428/api/v1/query?query=pid_multiplier")
+
+    if (
+        response1.status_code != 200
+        or response2.status_code != 200
+        or response3.status_code != 200
+        or response4.status_code != 200
+        or response5.status_code != 200
+    ):
+        return "connection not working"
+
+    heating_data = (
+        response1.json()["data"]["result"]
+        + response2.json()["data"]["result"]
+        + response3.json()["data"]["result"]
+        + response4.json()["data"]["result"]
+        + response5.json()["data"]["result"]
+    )
+
+    result = {
         "cold": heating_data[0]["value"][1],
         "hot": heating_data[1]["value"][1],
         "mixed": heating_data[2]["value"][1],
@@ -143,6 +155,8 @@ async def get_heating_data():
         "ki": heating_data[7]["value"][1],
         "kp": heating_data[8]["value"][1],
     }
+
+    return result
 
 
 @app.get("/heating")
@@ -190,10 +204,11 @@ async def auth(request: Request):
     user = token.get("userinfo")
     if user:
         request.session["user"] = dict(user)
-        if user["email"] in settings.authorized_users:
+        if user["email"] in authorized:
             access_token = token_urlsafe()
             access_cookies[access_token] = user["email"]
-            save_cookies(access_cookies)
+            with open("turbacz/data/cookies.pickle", "wb") as cookies:
+                dump(access_cookies, cookies)
             response = RedirectResponse(url="/auto")
             response.set_cookie("access_token", access_token, max_age=3600 * 24 * 14)
             return response
@@ -206,7 +221,8 @@ async def logout(
     request: Request, response: Response, access_token: Optional[str] = Cookie(None)
 ):
     access_cookies.pop(access_token)
-    save_cookies(access_cookies)
+    with open("turbacz/data/cookies.pickle", "wb") as cookies:
+        dump(access_cookies, cookies)
     request.session.pop("user", None)
     response.delete_cookie(key="access_token")
     return RedirectResponse(url="/")

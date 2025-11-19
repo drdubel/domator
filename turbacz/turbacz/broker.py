@@ -6,18 +6,18 @@ from string import ascii_lowercase
 from fastapi_mqtt import FastMQTT, MQTTConfig
 
 from . import metrics
-from .config import settings
+from .data.secrets import mqtt_password
 from .websocket import ws_manager
 
 logger = logging.getLogger(__name__)
 
 
 mqtt_config = MQTTConfig(
-    host=settings.mqtt.host,
-    port=settings.mqtt.port,
-    keepalive=settings.mqtt.keepalive,
-    username=settings.mqtt.username,
-    password=settings.mqtt.password,
+    host="127.0.0.1",
+    port=1883,
+    keepalive=60,
+    username="turbacz",
+    password=mqtt_password,
 )
 
 mqtt = FastMQTT(config=mqtt_config)

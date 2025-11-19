@@ -1,8 +1,11 @@
+import asyncio
 import json
 import logging
 import time
 from string import ascii_lowercase
 
+import httpx
+import namer
 from fastapi_mqtt import FastMQTT, MQTTConfig
 
 from czupel import metrics
@@ -51,6 +54,8 @@ async def message(client, topic, payload, qos, properties):
         await handle_old_switch_state(payload_str)
     elif topic.startswith("/relay/state/"):
         await handle_relay_state(payload_str, topic)
+    elif topic.startswith("/switch/state/root"):
+        await handle_root_state(payload_str)
     elif topic.startswith("/switch/state/"):
         await handle_switch_state(payload_str, topic)
 
@@ -148,10 +153,6 @@ async def handle_switch_state(payload_str, topic):
     """
     try:
         switch_id = topic.split("/")[-1]
-
-        if switch_id == "root":
-            return
-
         light_id = payload_str[0]
 
         print(switch_id, light_id)  # Debug print
@@ -169,3 +170,68 @@ async def handle_switch_state(payload_str, topic):
 
     except ValueError as e:
         logger.error("Error processing switch state: %s", e)
+
+
+async def handle_root_state(payload_str):
+    """
+    Process root switch state payload.
+    """
+
+    try:
+        with open("czupel/data/connections.json", "r", encoding="utf-8") as f:
+            conf = json.load(f)
+            connections = conf["connections"]
+            names = conf["deviceNames"]
+
+    except KeyError as e:
+        logger.error("Error processing connections: %s", e)
+
+        return
+
+    if payload_str == "connected":
+        print(connections)  # Debug print
+
+        mqtt.client.publish("/switch/cmd/root", connections)
+
+    try:
+        data = json.loads(payload_str)
+
+        url = "http://192.168.3.10:8428/api/v2/write"
+
+        for switch_id, status in data.items():
+            if switch_id in names:
+                status["name"] = names[switch_id]
+            elif switch_id == "2101544389":
+                status["name"] = "root"
+            else:
+                status["name"] = namer.generate(category="astronomy")
+
+        for switch_id, status in data.items():
+            status["name"] = status["name"].replace(" ", "\ ")
+
+            if status["parent"] != "0":
+                status["parent_name"] = data[status["parent"]]["name"]
+            else:
+                status["parent_name"] = "none"
+
+            metric_node = f"node_info,id={switch_id} uptime={status['uptime']},clicks={status['clicks']},disconnects={status['disconnects']},last_seen={status['last_seen']}"
+            metric_mesh = f"mesh_node,id={switch_id},name={status['name']},parent={status['parent']},parent_name={status['parent_name']},firmware={status['firmware']},status={status['status']},type={status['type']} rssi={status['rssi']}"
+
+            print(metric_node)  # Debug print
+            print(metric_mesh)  # Debug print
+
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, content=metric_node)
+                if response.status_code != 204:
+                    logger.error(
+                        "Failed to write metric for %s: %s", switch_id, response.text
+                    )
+
+                response = await client.post(url, content=metric_mesh)
+                if response.status_code != 204:
+                    logger.error(
+                        "Failed to write metric for %s: %s", switch_id, response.text
+                    )
+
+    except json.JSONDecodeError:
+        logger.error("Invalid JSON payload for root state: %s", payload_str)

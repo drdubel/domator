@@ -90,6 +90,18 @@ async def homepage(request: Request, access_token: Optional[str] = Cookie(None))
     return HTMLResponse('<a href="/login">login</a>')
 
 
+@app.get("/rcm")
+async def rcm_page(request: Request, access_token: Optional[str] = Cookie(None)):
+    user = request.session.get("user")
+    if not (user and access_token in access_cookies):
+        return RedirectResponse(url="/")
+
+    with open(os.path.join("static", "relay_connection_manager.html")) as fh:
+        data = fh.read()
+
+    return Response(content=data, media_type="text/html")
+
+
 @app.get("/upload")
 async def upload_page(request: Request, access_token: Optional[str] = Cookie(None)):
     user = request.session.get("user")
@@ -299,6 +311,9 @@ async def websocket_rcm(websocket: WebSocket, access_token=Cookie()):
             with open("czupel/data/connections.json", "w", encoding="utf-8") as f:
                 json.dump(cmd, f, ensure_ascii=False, indent=2)
 
+            print(cmd["connections"])
+            mqtt.client.publish("/switch/cmd/root", cmd["connections"])
+
     if access_token in access_cookies:
         await receive_command(websocket)
 
@@ -307,11 +322,7 @@ def start():
     import uvicorn
 
     logging.basicConfig(level=logging.DEBUG)
-    uvicorn.run(
-        app,
-        host="127.0.0.1",
-        port=8002,
-    )
+    uvicorn.run("czupel.main:app", log_level="debug", port=8002, reload=True)
 
 
 if __name__ == "__main__":

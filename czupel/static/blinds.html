@@ -4,27 +4,30 @@
 <head>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<title>Blinds</title>
-	<link rel="stylesheet" href="/static/styles/blinds.css" type="text/css" />
-	<link rel="stylesheet" href="/static/styles/sidebar.css" type="text/css" />
+	<title>Blinds Control - Czupel</title>
 	<link rel="stylesheet" href="https://code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css">
-	<link rel="stylesheet" href="https://jqueryui.com/resources/demos/style.css">
 	<script src="https://code.jquery.com/jquery-3.6.0.js"></script>
 	<script src="https://code.jquery.com/ui/1.13.2/jquery-ui.js"></script>
 	<link rel="icon" href="/static/favicon.ico" type="image/x-icon">
 	<script src="/static/scripts/blinds.js"></script>
+	<link rel="stylesheet" href="/static/styles/blinds.css">
 </head>
 
 <body>
 	<div class="sidenav" id="sidenav">
 		<a href="javascript:void(0)" class="closebtn" onclick="closeNav()">&times;</a>
-		<a href="/auto">Home</a>
-		<a href="heating">Heating</a>
-		<a href="lights">Lights</a>
-		<a id="logout" style=" position: absolute; bottom: 25px;" href="/logout">Logout</a>
+		<a href="/auto">🏡 Home</a>
+		<a href="heating">🌡️ Heating</a>
+		<a href="lights">💡 Lights</a>
+		<a id="logout" href="/logout">Logout</a>
 	</div>
+
 	<div id="main">
-		<button class="openbtn" id="openbtn" onclick="openNav()">&#9776;</button>
+		<header class="header">
+			<button class="openbtn" id="openbtn" onclick="openNav()">☰</button>
+			<h1>🪟 Blinds Control</h1>
+		</header>
+
 		<div class="flex-containers">
 			<div class="flex-container">
 				<a>Sypialnia R</a>
@@ -55,6 +58,27 @@
 				<span id="r7"></span>
 			</div>
 		</div>
+	</div>
+
+	<script>
+		// Initialize sliders when document is ready
+		$(document).ready(function () {
+			// Initialize each slider (inverted so top = 100%, bottom = 0%)
+			$('#r1, #r2, #r3, #r4, #r5, #r6, #r7').each(function () {
+				$(this).slider({
+					orientation: "vertical",
+					range: "max",
+					min: 0,
+					max: 100,
+					value: 100,
+					slide: function (event, ui) {
+						// You can add custom slide behavior here
+						console.log($(this).attr('id') + ' changed to: ' + ui.value);
+					}
+				});
+			});
+		});
+	</script>
 </body>
 
 </html>

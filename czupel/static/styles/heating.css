@@ -1,17 +1,214 @@
-body {
-	background-color: rgba(39, 51, 48, 0.918);
-	color: rgb(255, 255, 255);
+* {
+	margin: 0;
+	padding: 0;
+	box-sizing: border-box;
 }
 
+body {
+	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
+	background: linear-gradient(135deg, #1a1f2e 0%, #2d3748 100%);
+	min-height: 100vh;
+	color: #fff;
+}
+
+/* Sidebar */
 .sidenav {
 	height: 100%;
-	width: 160px;
+	width: 0;
 	position: fixed;
-	z-index: 1;
+	z-index: 100;
 	top: 0;
 	left: 0;
-	background-color: #111;
+	background: rgba(26, 31, 46, 0.98);
+	backdrop-filter: blur(10px);
 	overflow-x: hidden;
-	padding-top: 20px;
-	transition: 0.5s;
+	transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+	padding-top: 60px;
+	box-shadow: 2px 0 20px rgba(0, 0, 0, 0.3);
+}
+
+.sidenav a {
+	display: block;
+	padding: 16px 32px;
+	text-decoration: none;
+	color: #a0aec0;
+	font-size: 1.1rem;
+	font-weight: 500;
+	transition: all 0.3s ease;
+	border-left: 3px solid transparent;
+}
+
+.sidenav a:hover {
+	color: #fff;
+	background: rgba(102, 126, 234, 0.1);
+	border-left-color: #667eea;
+}
+
+.sidenav .closebtn {
+	position: absolute;
+	top: 15px;
+	right: 25px;
+	font-size: 2.5rem;
+	padding: 0;
+	border: none;
+}
+
+#logout {
+	position: absolute;
+	bottom: 30px;
+	left: 0;
+	right: 0;
+	margin: 0 32px;
+	padding: 12px 0 !important;
+	text-align: center;
+	border: 2px solid rgba(160, 174, 192, 0.3);
+	border-radius: 8px;
+}
+
+/* Header */
+.header {
+	display: flex;
+	align-items: center;
+	gap: 1rem;
+	padding: 1.5rem 2rem;
+	background: rgba(255, 255, 255, 0.05);
+	backdrop-filter: blur(10px);
+	border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+	position: sticky;
+	top: 0;
+	z-index: 50;
+}
+
+.openbtn {
+	font-size: 1.5rem;
+	background: rgba(255, 255, 255, 0.1);
+	border: 1px solid rgba(255, 255, 255, 0.2);
+	color: white;
+	padding: 10px 16px;
+	cursor: pointer;
+	border-radius: 10px;
+	transition: all 0.3s ease;
+}
+
+.openbtn:hover {
+	background: rgba(255, 255, 255, 0.15);
+	transform: scale(1.05);
+}
+
+h1 {
+	font-size: 1.8rem;
+	font-weight: 700;
+	background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+	-webkit-background-clip: text;
+	-webkit-text-fill-color: transparent;
+	background-clip: text;
+}
+
+/* Main Content */
+#main {
+	transition: margin-left 0.3s;
+	padding: 2rem;
+	max-width: 1400px;
+	margin: 0 auto;
+}
+
+/* Chart Container */
+.chart-container {
+	background: rgba(255, 255, 255, 0.05);
+	backdrop-filter: blur(10px);
+	padding: 2rem;
+	border-radius: 16px;
+	border: 2px solid rgba(255, 255, 255, 0.1);
+	margin-bottom: 2rem;
+}
+
+/* Temperature Grid */
+#temperatures {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+	gap: 1.5rem;
+}
+
+#temperatures p {
+	background: rgba(255, 255, 255, 0.05);
+	backdrop-filter: blur(10px);
+	padding: 1.5rem;
+	border-radius: 12px;
+	border: 2px solid rgba(255, 255, 255, 0.1);
+	font-size: 1rem;
+	display: flex;
+	flex-direction: column;
+	gap: 0.75rem;
+	transition: all 0.3s ease;
+}
+
+#temperatures p:hover {
+	border-color: rgba(102, 126, 234, 0.5);
+	box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+}
+
+#temperatures p span {
+	font-size: 1.5rem;
+	font-weight: 700;
+	color: #667eea;
+}
+
+/* Input Fields */
+input[type="text"] {
+	background: rgba(255, 255, 255, 0.1);
+	border: 2px solid rgba(255, 255, 255, 0.2);
+	color: #fff;
+	padding: 10px 14px;
+	border-radius: 8px;
+	font-size: 1rem;
+	font-family: inherit;
+	transition: all 0.3s ease;
+	margin-top: 0.5rem;
+}
+
+input[type="text"]:focus {
+	outline: none;
+	border-color: #667eea;
+	background: rgba(255, 255, 255, 0.15);
+	box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
+}
+
+input[type="text"]::placeholder {
+	color: rgba(255, 255, 255, 0.4);
+}
+
+/* Label styling */
+#temperatures p>span:first-child {
+	font-size: 0.9rem;
+	font-weight: 600;
+	color: #cbd5e0;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+}
+
+@media (max-width: 768px) {
+	#main {
+		padding: 1.5rem;
+	}
+
+	.header {
+		padding: 1rem 1.5rem;
+	}
+
+	h1 {
+		font-size: 1.5rem;
+	}
+
+	.chart-container {
+		padding: 1.5rem;
+	}
+
+	#temperatures {
+		grid-template-columns: 1fr;
+		gap: 1rem;
+	}
+
+	#temperatures p {
+		padding: 1.25rem;
+	}
 }

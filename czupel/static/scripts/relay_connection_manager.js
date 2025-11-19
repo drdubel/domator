@@ -1045,7 +1045,7 @@ function restoreState(data) {
 // WebSocket functions
 function initWebSocket() {
     try {
-        ws = new WebSocket("ws://127.0.0.1/rcm/ws/" + wsId);
+        ws = new WebSocket(`wss://${window.location.host}/rcm/ws/` + wsId);
 
         ws.onopen = function () {
             console.log('✅ WebSocket connected');

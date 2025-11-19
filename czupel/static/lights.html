@@ -3,28 +3,34 @@
 
 <head>
 	<meta charset="utf-8">
-	<title>Lights Control</title>
+	<title>Lights Control - Czupel</title>
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<link rel="stylesheet" href="/static/styles/lights.css" type="text/css">
 	<link rel="icon" href="/static/favicon.ico" type="image/x-icon">
 	<script src="/static/scripts/lights.js"></script>
+	<link rel="stylesheet" href="/static/styles/lights.css">
 </head>
 
 <body>
 	<!-- Sidebar -->
 	<div id="sidenav" class="sidenav">
 		<a href="javascript:void(0)" class="closebtn" onclick="closeNav()">&times;</a>
-		<a href="/auto">Home</a>
-		<a href="blinds">Blinds</a>
-		<a href="heating">Heating</a>
+		<a href="/auto">🏡 Home</a>
+		<a href="blinds">🪟 Blinds</a>
+		<a href="heating">🌡️ Heating</a>
 		<a id="logout" href="/logout">Logout</a>
 	</div>
 
 	<!-- Main Content -->
 	<div id="main">
 		<header class="header">
-			<button class="openbtn" onclick="openNav()">&#9776;</button>
-			<h1>💡 Lights Control</h1>
+			<div class="header-left">
+				<button class="openbtn" onclick="openNav()">☰</button>
+				<h1>💡 Lights Control</h1>
+			</div>
+			<div class="header-buttons">
+				<button class="header-btn" onclick="window.location.href='/upload'">⬆️ Upload Firmware</button>
+				<button class="header-btn" onclick="window.location.href='/rcm'">🔌 Relay Connection Manager</button>
+			</div>
 		</header>
 
 		<!-- Salon -->
@@ -32,28 +38,28 @@
 			<h2>Salon</h2>
 			<div class="light-grid">
 				<div class="light-card" onclick="changeSwitchState('s11')">
+					<img id="s11" src="/static/data/img/off.png" alt="Light">
 					<span>Kinkiet 1</span>
-					<img id="s11" src="/static/data/img/off.png">
 				</div>
 				<div class="light-card" onclick="changeSwitchState('s12')">
+					<img id="s12" src="/static/data/img/off.png" alt="Light">
 					<span>Kinkiet 2</span>
-					<img id="s12" src="/static/data/img/off.png">
 				</div>
 				<div class="light-card" onclick="changeSwitchState('s0')">
+					<img id="s0" src="/static/data/img/off.png" alt="Light">
 					<span>Kinkiet 3</span>
-					<img id="s0" src="/static/data/img/off.png">
 				</div>
 				<div class="light-card" onclick="changeSwitchState('s1')">
+					<img id="s1" src="/static/data/img/off.png" alt="Light">
 					<span>Kinkiet 4</span>
-					<img id="s1" src="/static/data/img/off.png">
 				</div>
 				<div class="light-card" onclick="changeSwitchState('s2')">
+					<img id="s2" src="/static/data/img/off.png" alt="Light">
 					<span>Nad kanapą</span>
-					<img id="s2" src="/static/data/img/off.png">
 				</div>
 				<div class="light-card" onclick="changeSwitchState('s3')">
+					<img id="s3" src="/static/data/img/off.png" alt="Light">
 					<span>Nad stołem</span>
-					<img id="s3" src="/static/data/img/off.png">
 				</div>
 			</div>
 		</section>
@@ -62,48 +68,64 @@
 		<section class="room">
 			<h2>Antresola</h2>
 			<div class="light-grid">
-				<div class="light-card" onclick="changeSwitchState('s4')"><span>Komputer A</span><img id="s4"
-						src="/static/data/img/off.png"></div>
-				<div class="light-card" onclick="changeSwitchState('s5')"><span>Wejście pokój A</span><img id="s5"
-						src="/static/data/img/off.png"></div>
-				<div class="light-card" onclick="changeSwitchState('s6')"><span>Nad obrazem</span><img id="s6"
-						src="/static/data/img/off.png"></div>
-				<div class="light-card" onclick="changeSwitchState('s7')"><span>Duża lampa A</span><img id="s7"
-						src="/static/data/img/off.png"></div>
+				<div class="light-card" onclick="changeSwitchState('s4')">
+					<img id="s4" src="/static/data/img/off.png" alt="Light">
+					<span>Komputer A</span>
+				</div>
+				<div class="light-card" onclick="changeSwitchState('s5')">
+					<img id="s5" src="/static/data/img/off.png" alt="Light">
+					<span>Wejście pokój A</span>
+				</div>
+				<div class="light-card" onclick="changeSwitchState('s6')">
+					<img id="s6" src="/static/data/img/off.png" alt="Light">
+					<span>Nad obrazem</span>
+				</div>
+				<div class="light-card" onclick="changeSwitchState('s7')">
+					<img id="s7" src="/static/data/img/off.png" alt="Light">
+					<span>Duża lampa A</span>
+				</div>
 			</div>
-	</div>
-	</section>
+		</section>
 
-	<!-- Przedpokój -->
-	<section class="room">
-		<h2>Przedpokój i pokoje</h2>
-		<div class="light-grid">
-			<div class="light-card" onclick="changeSwitchState('s13')"><span>Przedpokój</span><img id="s13"
-					src="/static/data/img/off.png"></div>
-			<div class="light-card" onclick="changeSwitchState('s14')"><span>Pokój Zo</span><img id="s14"
-					src="/static/data/img/off.png"></div>
-			<div class="light-card" onclick="changeSwitchState('s15')"><span>Pokój B</span><img id="s15"
-					src="/static/data/img/off.png"></div>
-			<div class="light-card" onclick="changeSwitchState('s9')"><span>Warsztat 1</span><img id="s9"
-					src="/static/data/img/off.png"></div>
-			<div class="light-card" onclick="changeSwitchState('s10')"><span>Warsztat 2</span><img id="s10"
-					src="/static/data/img/off.png"></div>
-		</div>
-	</section>
+		<!-- Przedpokój -->
+		<section class="room">
+			<h2>Przedpokój i pokoje</h2>
+			<div class="light-grid">
+				<div class="light-card" onclick="changeSwitchState('s13')">
+					<img id="s13" src="/static/data/img/off.png" alt="Light">
+					<span>Przedpokój</span>
+				</div>
+				<div class="light-card" onclick="changeSwitchState('s14')">
+					<img id="s14" src="/static/data/img/off.png" alt="Light">
+					<span>Pokój Zo</span>
+				</div>
+				<div class="light-card" onclick="changeSwitchState('s15')">
+					<img id="s15" src="/static/data/img/off.png" alt="Light">
+					<span>Pokój B</span>
+				</div>
+				<div class="light-card" onclick="changeSwitchState('s9')">
+					<img id="s9" src="/static/data/img/off.png" alt="Light">
+					<span>Warsztat 1</span>
+				</div>
+				<div class="light-card" onclick="changeSwitchState('s10')">
+					<img id="s10" src="/static/data/img/off.png" alt="Light">
+					<span>Warsztat 2</span>
+				</div>
+			</div>
+		</section>
 
-	<!-- Debug -->
-	<section class="room debug">
-		<h2>Debug</h2>
-		<div class="light-card" onclick="changeSwitchState('s8')">
-			<span>Debug switch</span>
-			<img id="s8" src="/static/data/img/off.png">
-		</div>
-	</section>
+		<!-- Debug -->
+		<section class="room debug">
+			<h2>Debug</h2>
+			<div class="light-grid">
+				<div class="light-card" onclick="changeSwitchState('s8')">
+					<img id="s8" src="/static/data/img/off.png" alt="Light">
+					<span>Debug switch</span>
+				</div>
+			</div>
+		</section>
 
-	<!-- Firmware -->
-	<div class="firmware-btn">
-		<button onclick="window.location.href='/upload'">⬆️ Upload Firmware</button>
-	</div>
+		<!-- Firmware buttons removed from bottom since they're now in header -->
 	</div>
 </body>
 

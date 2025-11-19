@@ -1,5 +1,5 @@
 var wsId = Math.floor(Math.random() * 2000000000)
-var ws = new WebSocket("ws://127.0.0.1/blinds/ws/" + wsId);
+var ws = new WebSocket(`wss://${window.location.host}/blinds/ws/` + wsId);
 
 ws.onmessage = function (event) {
 	var msg = JSON.parse(event.data)

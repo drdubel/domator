@@ -395,8 +395,8 @@ void loop() {
         for (int i = 0; i < NLIGHTS; i++) {
             if ((lastButton & (1 << i)) != 0) {
                 Serial.printf("RELAY: Button for light %d pressed\n", i);
-                digitalRead(buttons[i]);  // Clear interrupt flag
-                mesh.sendSingle(rootId, String(char('a' + i)));
+                int state = digitalRead(buttons[i]);
+                mesh.sendSingle(rootId, String(char('a' + i)) + String(state));
             }
         }
 

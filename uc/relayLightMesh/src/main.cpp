@@ -20,6 +20,7 @@ const byte wifiActivityPin = 255;
 #define WIFI_CONNECT_TIMEOUT 20000
 #define REGISTRATION_RETRY_INTERVAL 10000
 #define STATUS_REPORT_INTERVAL 15000
+#define BUTTON_DEBOUNCE_TIME 200
 
 // Function declarations
 void receivedCallback(const uint32_t& from, const String& msg);
@@ -30,14 +31,16 @@ void syncLightStates(uint32_t targetNodeId);
 
 painlessMesh mesh;
 
-// Root node ID - will be discovered dynamically
 uint32_t rootId = 2101544389;
 uint32_t deviceId = 0;
 uint32_t disconnects = 0;
 uint32_t clicks = 0;
 
 const int relays[NLIGHTS] = {32, 33, 25, 26, 27, 14, 12, 13};
+const int buttons[NLIGHTS] = {2, 15, 4, 0, 17, 16, 18, 5};
+int lastPress[NLIGHTS] = {0, 0, 0, 0, 0, 0, 0, 0};
 int lights[NLIGHTS] = {0, 0, 0, 0, 0, 0, 0, 0};
+volatile int lastButton = 0;
 
 bool registeredWithRoot = false;
 unsigned long lastRegistrationAttempt = 0;
@@ -314,6 +317,14 @@ void statusPrint() {
     Serial.println("-------------------\n");
 }
 
+void IRAM_ATTR buttonISR(void* arg) {
+    int index = (intptr_t)arg;
+    if (millis() - lastPress[index] > BUTTON_DEBOUNCE_TIME) {
+        lastPress[index] = millis();
+        lastButton |= 1 << index;
+    }
+}
+
 void setup() {
     Serial.begin(115200);
     delay(1000);
@@ -363,11 +374,33 @@ void setup() {
         registeredWithRoot = false;
     });
 
+    for (int i = 0; i < 8; i++) {
+        pinMode(buttons[i], INPUT_PULLDOWN);
+
+        // Use attachInterruptArg to pass the index to the ISR
+        attachInterruptArg(digitalPinToInterrupt(buttons[i]), buttonISR,
+                           (void*)i, RISING);
+    }
+
     Serial.println("RELAY: Setup complete, waiting for mesh connections...");
 }
 
 void loop() {
     mesh.update();
+
+    // Handle button presses
+    if (lastButton != 0) {
+        int index = lastButton;
+
+        for (int i = 0; i < NLIGHTS; i++) {
+            if ((lastButton & (1 << i)) != 0) {
+                Serial.printf("RELAY: Button for light %d pressed\n", i);
+                mesh.sendSingle(rootId, String(char('a' + i)));
+            }
+        }
+
+        lastButton = 0;
+    }
 
     // Periodic status print
     if (millis() - lastStatusPrint >= STATUS_PRINT_INTERVAL) {

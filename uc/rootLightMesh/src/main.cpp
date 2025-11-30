@@ -392,6 +392,8 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     if (strcmp(topic, "/switch/cmd/root") == 0) {
         if (msg == "U") {
             DEBUG_PRINTLN("MQTT: Firmware update requested for root node");
+
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
             performFirmwareUpdate();
 
             return;
@@ -461,7 +463,8 @@ void droppedConnectionCallback(uint32_t nodeId) {
                  ESP.getFreeHeap());
 }
 
-void handleSwitchMessage(const uint32_t& from, const String& msg) {
+void handleSwitchMessage(const uint32_t& from, const String& msg,
+                         int state = -1) {
     DEBUG_PRINTF("MESH: Switch message from %u: %s\n", from, msg.c_str());
 
     std::vector<std::pair<String, String>> targets =
@@ -472,9 +475,16 @@ void handleSwitchMessage(const uint32_t& from, const String& msg) {
         String command = target.second;
 
         uint32_t relayId = relayIdStr.toInt();
-        mesh.sendSingle(relayId, command);
-        DEBUG_PRINTF("MESH: Sent to relay %s command %s\n", relayIdStr.c_str(),
-                     command.c_str());
+        if (state != -1) {
+            mesh.sendSingle(relayId, command);
+            DEBUG_PRINTF("MESH: Sent to relay %s command %s\n",
+                         relayIdStr.c_str(), command.c_str());
+        } else {
+            command += String(state);
+            mesh.sendSingle(relayId, command);
+            DEBUG_PRINTF("MESH: Sent to relay %s command %s\n",
+                         relayIdStr.c_str(), command.c_str());
+        }
     }
 }
 
@@ -527,8 +537,12 @@ void receivedCallback(const uint32_t& from, const String& msg) {
         return;
     }
 
-    if (msg.length() == 1 && msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
-        handleSwitchMessage(from, msg);
+    if (msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
+        if (msg.length() == 1) {
+            handleSwitchMessage(from, msg);
+        } else {
+            handleSwitchMessage(from, msg, msg[1] - '0');
+        }
         return;
     }
 

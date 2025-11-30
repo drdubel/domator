@@ -539,9 +539,9 @@ void receivedCallback(const uint32_t& from, const String& msg) {
 
     if (msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
         if (msg.length() == 1) {
-            handleSwitchMessage(from, msg);
+            handleSwitchMessage(from, msg[0]);
         } else {
-            handleSwitchMessage(from, msg, msg[1] - '0');
+            handleSwitchMessage(from, msg[0], msg[1] - '0');
         }
         return;
     }

@@ -34,7 +34,6 @@ Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 painlessMesh mesh;
 
-// Root node ID - will be discovered dynamically
 uint32_t rootId = 2101544389;
 uint32_t deviceId = 0;
 uint32_t disconnects = 0;

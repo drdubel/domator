@@ -374,12 +374,12 @@ void setup() {
         registeredWithRoot = false;
     });
 
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < NLIGHTS; i++) {
         pinMode(buttons[i], INPUT_PULLDOWN);
 
         // Use attachInterruptArg to pass the index to the ISR
         attachInterruptArg(digitalPinToInterrupt(buttons[i]), buttonISR,
-                           (void*)i, RISING);
+                           (void*)i, CHANGE);
     }
 
     Serial.println("RELAY: Setup complete, waiting for mesh connections...");
@@ -395,6 +395,7 @@ void loop() {
         for (int i = 0; i < NLIGHTS; i++) {
             if ((lastButton & (1 << i)) != 0) {
                 Serial.printf("RELAY: Button for light %d pressed\n", i);
+                digitalRead(buttons[i]);  // Clear interrupt flag
                 mesh.sendSingle(rootId, String(char('a' + i)));
             }
         }

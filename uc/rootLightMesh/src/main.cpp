@@ -479,7 +479,7 @@ void handleSwitchMessage(const uint32_t& from, const char output,
         String command = target.second;
 
         uint32_t relayId = relayIdStr.toInt();
-        if (state != -1) {
+        if (state == -1) {
             mesh.sendSingle(relayId, command);
             DEBUG_PRINTF("MESH: Sent to relay %s command %s\n",
                          relayIdStr.c_str(), command.c_str());
@@ -514,8 +514,8 @@ void handleRelayMessage(const uint32_t& from, const String& msg) {
     }
 }
 
-void createNode(uint32_t nodeId, char type) {
-    nodes[nodeId] = String(type == 'R' ? "relay" : "switch");
+void createNode(uint32_t nodeId, String type) {
+    nodes[nodeId] = type;
     nodesStatus[nodeId][0] = "-1";
     nodesStatus[nodeId][1] = "-1";
     nodesStatus[nodeId][2] = "-1";
@@ -528,14 +528,14 @@ void receivedCallback(const uint32_t& from, const String& msg) {
     DEBUG_PRINTF("MESH: [%u] %s\n", from, msg.c_str());
 
     if (msg == "R") {
-        createNode(from, 'R');
+        createNode(from, "relay");
         DEBUG_PRINTF("MESH: Registered node %u as relay\n", from);
         mesh.sendSingle(from, "A");
         return;
     }
 
     if (msg == "S") {
-        createNode(from, 'S');
+        createNode(from, "switch");
         DEBUG_PRINTF("MESH: Registered node %u as switch\n", from);
         mesh.sendSingle(from, "A");
         return;
@@ -547,11 +547,13 @@ void receivedCallback(const uint32_t& from, const String& msg) {
         } else {
             handleSwitchMessage(from, msg[0], msg[1] - '0');
         }
+        vTaskDelay(10 / portTICK_PERIOD_MS);
         return;
     }
 
     if (msg.length() == 2 && msg[0] >= 'A' && msg[0] < 'A' + NLIGHTS) {
         handleRelayMessage(from, msg);
+        vTaskDelay(10 / portTICK_PERIOD_MS);
         return;
     }
 

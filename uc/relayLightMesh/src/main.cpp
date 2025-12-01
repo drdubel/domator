@@ -53,6 +53,7 @@ const char* firmware_url =
     "https://czupel.dry.pl/static/data/relay/firmware.bin";
 
 void performFirmwareUpdate() {
+    vTaskDelay(1000 / portTICK_PERIOD_MS);  // Allow message to be sent
     Serial.println("[OTA] Starting firmware update...");
 
     Serial.println("[OTA] Stopping mesh...");

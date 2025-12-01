@@ -20,7 +20,7 @@ const byte wifiActivityPin = 255;
 #define WIFI_CONNECT_TIMEOUT 20000
 #define REGISTRATION_RETRY_INTERVAL 10000
 #define STATUS_REPORT_INTERVAL 15000
-#define BUTTON_DEBOUNCE_TIME 200
+#define BUTTON_DEBOUNCE_TIME 1000
 
 // Function declarations
 void receivedCallback(const uint32_t& from, const String& msg);
@@ -40,7 +40,8 @@ const int relays[NLIGHTS] = {32, 33, 25, 26, 27, 14, 12, 13};
 const int buttons[NLIGHTS] = {2, 15, 4, 0, 17, 16, 18, 5};
 int lastPress[NLIGHTS] = {0, 0, 0, 0, 0, 0, 0, 0};
 int lights[NLIGHTS] = {0, 0, 0, 0, 0, 0, 0, 0};
-volatile int lastButton = 0;
+volatile bool buttonState[NLIGHTS] = {0, 0, 0, 0, 0, 0, 0, 0};
+volatile int pressed = 0;
 
 bool registeredWithRoot = false;
 unsigned long lastRegistrationAttempt = 0;
@@ -321,7 +322,8 @@ void IRAM_ATTR buttonISR(void* arg) {
     int index = (intptr_t)arg;
     if (millis() - lastPress[index] > BUTTON_DEBOUNCE_TIME) {
         lastPress[index] = millis();
-        lastButton |= 1 << index;
+        buttonState[index] = !digitalRead(buttons[index]);
+        pressed |= (1 << index);
     }
 }
 
@@ -389,19 +391,17 @@ void loop() {
     mesh.update();
 
     // Handle button presses
-    if (lastButton != 0) {
-        int index = lastButton;
-
+    if (pressed) {
         for (int i = 0; i < NLIGHTS; i++) {
-            if ((lastButton & (1 << i)) != 0) {
+            if (pressed & (1 << i)) {
                 Serial.printf("RELAY: Button for light %d pressed\n", i);
-                int state = digitalRead(buttons[i]);
-                String msg = String(char('a' + i)) + String(state);
+                String msg =
+                    String(char('a' + i)) + String(char(buttonState[i] + '0'));
                 mesh.sendSingle(rootId, msg);
+
+                pressed &= ~(1 << i);
             }
         }
-
-        lastButton = 0;
     }
 
     // Periodic status print

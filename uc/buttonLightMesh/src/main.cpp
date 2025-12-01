@@ -72,6 +72,7 @@ void updateLedStatus() {
 }
 
 void performFirmwareUpdate() {
+    vTaskDelay(1000 / portTICK_PERIOD_MS);  // Allow message to be sent
     Serial.println("[OTA] Starting firmware update...");
     setLedColor(0, 0, 255);  // Blue during update
 

@@ -38,10 +38,10 @@ uint32_t clicks = 0;
 
 const int relays[NLIGHTS] = {32, 33, 25, 26, 27, 14, 12, 13};
 const int buttons[NLIGHTS] = {2, 15, 4, 0, 17, 16, 18, 5};
-int lastPress[NLIGHTS] = {0, 0, 0, 0, 0, 0, 0, 0};
 int lights[NLIGHTS] = {0, 0, 0, 0, 0, 0, 0, 0};
 volatile bool buttonState[NLIGHTS] = {0, 0, 0, 0, 0, 0, 0, 0};
-volatile int pressed = 0;
+volatile uint32_t lastPress[NLIGHTS] = {0, 0, 0, 0, 0, 0, 0, 0};
+volatile uint8_t pressed = 0;
 
 bool registeredWithRoot = false;
 unsigned long lastRegistrationAttempt = 0;
@@ -320,8 +320,9 @@ void statusPrint() {
 
 void IRAM_ATTR buttonISR(void* arg) {
     int index = (intptr_t)arg;
-    if (millis() - lastPress[index] > BUTTON_DEBOUNCE_TIME) {
-        lastPress[index] = millis();
+    uint32_t now = micros();
+    if (now - lastPress[index] > BUTTON_DEBOUNCE_TIME * 1000) {
+        lastPress[index] = now;
         buttonState[index] = !digitalRead(buttons[index]);
         pressed |= (1 << index);
     }

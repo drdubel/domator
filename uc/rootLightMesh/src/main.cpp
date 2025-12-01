@@ -37,7 +37,7 @@ uint32_t device_id;
 
 std::map<uint32_t, String[6]> nodesStatus;
 std::map<uint32_t, String> nodes;
-std::map<String, std::map<String, std::vector<std::pair<String, String>>>>
+std::map<String, std::map<char, std::vector<std::pair<String, String>>>>
     connections;
 
 // Function declarations
@@ -281,7 +281,7 @@ void parseConnections(JsonObject root) {
         JsonObject letterObj = idPair.value().as<JsonObject>();
 
         for (JsonPair letterPair : letterObj) {
-            String letter = letterPair.key().c_str();
+            char letter = letterPair.key().c_str()[0];
             JsonArray arr = letterPair.value().as<JsonArray>();
 
             std::vector<std::pair<String, String>> vec;
@@ -304,7 +304,7 @@ void parseConnections(JsonObject root) {
     for (const auto& idEntry : connections) {
         DEBUG_PRINTF("Node %s:\n", idEntry.first.c_str());
         for (const auto& letterEntry : idEntry.second) {
-            DEBUG_PRINTF("  %s =>", letterEntry.first.c_str());
+            DEBUG_PRINTF("  %c =>", letterEntry.first);
             if (letterEntry.second.empty()) {
                 DEBUG_PRINTLN(" (none)");
                 continue;
@@ -463,14 +463,18 @@ void droppedConnectionCallback(uint32_t nodeId) {
                  ESP.getFreeHeap());
 }
 
-void handleSwitchMessage(const uint32_t& from, const String& msg,
+void handleSwitchMessage(const uint32_t& from, const char output,
                          int state = -1) {
-    DEBUG_PRINTF("MESH: Switch message from %u: %s\n", from, msg.c_str());
+    DEBUG_PRINTF("MESH: Switch message from %u: %c\n", from, output);
 
     std::vector<std::pair<String, String>> targets =
-        connections[String(from)][msg];
+        connections[String(from)][output];
+    DEBUG_PRINTF("MESH: Found %zu targets for switch %u and message %c\n",
+                 targets.size(), from, output);
 
     for (const auto& target : targets) {
+        DEBUG_PRINTF("MESH: Processing target %s with command %s\n",
+                     target.first.c_str(), target.second.c_str());
         String relayIdStr = target.first;
         String command = target.second;
 

@@ -270,6 +270,7 @@ async def websocket_lights(websocket: WebSocket, access_token=Cookie()):
     await ws_manager.connect(websocket)
     mqtt.publish("/switch/1/cmd", "S")
     mqtt.publish("/relay/cmd/1074130365", "S")
+    mqtt.publish("/relay/cmd/1074122133", "S")
 
     async def receive_command(websocket: WebSocket):
         async for cmd in websocket.iter_json():
@@ -280,15 +281,24 @@ async def websocket_lights(websocket: WebSocket, access_token=Cookie()):
                 continue
             logger.debug("putting %s in command queue", cmd)
             chg.id = int(chg.id[1:])
-            if chg.id < 9:
-                chg.id = chr(chg.id + 97)
-                print(f"{chg.id}{chg.state}")
-                mqtt.client.publish("/switch/1/cmd", f"{chg.id}{chg.state}")
 
-            else:
-                chg.id = chr(chg.id - 9 + 97)
-                print(f"{chg.id}{chg.state}")
-                mqtt.client.publish("/relay/cmd/1074130365", f"{chg.id}{chg.state}")
+            match chg.id // 8:
+                case 0:
+                    topic = "/switch/1/cmd"
+
+                case 1:
+                    topic = "/relay/cmd/1074130365"
+
+                case 2:
+                    topic = "/relay/cmd/1074122133"
+
+                case _:
+                    raise ValueError("Invalid light id")
+
+            chg.id = chr(chg.id % 8 + 97)
+
+            print(topic, f"{chg.id}{chg.state}")  # Debug print
+            mqtt.client.publish(topic, f"{chg.id}{chg.state}")
 
     if access_token in access_cookies:
         await receive_command(websocket)
@@ -311,7 +321,11 @@ async def websocket_rcm(websocket: WebSocket, access_token=Cookie()):
             with open("czupel/data/connections.json", "w", encoding="utf-8") as f:
                 json.dump(cmd, f, ensure_ascii=False, indent=2)
 
-            print(cmd["connections"])
+            for connection in list(cmd["connections"].keys()):
+                cmd["connections"][connection[:10]] = cmd["connections"].pop(connection)
+
+            print(f"Updated connections: {cmd['connections']}")
+
             mqtt.client.publish("/switch/cmd/root", cmd["connections"])
 
     if access_token in access_cookies:

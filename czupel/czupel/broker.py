@@ -26,7 +26,29 @@ mqtt_config = MQTTConfig(
 mqtt = FastMQTT(config=mqtt_config)
 
 
-route_lights = {"1074130365": ["s9", "s10", "s11", "s12", "s13", "s14", "s15", "s16"]}
+route_lights = {
+    "1074130365": ["s8", "s9", "s10", "s11", "s12", "s13", "s14", "s15"],
+    "1074122133": ["s16", "s17", "s18", "s19", "s20", "s21", "s22", "s23"],
+}
+
+
+def process_connections(connections):
+    """
+    Process connections from configuration file.
+    """
+    processed = {}
+    for switch_id in connections:
+        processed[switch_id[:10]] = {}
+        for button_id in connections[switch_id]:
+            processed[switch_id[:10]][button_id] = []
+            outputs = connections[switch_id][button_id]
+            for i in range(len(outputs)):
+                relay_id, output_id = outputs[i]
+                outputs[i] = (str(relay_id), str(output_id))
+                processed[switch_id[:10]][button_id] = outputs
+
+    print(processed)  # Debug print
+    return processed
 
 
 @mqtt.on_connect()
@@ -166,7 +188,10 @@ async def handle_switch_state(payload_str, topic):
 
         for relay_id, output_id in outputs:
             print(relay_id, output_id)  # Debug print
-            mqtt.client.publish("/relay/cmd/" + relay_id, str(output_id))
+            if len(payload_str) == 2:
+                state = payload_str[1]
+
+            mqtt.client.publish("/relay/cmd/" + relay_id, str(output_id) + state)
 
     except ValueError as e:
         logger.error("Error processing switch state: %s", e)
@@ -190,8 +215,11 @@ async def handle_root_state(payload_str):
 
     if payload_str == "connected":
         print(connections)  # Debug print
+        processed_connections = process_connections(connections)
 
-        mqtt.client.publish("/switch/cmd/root", connections)
+        mqtt.client.publish("/switch/cmd/root", processed_connections)
+
+        return
 
     try:
         data = json.loads(payload_str)

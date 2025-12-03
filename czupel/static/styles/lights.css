@@ -20,9 +20,7 @@ body {
 	top: 0;
 	left: 0;
 	background: rgba(26, 31, 46, 0.98);
-	backdrop-filter: blur(10px);
 	overflow-x: hidden;
-	transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 	padding-top: 60px;
 	box-shadow: 2px 0 20px rgba(0, 0, 0, 0.3);
 }
@@ -34,7 +32,6 @@ body {
 	color: #a0aec0;
 	font-size: 1.1rem;
 	font-weight: 500;
-	transition: all 0.3s ease;
 	border-left: 3px solid transparent;
 }
 
@@ -70,14 +67,12 @@ body {
 	display: flex;
 	align-items: center;
 	gap: 1rem;
-	padding: 1.5rem 2rem 1.5rem 0;
-	background: rgba(255, 255, 255, 0.05);
-	backdrop-filter: blur(10px);
+	padding: 1.5rem 2rem;
+	background: rgba(26, 31, 46, 0.95);
 	border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 	top: 0;
 	z-index: 50;
 	flex-wrap: wrap;
-	padding-left: 2rem;
 }
 
 .header.hidden {
@@ -105,7 +100,7 @@ body {
 	padding: 10px 16px;
 	cursor: pointer;
 	border-radius: 10px;
-	transition: all 0.3s ease;
+	transition: background 0.2s ease, transform 0.2s ease;
 }
 
 .openbtn:hover {
@@ -132,7 +127,7 @@ h1 {
 	background: rgba(102, 126, 234, 0.1);
 	color: #fff;
 	cursor: pointer;
-	transition: all 0.3s ease;
+	transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
 	white-space: nowrap;
 }
 
@@ -154,46 +149,44 @@ h1 {
 }
 
 .room {
-	margin-bottom: 4rem;
-	margin-top: 3rem;
+	margin-bottom: 3rem;
+	margin-top: 2rem;
 	margin-left: 3rem;
+	margin-right: 3rem;
 }
 
 .room:first-of-type {
-	margin-top: 3.5rem;
+	margin-top: 2.5rem;
 }
 
 .room h2 {
 	font-size: 1.5rem;
 	font-weight: 600;
-	margin-bottom: 2rem;
+	margin-bottom: 1.5rem;
 	color: #e2e8f0;
-	padding-bottom: 0.75rem;
+	padding-bottom: 0.5rem;
 	border-bottom: 2px solid rgba(102, 126, 234, 0.3);
 }
 
 .light-grid {
 	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+	grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
 	gap: 1.5rem;
-	justify-items: center;
 }
 
 .light-card {
 	background: rgba(255, 255, 255, 0.05);
-	backdrop-filter: blur(10px);
 	padding: 1rem 0.6rem;
 	border-radius: 16px;
 	text-align: center;
 	border: 2px solid rgba(255, 255, 255, 0.1);
-	transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+	transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
 	cursor: pointer;
 	display: flex;
 	flex-direction: column;
 	align-items: center;
 	gap: 1rem;
 	width: 100%;
-	max-width: 160px;
 }
 
 .light-card:hover {
@@ -205,6 +198,11 @@ h1 {
 
 .light-card:active {
 	transform: translateY(-2px);
+}
+
+.light-card.active {
+	border-color: rgba(102, 126, 234, 0.7);
+	box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
 }
 
 .light-card span {
@@ -238,50 +236,117 @@ h1 {
 	box-shadow: 0 12px 24px rgba(255, 165, 0, 0.2);
 }
 
-/* Firmware Button - removed, now in header */
-
+/* Mobile - 3-4 buttons in a row */
 @media (max-width: 768px) {
 	.light-grid {
-		grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-		gap: 1.25rem;
+		grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+		gap: 0.75rem;
 	}
 
 	.header {
-		padding: 1rem 1.5rem;
+		padding: 1rem;
 	}
 
 	.header-left {
 		flex: 1 1 100%;
-		margin-bottom: 0.75rem;
+		margin-bottom: 0.5rem;
 	}
 
 	.header-buttons {
 		flex: 1 1 100%;
 		justify-content: center;
+		gap: 0.5rem;
 	}
 
 	.header-btn {
-		padding: 10px 20px;
-		font-size: 0.9rem;
-		min-width: 180px;
+		padding: 8px 12px;
+		font-size: 0.8rem;
+		min-width: 140px;
+	}
+
+	h1 {
+		font-size: 1.4rem;
 	}
 
 	#main {
-		padding: 1.5rem;
+		padding: 0.75rem;
 		padding-top: 0;
 	}
 
 	.room {
-		margin-top: 2.5rem;
-		margin-bottom: 3rem;
+		margin: 0;
+		margin-top: 1.5rem;
+		margin-bottom: 2rem;
+		padding: 0 0.75rem;
 	}
 
 	.room:first-of-type {
-		margin-top: 2.5rem;
+		margin-top: 1.5rem;
 	}
 
 	.room h2 {
+		font-size: 1.2rem;
+		margin-bottom: 1rem;
+		padding-bottom: 0.4rem;
+	}
+
+	.light-card {
+		padding: 0.6rem 0.4rem;
+		gap: 0.6rem;
+		border-radius: 12px;
+		border-width: 1.5px;
+	}
+
+	.light-card:hover {
+		transform: translateY(-2px);
+		box-shadow: 0 6px 12px rgba(102, 126, 234, 0.2);
+	}
+
+	.light-card span {
+		font-size: 0.75rem;
+		line-height: 1.1;
+		font-weight: 600;
+	}
+
+	.light-card img {
+		width: 40px;
+		height: 40px;
+	}
+
+	.openbtn {
 		font-size: 1.3rem;
+		padding: 8px 12px;
+	}
+}
+
+/* Very small screens - 4 buttons in a row */
+@media (max-width: 400px) {
+	.light-grid {
+		grid-template-columns: repeat(4, 1fr);
+		gap: 0.5rem;
+	}
+
+	#main {
+		padding: 0.5rem;
+		padding-top: 0;
+	}
+
+	.room {
+		margin-top: 1.25rem;
 		margin-bottom: 1.5rem;
+	}
+
+	.light-card {
+		padding: 0.5rem 0.3rem;
+		gap: 0.5rem;
+	}
+
+	.light-card span {
+		font-size: 0.7rem;
+	}
+
+	.light-card img {
+		width: 36px;
+		height: 36px;
 	}
 }

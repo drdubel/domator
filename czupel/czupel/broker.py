@@ -10,6 +10,7 @@ from fastapi_mqtt import FastMQTT, MQTTConfig
 
 from czupel import metrics
 from czupel.data.secrets import mqtt_password
+from czupel.state import relay_state
 from czupel.websocket import ws_manager
 
 logger = logging.getLogger(__name__)
@@ -145,9 +146,13 @@ async def handle_old_switch_state(payload_str):
             switch_id = "s" + str(ascii_lowercase.index(payload_str[0]))
             state = int(payload_str[1])
             data = {"id": switch_id, "state": state}
+
+            relay_state.update(switch_id, state)
+
             asyncio.create_task(ws_manager.broadcast(data, "lights"))
         else:
             logger.warning("Invalid switch state payload: %s", payload_str)
+
     except (ValueError, IndexError) as e:
         logger.error("Error processing switch state: %s", e)
 
@@ -161,6 +166,8 @@ async def handle_relay_state(payload_str, topic):
         state = int(payload_str[1])
         idx = ord(payload_str[0]) - ord("A")
         light_id = route_lights[relay_id][idx]
+
+        relay_state.update(light_id, state)
 
         data = {"id": light_id, "state": state}
         asyncio.create_task(ws_manager.broadcast(data, "lights"))
@@ -218,6 +225,9 @@ async def handle_root_state(payload_str):
         processed_connections = process_connections(connections)
 
         mqtt.client.publish("/switch/cmd/root", processed_connections)
+        mqtt.client.publish("/switch/1/cmd", "S")
+        mqtt.client.publish("/relay/cmd/1074130365", "S")
+        mqtt.client.publish("/relay/cmd/1074122133", "S")
 
         return
 

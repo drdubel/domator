@@ -25,6 +25,7 @@ from starlette.types import ASGIApp
 from czupel.broker import mqtt
 from czupel.data.authorized import authorized
 from czupel.websocket import ws_manager
+from czupel.state import relay_state
 
 logger = logging.getLogger(__name__)
 
@@ -233,6 +234,9 @@ async def set_blind(req: BlindRequest):
 
 @app.websocket("/blinds/ws/{client_id}")
 async def websocket_blinds(websocket: WebSocket, access_token=Cookie()):
+    if access_token not in access_cookies:
+        return
+
     await ws_manager.connect(websocket)
     mqtt.publish("/blind/cmd", "S")
 
@@ -248,12 +252,14 @@ async def websocket_blinds(websocket: WebSocket, access_token=Cookie()):
                 "/blind/cmd", f"{chr(int(req.blind[1])+96)}{req.position}"
             )
 
-    if access_token in access_cookies:
-        await receive_command(websocket)
+    await receive_command(websocket)
 
 
 @app.websocket("/heating/ws/{client_id}")
 async def websocket_heating(websocket: WebSocket, access_token=Cookie()):
+    if access_token not in access_cookies:
+        return
+
     await ws_manager.connect(websocket)
 
     async def receive_command(websocket: WebSocket):
@@ -261,16 +267,21 @@ async def websocket_heating(websocket: WebSocket, access_token=Cookie()):
             logger.debug("putting %s in command queue", cmd)
             mqtt.client.publish("/heating/cmd", cmd)
 
-    if access_token in access_cookies:
-        await receive_command(websocket)
+    await receive_command(websocket)
 
 
 @app.websocket("/lights/ws/{client_id}")
 async def websocket_lights(websocket: WebSocket, access_token=Cookie()):
+    if access_token not in access_cookies:
+        return
+
     await ws_manager.connect(websocket)
-    mqtt.publish("/switch/1/cmd", "S")
-    mqtt.publish("/relay/cmd/1074130365", "S")
-    mqtt.publish("/relay/cmd/1074122133", "S")
+
+    current_states = relay_state.get_all()
+    for light_id, state in current_states.items():
+        await ws_manager.send_personal_message(
+            {"id": light_id, "state": state}, websocket
+        )
 
     async def receive_command(websocket: WebSocket):
         async for cmd in websocket.iter_json():
@@ -300,12 +311,14 @@ async def websocket_lights(websocket: WebSocket, access_token=Cookie()):
             print(topic, f"{chg.id}{chg.state}")  # Debug print
             mqtt.client.publish(topic, f"{chg.id}{chg.state}")
 
-    if access_token in access_cookies:
-        await receive_command(websocket)
+    await receive_command(websocket)
 
 
 @app.websocket("/rcm/ws/{client_id}")
 async def websocket_rcm(websocket: WebSocket, access_token=Cookie()):
+    if access_token not in access_cookies:
+        return
+
     await ws_manager.connect(websocket)
 
     with open("czupel/data/connections.json", "r", encoding="utf-8") as f:
@@ -328,8 +341,7 @@ async def websocket_rcm(websocket: WebSocket, access_token=Cookie()):
 
             mqtt.client.publish("/switch/cmd/root", cmd["connections"])
 
-    if access_token in access_cookies:
-        await receive_command(websocket)
+    await receive_command(websocket)
 
 
 def start():

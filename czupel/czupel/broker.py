@@ -242,7 +242,7 @@ async def handle_root_state(payload_str):
             else:
                 status["parent_name"] = "none"
 
-            metric_node = f"node_info,id={switch_id} uptime={status['uptime']},clicks={status['clicks']},disconnects={status['disconnects']},last_seen={status['last_seen']}"
+            metric_node = f"node_info,id={switch_id},name={status['name']} uptime={status['uptime']},clicks={status['clicks']},disconnects={status['disconnects']},last_seen={status['last_seen']}"
             metric_mesh = f"mesh_node,id={switch_id},name={status['name']},parent={status['parent']},parent_name={status['parent_name']},firmware={status['firmware']},status={status['status']},type={status['type']} rssi={status['rssi']}"
 
             print(metric_node)  # Debug print

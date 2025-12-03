@@ -24,8 +24,8 @@ from starlette.types import ASGIApp
 
 from czupel.broker import mqtt
 from czupel.data.authorized import authorized
-from czupel.websocket import ws_manager
 from czupel.state import relay_state
+from czupel.websocket import ws_manager
 
 logger = logging.getLogger(__name__)
 

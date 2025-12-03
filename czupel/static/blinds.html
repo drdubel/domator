@@ -59,26 +59,6 @@
 			</div>
 		</div>
 	</div>
-
-	<script>
-		// Initialize sliders when document is ready
-		$(document).ready(function () {
-			// Initialize each slider (inverted so top = 100%, bottom = 0%)
-			$('#r1, #r2, #r3, #r4, #r5, #r6, #r7').each(function () {
-				$(this).slider({
-					orientation: "vertical",
-					range: "max",
-					min: 0,
-					max: 100,
-					value: 100,
-					slide: function (event, ui) {
-						// You can add custom slide behavior here
-						console.log($(this).attr('id') + ' changed to: ' + ui.value);
-					}
-				});
-			});
-		});
-	</script>
 </body>
 
 </html>

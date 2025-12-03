@@ -1,10 +1,14 @@
 var wsId = Math.floor(Math.random() * 2000000000)
-var ws = new WebSocket(`wss://${window.location.host}/heating/ws/` + wsId)
+var ws = null
+var reconnectTimeout = null
+var reconnectDelay = 1000
+var maxReconnectDelay = 30000
+var isReconnecting = false
 
 // Enhanced Chart.js styling for the new dark theme
-Chart.defaults.color = '#cbd5e0';
-Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif';
-Chart.defaults.font.size = 13;
+Chart.defaults.color = '#cbd5e0'
+Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif'
+Chart.defaults.font.size = 13
 
 const data = {
 	labels: [],
@@ -67,7 +71,7 @@ const data = {
 fetch("/static/data/heating_chart.json")
 	.then(response => response.json())
 	.then(data => {
-		const json_chart_data = data;
+		const json_chart_data = data
 		chart.data.labels = json_chart_data["labels"]
 		chart.data.datasets[0].data = json_chart_data["cold"]
 		chart.data.datasets[1].data = json_chart_data["mixed"]
@@ -76,10 +80,10 @@ fetch("/static/data/heating_chart.json")
 		chart.update()
 	})
 	.catch(error => {
-		console.error('Error loading chart data:', error);
-	});
+		console.error('Error loading chart data:', error)
+	})
 
-const ctx = document.getElementById('myChart');
+const ctx = document.getElementById('myChart')
 var chart = new Chart(ctx, {
 	type: 'line',
 	data: data,
@@ -117,14 +121,14 @@ var chart = new Chart(ctx, {
 				displayColors: true,
 				callbacks: {
 					label: function (context) {
-						let label = context.dataset.label || '';
+						let label = context.dataset.label || ''
 						if (label) {
-							label += ': ';
+							label += ': '
 						}
 						if (context.parsed.y !== null) {
-							label += context.parsed.y.toFixed(2) + '°C';
+							label += context.parsed.y.toFixed(2) + '°C'
 						}
-						return label;
+						return label
 					}
 				}
 			}
@@ -154,7 +158,7 @@ var chart = new Chart(ctx, {
 				ticks: {
 					color: '#a0aec0',
 					callback: function (value) {
-						return value + '°C';
+						return value + '°C'
 					}
 				}
 			}
@@ -178,82 +182,124 @@ var chart = new Chart(ctx, {
 
 chart.options.animation = false
 
-ws.onmessage = function (event) {
-	try {
-		var msg = JSON.parse(event.data)
-		console.log('WebSocket data received:', msg)
+function connectWebSocket() {
+	if (isReconnecting) return
+	isReconnecting = true
 
-		const date = new Date();
+	console.log('Connecting WebSocket...')
+	ws = new WebSocket(`wss://${window.location.host}/heating/ws/` + wsId)
 
-		let year = date.getFullYear()
-		let month = date.getMonth() + 1
-		let day = date.getDate()
-		let hour = date.getHours()
-		let minute = date.getMinutes()
-		let second = date.getSeconds()
-		year = ('0000' + year).slice(-4)
-		month = ('00' + month).slice(-2)
-		day = ('00' + day).slice(-2)
-		hour = ('00' + hour).slice(-2)
-		minute = ('00' + minute).slice(-2)
-		second = ('00' + second).slice(-2)
-		let currentDate = `${year}-${month}-${day} ${hour}:${minute}:${second}`
+	ws.onopen = function () {
+		console.log('WebSocket connected!')
+		isReconnecting = false
+		reconnectDelay = 1000
+	}
 
-		// Update chart data
-		chart.data.labels.push(currentDate)
-		chart.data.datasets[0].data.push(msg["cold"])
-		chart.data.datasets[1].data.push(msg["mixed"])
-		chart.data.datasets[2].data.push(msg["hot"])
-		chart.data.datasets[3].data.push(msg["target"])
+	ws.onmessage = function (event) {
+		try {
+			var msg = JSON.parse(event.data)
+			console.log('WebSocket data received:', msg)
 
-		// Limit chart data points to last 50 to prevent performance issues
-		if (chart.data.labels.length > 50) {
-			chart.data.labels.shift()
-			chart.data.datasets.forEach(dataset => {
-				dataset.data.shift()
-			})
-		}
+			const date = new Date()
 
-		chart.update('none') // Update without animation for better performance
+			let year = date.getFullYear()
+			let month = date.getMonth() + 1
+			let day = date.getDate()
+			let hour = date.getHours()
+			let minute = date.getMinutes()
+			let second = date.getSeconds()
+			year = ('0000' + year).slice(-4)
+			month = ('00' + month).slice(-2)
+			day = ('00' + day).slice(-2)
+			hour = ('00' + hour).slice(-2)
+			minute = ('00' + minute).slice(-2)
+			second = ('00' + second).slice(-2)
+			let currentDate = `${year}-${month}-${day} ${hour}:${minute}:${second}`
 
-		// Update ALL display fields from the WebSocket message
-		for (let id in msg) {
-			const element = document.getElementById(id)
-			if (element) {
-				// Format numbers to 2 decimal places if it's a number
-				let value = msg[id]
-				if (typeof value === 'number') {
-					value = value.toFixed(2)
-				}
+			// Update chart data
+			chart.data.labels.push(currentDate)
+			chart.data.datasets[0].data.push(msg["cold"])
+			chart.data.datasets[1].data.push(msg["mixed"])
+			chart.data.datasets[2].data.push(msg["hot"])
+			chart.data.datasets[3].data.push(msg["target"])
 
-				// Update the element content
-				element.textContent = value
-
-				// Add a subtle flash effect when value updates
-				element.style.transition = 'color 0.3s ease'
-				const originalColor = '#667eea'
-				element.style.color = '#10b981'
-				setTimeout(() => {
-					element.style.color = originalColor
-				}, 300)
+			// Limit chart data points to last 50 to prevent performance issues
+			if (chart.data.labels.length > 50) {
+				chart.data.labels.shift()
+				chart.data.datasets.forEach(dataset => {
+					dataset.data.shift()
+				})
 			}
+
+			chart.update('none') // Update without animation for better performance
+
+			// Update ALL display fields from the WebSocket message
+			for (let id in msg) {
+				const element = document.getElementById(id)
+				if (element) {
+					// Format numbers to 2 decimal places if it's a number
+					let value = msg[id]
+					if (typeof value === 'number') {
+						value = value.toFixed(2)
+					}
+
+					// Update the element content
+					element.textContent = value
+
+					// Add a subtle flash effect when value updates
+					element.style.transition = 'color 0.3s ease'
+					const originalColor = '#667eea'
+					element.style.color = '#10b981'
+					setTimeout(() => {
+						element.style.color = originalColor
+					}, 300)
+				}
+			}
+		} catch (error) {
+			console.error('Error processing WebSocket message:', error)
 		}
-	} catch (error) {
-		console.error('Error processing WebSocket message:', error)
+	}
+
+	ws.onerror = function (error) {
+		console.error('WebSocket error:', error)
+	}
+
+	ws.onclose = function () {
+		console.log('WebSocket disconnected')
+		isReconnecting = false
+
+		if (reconnectTimeout) {
+			clearTimeout(reconnectTimeout)
+		}
+
+		console.log(`Reconnecting in ${reconnectDelay / 1000}s...`)
+		reconnectTimeout = setTimeout(function () {
+			connectWebSocket()
+			reconnectDelay = Math.min(reconnectDelay * 2, maxReconnectDelay)
+		}, reconnectDelay)
 	}
 }
 
+// Initialize connection
+connectWebSocket()
 
-ws.onerror = function (error) {
-	console.error('WebSocket error:', error);
-}
+// Check connection every 30 seconds
+setInterval(function () {
+	if (!ws || ws.readyState === WebSocket.CLOSED) {
+		console.log('WebSocket closed, reconnecting...')
+		connectWebSocket()
+	}
+}, 30000)
 
-ws.onclose = function () {
-	console.log('WebSocket connection closed. Attempting to reconnect...');
-	setTimeout(() => {
-		location.reload();
-	}, 5000);
-}
+// Handling visibility API
+document.addEventListener('visibilitychange', function () {
+	if (!document.hidden) {
+		if (!ws || ws.readyState !== WebSocket.OPEN) {
+			console.log('Tab visible again, checking connection...')
+			connectWebSocket()
+		}
+	}
+})
 
 function send_value(prevalue, value) {
 	// Validate input: must be numeric with optional decimal point and minus sign
@@ -271,9 +317,24 @@ function send_value(prevalue, value) {
 		return 0
 	}
 
+	// Sprawdź czy WebSocket jest podłączony
+	if (!ws || ws.readyState !== WebSocket.OPEN) {
+		console.log('WebSocket not connected, trying to reconnect...')
+		showNotification('Connection lost, reconnecting...', 'error')
+		connectWebSocket()
+		return 0
+	}
+
 	console.info('Sending:', prevalue + value)
-	ws.send(JSON.stringify(prevalue + value))
-	showNotification('Value sent successfully', 'success')
+
+	try {
+		ws.send(JSON.stringify(prevalue + value))
+		showNotification('Value sent successfully', 'success')
+	} catch (e) {
+		console.error('Failed to send:', e)
+		showNotification('Failed to send value', 'error')
+		connectWebSocket()
+	}
 }
 
 // Show visual feedback for user actions
@@ -316,28 +377,28 @@ function showNotification(message, type) {
 }
 
 function openNav() {
-	document.getElementById("sidenav").style.width = "280px";
-	document.getElementById("main").style.marginLeft = "280px";
-	document.getElementById("openbtn").style.visibility = "hidden";
+	document.getElementById("sidenav").style.width = "280px"
+	document.getElementById("main").style.marginLeft = "280px"
+	document.getElementById("openbtn").style.visibility = "hidden"
 }
 
 function closeNav() {
-	document.getElementById("sidenav").style.width = "0";
-	document.getElementById("main").style.marginLeft = "0";
-	document.getElementById("openbtn").style.visibility = "visible";
+	document.getElementById("sidenav").style.width = "0"
+	document.getElementById("main").style.marginLeft = "0"
+	document.getElementById("openbtn").style.visibility = "visible"
 }
 
 // Responsive sidebar handling
 window.addEventListener('resize', function () {
 	if (window.innerWidth <= 768) {
-		closeNav();
+		closeNav()
 	}
-});
+})
 
 // Initialize
 document.addEventListener('DOMContentLoaded', function () {
 	// Close sidebar on mobile by default
 	if (window.innerWidth <= 768) {
-		closeNav();
+		closeNav()
 	}
-});
+})

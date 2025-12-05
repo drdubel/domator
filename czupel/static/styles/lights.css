@@ -21,6 +21,7 @@ body {
 	left: 0;
 	background: rgba(26, 31, 46, 0.98);
 	overflow-x: hidden;
+	transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 	padding-top: 60px;
 	box-shadow: 2px 0 20px rgba(0, 0, 0, 0.3);
 }
@@ -32,6 +33,7 @@ body {
 	color: #a0aec0;
 	font-size: 1.1rem;
 	font-weight: 500;
+	transition: color 0.2s ease, background 0.2s ease;
 	border-left: 3px solid transparent;
 }
 
@@ -166,17 +168,48 @@ h1 {
 	color: #e2e8f0;
 	padding-bottom: 0.5rem;
 	border-bottom: 2px solid rgba(102, 126, 234, 0.3);
+	cursor: pointer;
+	user-select: none;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	transition: color 0.2s ease;
+}
+
+.room h2:hover {
+	color: #667eea;
+}
+
+.room h2::after {
+	content: '▼';
+	font-size: 1rem;
+	transition: transform 0.3s ease;
+	color: rgba(102, 126, 234, 0.7);
+}
+
+.room h2.collapsed::after {
+	transform: rotate(-90deg);
 }
 
 .light-grid {
 	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+	grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
 	gap: 1.5rem;
+	max-height: 5000px;
+	overflow: hidden;
+	transition: max-height 0.4s ease, opacity 0.3s ease;
+	opacity: 1;
+}
+
+.light-grid.collapsed {
+	max-height: 0;
+	opacity: 0;
+	margin-bottom: 0;
 }
 
 .light-card {
 	background: rgba(255, 255, 255, 0.05);
-	padding: 1rem 0.6rem;
+	padding: 0.9rem 0.5rem;
 	border-radius: 16px;
 	text-align: center;
 	border: 2px solid rgba(255, 255, 255, 0.1);
@@ -185,7 +218,7 @@ h1 {
 	display: flex;
 	flex-direction: column;
 	align-items: center;
-	gap: 1rem;
+	gap: 0.8rem;
 	width: 100%;
 }
 
@@ -206,14 +239,14 @@ h1 {
 }
 
 .light-card span {
-	font-size: 0.95rem;
+	font-size: 0.85rem;
 	font-weight: 700;
 	color: #cbd5e0;
 }
 
 .light-card img {
-	width: 56px;
-	height: 56px;
+	width: 50px;
+	height: 50px;
 	object-fit: contain;
 	filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.3));
 }

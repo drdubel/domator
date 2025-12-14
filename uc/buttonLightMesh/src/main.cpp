@@ -34,7 +34,7 @@ Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 painlessMesh mesh;
 
-uint32_t rootId = 2101544389;
+uint32_t rootId = 0;
 uint32_t deviceId = 0;
 uint32_t disconnects = 0;
 uint32_t clicks = 0;
@@ -221,6 +221,14 @@ void receivedCallback(const uint32_t& from, const String& msg) {
         return;
     }
 
+    if (msg == "Q") {
+        Serial.println("MESH: Registration query received from root");
+        rootId = from;
+        mesh.sendSingle(rootId, "S");
+        Serial.printf("MESH: Sent registration 'S' to root %u\n", rootId);
+        return;
+    }
+
     if (msg == "A") {
         Serial.println("MESH: Registration accepted by root");
         registeredWithRoot = true;
@@ -277,6 +285,12 @@ void setup() {
         // Send registration multiple times to ensure delivery
         vTaskDelay(1000 /
                    portTICK_PERIOD_MS);  // Wait for connection to stabilize
+
+        if (rootId == 0) {
+            Serial.println("MESH: Root ID unknown, cannot register");
+            return;
+        }
+
         mesh.sendSingle(rootId, "S");
         Serial.printf("MESH: Sent registration 'S' to root %u\n", rootId);
 
@@ -392,6 +406,10 @@ void loop() {
         lastRegistrationAttempt = millis();
         Serial.println("MESH: Attempting registration with root...");
 
+        if (rootId == 0) {
+            Serial.println("MESH: Root ID unknown, cannot register");
+            return;
+        }
         mesh.sendSingle(rootId, "S");
         Serial.printf("MESH: Sent registration 'S' to root %u\n", rootId);
     }

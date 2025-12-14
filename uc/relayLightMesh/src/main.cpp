@@ -31,7 +31,7 @@ void syncLightStates(uint32_t targetNodeId);
 
 painlessMesh mesh;
 
-uint32_t rootId = 2101544389;
+uint32_t rootId = 0;
 uint32_t deviceId = 0;
 uint32_t disconnects = 0;
 uint32_t clicks = 0;
@@ -59,7 +59,7 @@ void performFirmwareUpdate() {
     Serial.println("[OTA] Stopping mesh...");
     mesh.stop();
 
-    delay(1000);  // Give time for cleanup
+    vTaskDelay(1000 / portTICK_PERIOD_MS);  // Give time for cleanup
 
     Serial.println("[OTA] Switching to STA mode...");
     WiFi.disconnect(true);
@@ -74,7 +74,7 @@ void performFirmwareUpdate() {
             ESP.restart();
             return;
         }
-        delay(500);
+        vTaskDelay(500 / portTICK_PERIOD_MS);
         Serial.print(".");
     }
     Serial.println(" connected!");
@@ -134,7 +134,7 @@ void performFirmwareUpdate() {
                 Serial.println("[OTA] Update finished successfully!");
                 http.end();
                 delete client;
-                delay(1000);
+                vTaskDelay(1000 / portTICK_PERIOD_MS);
                 ESP.restart();
             } else {
                 Serial.println("[OTA] Update not finished properly");
@@ -152,14 +152,14 @@ void performFirmwareUpdate() {
     delete client;
 
     Serial.println("[OTA] Update failed, restarting...");
-    delay(1000);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
     ESP.restart();
 }
 
 void meshInit() {
     mesh.setDebugMsgTypes(ERROR | STARTUP | CONNECTION);
 
-    mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA, 6, 0, 20);
+    mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA);
     mesh.onReceive(&receivedCallback);
 
     deviceId = mesh.getNodeId();
@@ -206,7 +206,8 @@ void syncLightStates(uint32_t targetNodeId) {
                           message, targetNodeId);
         }
 
-        delay(50);  // Small delay between messages to prevent flooding
+        vTaskDelay(50 / portTICK_PERIOD_MS);  // Small delay between messages to
+                                              // prevent flooding
     }
 }
 
@@ -217,6 +218,15 @@ void receivedCallback(const uint32_t& from, const String& msg) {
     if (msg == "S") {
         Serial.printf("MESH: Switch node %u requesting state sync\n", from);
         syncLightStates(from);
+        return;
+    }
+
+    // Handle registration query from switch nodes
+    if (msg == "Q") {
+        Serial.println("MESH: Registration query received from root");
+        rootId = from;
+        mesh.sendSingle(rootId, "R");
+        Serial.printf("MESH: Sent registration 'R' to root %u\n", rootId);
         return;
     }
 
@@ -331,7 +341,7 @@ void IRAM_ATTR buttonISR(void* arg) {
 
 void setup() {
     Serial.begin(115200);
-    delay(1000);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
 
     fw_md5 = ESP.getSketchMD5();
 
@@ -364,7 +374,14 @@ void setup() {
         Serial.printf("MESH: New connection from node %u\n", nodeId);
 
         // Update root ID if not set
-        delay(1000);  // Wait for connection to stabilize
+        vTaskDelay(1000 /
+                   portTICK_PERIOD_MS);  // Wait for connection to stabilize
+
+        if (rootId == 0) {
+            Serial.println("MESH: Root ID unknown, cannot register");
+            return;
+        }
+
         mesh.sendSingle(rootId, "R");
         Serial.printf("MESH: Sent registration 'R' to root %u\n", rootId);
     });
@@ -419,6 +436,11 @@ void loop() {
         millis() - lastRegistrationAttempt >= REGISTRATION_RETRY_INTERVAL) {
         lastRegistrationAttempt = millis();
         Serial.println("MESH: Attempting registration with root...");
+
+        if (rootId == 0) {
+            Serial.println("MESH: Root ID unknown, cannot register");
+            return;
+        }
 
         mesh.sendSingle(rootId, "R");
         Serial.printf("MESH: Sent registration 'R' to root %u\n", rootId);

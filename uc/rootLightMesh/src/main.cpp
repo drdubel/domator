@@ -43,8 +43,8 @@ std::map<String, std::map<char, std::vector<std::pair<String, String>>>>
 // Function declarations
 void receivedCallback(const uint32_t& from, const String& msg);
 void droppedConnectionCallback(uint32_t nodeId);
+void newConnectionCallback(uint32_t nodeId);
 void mqttCallback(char* topic, byte* payload, unsigned int length);
-void sendNodeStatusReport();
 void mqttConnect();
 void meshInit();
 void performFirmwareUpdate();
@@ -384,7 +384,7 @@ void mqttConnect() {
 void meshInit() {
     mesh.setDebugMsgTypes(ERROR | STARTUP | CONNECTION);
 
-    mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA, 6, 0, 10);
+    mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA);
     mesh.stationManual(WIFI_SSID, WIFI_PASSWORD);
 
     mesh.setRoot(true);
@@ -393,6 +393,7 @@ void meshInit() {
 
     mesh.onReceive(&receivedCallback);
     mesh.onDroppedConnection(&droppedConnectionCallback);
+    mesh.onNewConnection(&newConnectionCallback);
 
     device_id = mesh.getNodeId();
     DEBUG_PRINTF("ROOT: Device ID: %u\n", device_id);
@@ -480,6 +481,15 @@ void droppedConnectionCallback(uint32_t nodeId) {
     DEBUG_PRINTF("MESH: Total nodes: %u\n", mesh.getNodeList().size());
     DEBUG_PRINTF("MESH: Free heap after disconnect: %d bytes\n",
                  ESP.getFreeHeap());
+}
+
+void newConnectionCallback(uint32_t nodeId) {
+    DEBUG_PRINTF("MESH: New connection from node %u\n", nodeId);
+    DEBUG_PRINTF("MESH: Total nodes: %u\n", mesh.getNodeList().size());
+    DEBUG_PRINTF("MESH: Free heap after new connection: %d bytes\n",
+                 ESP.getFreeHeap());
+
+    mesh.sendSingle(nodeId, "Q");
 }
 
 void handleSwitchMessage(const uint32_t& from, const char output,
@@ -764,19 +774,19 @@ void setup() {
 
     // Start Telnet handler task
     xTaskCreatePinnedToCore(handleTelnet, "TelnetTask", 4096, NULL, 1,
-                            &telnetTaskHandle, 0);
+                            &telnetTaskHandle, 1);
 
     // Check WiFi and MQTT
     xTaskCreatePinnedToCore(checkWiFiAndMQTT, "WiFiMQTTTask", 8192, NULL, 2,
-                            &wifiMqttTaskHandle, 0);
+                            &wifiMqttTaskHandle, 1);
 
     // Periodic status report
     xTaskCreatePinnedToCore(statusReport, "StatusReportTask", 4096, NULL, 1,
-                            &statusTaskHandle, 0);
+                            &statusTaskHandle, 1);
 
     // Periodic node status report
     xTaskCreatePinnedToCore(sendNodeStatusReport, "NodeStatusReportTask", 4096,
-                            NULL, 1, &nodeStatusTaskHandle, 0);
+                            NULL, 1, &nodeStatusTaskHandle, 1);
 }
 
 void loop() { mesh.update(); }

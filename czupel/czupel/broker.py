@@ -239,7 +239,7 @@ async def handle_root_state(payload_str):
         for switch_id, status in data.items():
             if switch_id in names:
                 status["name"] = names[switch_id]
-            elif switch_id == "2101544389":
+            elif switch_id == "319356544":
                 status["name"] = "root"
             else:
                 status["name"] = namer.generate(category="astronomy")

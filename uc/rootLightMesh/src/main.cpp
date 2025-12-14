@@ -63,6 +63,12 @@ static unsigned long lastPrint = 0;
 static unsigned long lastMqttReconnect = 0;
 static unsigned long lastNodeStatusReport = 0;
 
+// Task handles
+TaskHandle_t telnetTaskHandle = NULL;
+TaskHandle_t wifiMqttTaskHandle = NULL;
+TaskHandle_t statusTaskHandle = NULL;
+TaskHandle_t nodeStatusTaskHandle = NULL;
+
 // Node-parent mapping
 std::map<uint32_t, uint32_t> nodeParentMap;
 
@@ -101,56 +107,69 @@ void telnetPrintln(const String& msg) { telnetPrint(msg + "\n"); }
         telnetPrint(String(buf));                       \
     } while (0)
 
-void handleTelnet() {
-    // Check for new clients
-    if (telnetServer.hasClient()) {
-        bool clientConnected = false;
+void handleTelnet(void* pvParameters) {
+    while (true) {
+        // Check for new clients
+        if (telnetServer.hasClient()) {
+            bool clientConnected = false;
 
-        // Find free slot
-        for (int i = 0; i < MAX_TELNET_CLIENTS; i++) {
-            if (!telnetClients[i] || !telnetClients[i].connected()) {
-                if (telnetClients[i]) {
-                    telnetClients[i].stop();
+            // Find free slot
+            for (int i = 0; i < MAX_TELNET_CLIENTS; i++) {
+                if (!telnetClients[i] || !telnetClients[i].connected()) {
+                    if (telnetClients[i]) {
+                        telnetClients[i].stop();
+                    }
+                    telnetClients[i] = telnetServer.available();
+                    telnetClients[i].println(
+                        "\n=== ESP32 Mesh Root - Telnet Monitor ===");
+                    telnetClients[i].printf("Device ID: %u\n", device_id);
+                    telnetClients[i].printf("IP: %s\n",
+                                            WiFi.localIP().toString().c_str());
+                    telnetClients[i].println(
+                        "=====================================\n");
+                    clientConnected = true;
+                    DEBUG_PRINTF("Telnet: Client %d connected\n", i);
+                    break;
                 }
-                telnetClients[i] = telnetServer.available();
-                telnetClients[i].println(
-                    "\n=== ESP32 Mesh Root - Telnet Monitor ===");
-                telnetClients[i].printf("Device ID: %u\n", device_id);
-                telnetClients[i].printf("IP: %s\n",
-                                        WiFi.localIP().toString().c_str());
-                telnetClients[i].println(
-                    "=====================================\n");
-                clientConnected = true;
-                DEBUG_PRINTF("Telnet: Client %d connected\n", i);
-                break;
+            }
+
+            if (!clientConnected) {
+                WiFiClient rejectClient = telnetServer.available();
+                rejectClient.println(
+                    "Max clients reached. Connection rejected.");
+                rejectClient.stop();
             }
         }
 
-        if (!clientConnected) {
-            WiFiClient rejectClient = telnetServer.available();
-            rejectClient.println("Max clients reached. Connection rejected.");
-            rejectClient.stop();
-        }
-    }
-
-    // Handle client input
-    for (int i = 0; i < MAX_TELNET_CLIENTS; i++) {
-        if (telnetClients[i] && telnetClients[i].connected()) {
-            while (telnetClients[i].available()) {
-                char c = telnetClients[i].read();
-                // Echo back to client
-                telnetClients[i].write(c);
-                // Also write to Serial
-                Serial.write(c);
+        // Handle client input
+        for (int i = 0; i < MAX_TELNET_CLIENTS; i++) {
+            if (telnetClients[i] && telnetClients[i].connected()) {
+                while (telnetClients[i].available()) {
+                    char c = telnetClients[i].read();
+                    // Echo back to client
+                    telnetClients[i].write(c);
+                    // Also write to Serial
+                    Serial.write(c);
+                }
             }
         }
+        vTaskDelay(pdMS_TO_TICKS(50));  // Small delay to avoid busy loop
     }
+}
+
+void suspendBridgeTasks() {
+    if (telnetTaskHandle) vTaskSuspend(telnetTaskHandle);
+    if (wifiMqttTaskHandle) vTaskSuspend(wifiMqttTaskHandle);
+    if (statusTaskHandle) vTaskSuspend(statusTaskHandle);
+    if (nodeStatusTaskHandle) vTaskSuspend(nodeStatusTaskHandle);
 }
 
 void performFirmwareUpdate() {
     DEBUG_PRINTLN("[OTA] Starting firmware update...");
 
     // Clean up existing connections
+    suspendBridgeTasks();
+
     if (mqttClient.connected()) {
         mqttClient.disconnect();
     }
@@ -590,26 +609,27 @@ void checkWiFi() {
         DEBUG_PRINTLN("Telnet: Server started on port 23");
         DEBUG_PRINTF("Telnet: Connect using: telnet %s\n",
                      myIP.toString().c_str());
-
-        mqttConnect();
-        lastMqttReconnect = millis();
     }
 }
 
-void checkMQTT() {
-    if (WiFi.status() != WL_CONNECTED) {
-        return;
-    }
-
-    if (!mqttClient.connected()) {
-        unsigned long now = millis();
-        if (now - lastMqttReconnect > MQTT_RECONNECT_INTERVAL) {
-            lastMqttReconnect = now;
-            DEBUG_PRINTLN("MQTT: Attempting reconnection...");
-            mqttConnect();
+void checkWiFiAndMQTT(void* pvParameters) {
+    while (true) {
+        while (WiFi.status() != WL_CONNECTED) {
+            checkWiFi();
+            vTaskDelay(pdMS_TO_TICKS(200));
         }
-    } else {
-        mqttClient.loop();
+
+        if (!mqttClient.connected()) {
+            unsigned long now = millis();
+            if (now - lastMqttReconnect > MQTT_RECONNECT_INTERVAL) {
+                lastMqttReconnect = now;
+                DEBUG_PRINTLN("MQTT: Attempting reconnection...");
+                mqttConnect();
+            }
+        } else {
+            mqttClient.loop();
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
@@ -621,56 +641,64 @@ void buildParentMap(const painlessmesh::protocol::NodeTree& node,
     }
 }
 
-void sendNodeStatusReport() {
-    lastNodeStatusReport = millis();
-    if (WiFi.status() != WL_CONNECTED || !mqttClient.connected()) {
-        DEBUG_PRINTLN(
-            "MESH: WiFi or MQTT not connected, cannot send node status report");
-        return;
-    }
+void sendNodeStatusReport(void* pvParameters) {
+    while (true) {
+        DEBUG_PRINTF("MESH: Preparing node status report...\n");
 
-    JsonDocument doc;
-    JsonObject nodesDict = doc.to<JsonObject>();
+        lastNodeStatusReport = millis();
+        while (WiFi.status() != WL_CONNECTED || !mqttClient.connected()) {
+            DEBUG_PRINTLN(
+                "MESH: WiFi or MQTT not connected, cannot send node status "
+                "report");
+            vTaskDelay(pdMS_TO_TICKS(5000));
+        }
 
-    auto meshNodes = mesh.getNodeList();
-    painlessmesh::protocol::NodeTree tree = mesh.asNodeTree();
-    buildParentMap(tree);
+        JsonDocument doc;
+        JsonObject nodesDict = doc.to<JsonObject>();
 
-    for (auto nodeId : meshNodes) {
-        JsonObject status = nodesDict[String(nodeId)].to<JsonObject>();
+        auto meshNodes = mesh.getNodeList();
+        painlessmesh::protocol::NodeTree tree = mesh.asNodeTree();
+        buildParentMap(tree);
 
-        status["rssi"] = nodesStatus[nodeId][0];
-        status["uptime"] = nodesStatus[nodeId][1];
-        status["clicks"] = nodesStatus[nodeId][2];
-        status["firmware"] = nodesStatus[nodeId][3];
-        status["disconnects"] = nodesStatus[nodeId][4];
-        status["last_seen"] =
-            String((millis() - nodesStatus[nodeId][5].toInt()) / 1000);
-        status["type"] = nodes[nodeId];
-        status["status"] =
-            status["last_seen"].as<uint32_t>() < 60 ? "online" : "offline";
-        status["parent"] = String(nodeParentMap[nodeId]);
-    }
+        for (auto nodeId : meshNodes) {
+            JsonObject status = nodesDict[String(nodeId)].to<JsonObject>();
 
-    JsonObject rootNode = nodesDict[String(mesh.getNodeId())].to<JsonObject>();
-    rootNode["last_seen"] = "0";
-    rootNode["rssi"] = String(WiFi.RSSI());
-    rootNode["uptime"] = String(millis() / 1000);
-    rootNode["clicks"] = "0";
-    rootNode["firmware"] = fw_md5;
-    rootNode["disconnects"] = "0";
-    rootNode["type"] = "root";
-    rootNode["status"] = "online";
-    rootNode["parent"] = "0";
+            status["rssi"] = nodesStatus[nodeId][0];
+            status["uptime"] = nodesStatus[nodeId][1];
+            status["clicks"] = nodesStatus[nodeId][2];
+            status["firmware"] = nodesStatus[nodeId][3];
+            status["disconnects"] = nodesStatus[nodeId][4];
+            status["last_seen"] =
+                String((millis() - nodesStatus[nodeId][5].toInt()) / 1000);
+            status["type"] = nodes[nodeId];
+            status["status"] =
+                status["last_seen"].as<uint32_t>() < 60 ? "online" : "offline";
+            status["parent"] = String(nodeParentMap[nodeId]);
+        }
 
-    String message;
-    serializeJson(doc, message);
-    DEBUG_PRINTF("MESH: Node status report JSON: %s\n", message.c_str());
+        JsonObject rootNode =
+            nodesDict[String(mesh.getNodeId())].to<JsonObject>();
+        rootNode["last_seen"] = "0";
+        rootNode["rssi"] = String(WiFi.RSSI());
+        rootNode["uptime"] = String(millis() / 1000);
+        rootNode["clicks"] = "0";
+        rootNode["firmware"] = fw_md5;
+        rootNode["disconnects"] = "0";
+        rootNode["type"] = "root";
+        rootNode["status"] = "online";
+        rootNode["parent"] = "0";
 
-    if (mqttClient.publish("/switch/state/root", message.c_str())) {
-        DEBUG_PRINTLN("MESH: Node status report sent successfully");
-    } else {
-        DEBUG_PRINTLN("MESH: Failed to send node status report");
+        String message;
+        serializeJson(doc, message);
+        DEBUG_PRINTF("MESH: Node status report JSON: %s\n", message.c_str());
+
+        if (mqttClient.publish("/switch/state/root", message.c_str())) {
+            DEBUG_PRINTLN("MESH: Node status report sent successfully");
+        } else {
+            DEBUG_PRINTLN("MESH: Failed to send node status report");
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(NODE_STATUS_REPORT_INTERVAL));
     }
 }
 
@@ -695,20 +723,25 @@ void meshStatusReport() {
     DEBUG_PRINTF("%s\n", tree.toString().c_str());  // <-- Use toString()
 }
 
-void statusReport() {
-    lastPrint = millis();
+void statusReport(void* pvParameters) {
+    while (true) {
+        lastPrint = millis();
 
-    DEBUG_PRINTLN("\n--- Status Report ---");
-    DEBUG_PRINTF("Firmware MD5: %s\n", fw_md5.c_str());
-    DEBUG_PRINTF("WiFi: %s\n",
-                 WiFi.status() == WL_CONNECTED ? "Connected" : "Disconnected");
-    DEBUG_PRINTF("MQTT: %s\n",
-                 mqttClient.connected() ? "Connected" : "Disconnected");
-    DEBUG_PRINTF("Free Heap: %d bytes\n", ESP.getFreeHeap());
-    DEBUG_PRINTF("Uptime: %lu seconds\n", millis() / 1000);
+        DEBUG_PRINTLN("\n--- Status Report ---");
+        DEBUG_PRINTF("Firmware MD5: %s\n", fw_md5.c_str());
+        DEBUG_PRINTF("WiFi: %s\n", WiFi.status() == WL_CONNECTED
+                                       ? "Connected"
+                                       : "Disconnected");
+        DEBUG_PRINTF("MQTT: %s\n",
+                     mqttClient.connected() ? "Connected" : "Disconnected");
+        DEBUG_PRINTF("Free Heap: %d bytes\n", ESP.getFreeHeap());
+        DEBUG_PRINTF("Uptime: %lu seconds\n", millis() / 1000);
 
-    meshStatusReport();
-    DEBUG_PRINTLN("-------------------\n");
+        meshStatusReport();
+        DEBUG_PRINTLN("-------------------\n");
+
+        vTaskDelay(pdMS_TO_TICKS(20000));
+    }
 }
 
 void setup() {
@@ -728,28 +761,22 @@ void setup() {
     DEBUG_PRINTLN("========================================\n");
 
     meshInit();
-}
 
-void loop() {
-    mesh.update();
+    // Start Telnet handler task
+    xTaskCreatePinnedToCore(handleTelnet, "TelnetTask", 4096, NULL, 1,
+                            &telnetTaskHandle, 0);
 
-    // Handle Telnet clients
-    handleTelnet();
-
-    // Check for WiFi connection and get IP
-    checkWiFi();
-
-    // Handle MQTT communication
-    checkMQTT();
+    // Check WiFi and MQTT
+    xTaskCreatePinnedToCore(checkWiFiAndMQTT, "WiFiMQTTTask", 8192, NULL, 2,
+                            &wifiMqttTaskHandle, 0);
 
     // Periodic status report
-    if (millis() - lastPrint >= NODE_PRINT_INTERVAL) {
-        statusReport();
-    }
+    xTaskCreatePinnedToCore(statusReport, "StatusReportTask", 4096, NULL, 1,
+                            &statusTaskHandle, 0);
 
     // Periodic node status report
-    if (millis() - lastNodeStatusReport >= NODE_STATUS_REPORT_INTERVAL) {
-        DEBUG_PRINTLN("MESH: Performing periodic node status report...");
-        sendNodeStatusReport();
-    }
+    xTaskCreatePinnedToCore(sendNodeStatusReport, "NodeStatusReportTask", 4096,
+                            NULL, 1, &nodeStatusTaskHandle, 0);
 }
+
+void loop() { mesh.update(); }

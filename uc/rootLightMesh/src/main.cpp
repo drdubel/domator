@@ -49,7 +49,6 @@ void mqttConnect();
 void meshInit();
 void performFirmwareUpdate();
 IPAddress getlocalIP();
-void handleTelnet();
 void telnetPrint(const String& msg);
 void telnetPrintln(const String& msg);
 
@@ -68,6 +67,7 @@ TaskHandle_t telnetTaskHandle = NULL;
 TaskHandle_t wifiMqttTaskHandle = NULL;
 TaskHandle_t statusTaskHandle = NULL;
 TaskHandle_t nodeStatusTaskHandle = NULL;
+TaskHandle_t meshCheckTaskHandle = NULL;
 
 // Node-parent mapping
 std::map<uint32_t, uint32_t> nodeParentMap;
@@ -153,7 +153,7 @@ void handleTelnet(void* pvParameters) {
                 }
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(50));  // Small delay to avoid busy loop
+        vTaskDelay(pdMS_TO_TICKS(10));  // Small delay to avoid busy loop
     }
 }
 
@@ -162,6 +162,7 @@ void suspendBridgeTasks() {
     if (wifiMqttTaskHandle) vTaskSuspend(wifiMqttTaskHandle);
     if (statusTaskHandle) vTaskSuspend(statusTaskHandle);
     if (nodeStatusTaskHandle) vTaskSuspend(nodeStatusTaskHandle);
+    if (meshCheckTaskHandle) vTaskSuspend(meshCheckTaskHandle);
 }
 
 void performFirmwareUpdate() {
@@ -643,6 +644,22 @@ void checkWiFiAndMQTT(void* pvParameters) {
     }
 }
 
+void checkMesh(void* pvParameters) {
+    while (true) {
+        for (auto nodeId : mesh.getNodeList()) {
+            if (nodes.find(nodeId) == nodes.end()) {
+                DEBUG_PRINTF(
+                    "MESH: Detected new node %u, requesting registration\n",
+                    nodeId);
+                mesh.sendSingle(nodeId, "Q");
+                vTaskDelay(10 / portTICK_PERIOD_MS);
+            }
+        }
+
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
+}
+
 void buildParentMap(const painlessmesh::protocol::NodeTree& node,
                     uint32_t parent = 0) {
     nodeParentMap[node.nodeId] = parent;
@@ -773,20 +790,24 @@ void setup() {
     meshInit();
 
     // Start Telnet handler task
-    xTaskCreatePinnedToCore(handleTelnet, "TelnetTask", 4096, NULL, 1,
+    xTaskCreatePinnedToCore(handleTelnet, "TelnetTask", 16384, NULL, 1,
                             &telnetTaskHandle, 1);
 
     // Check WiFi and MQTT
-    xTaskCreatePinnedToCore(checkWiFiAndMQTT, "WiFiMQTTTask", 8192, NULL, 2,
+    xTaskCreatePinnedToCore(checkWiFiAndMQTT, "WiFiMQTTTask", 16384, NULL, 2,
                             &wifiMqttTaskHandle, 1);
 
     // Periodic status report
-    xTaskCreatePinnedToCore(statusReport, "StatusReportTask", 4096, NULL, 1,
+    xTaskCreatePinnedToCore(statusReport, "StatusReportTask", 16384, NULL, 1,
                             &statusTaskHandle, 1);
 
     // Periodic node status report
-    xTaskCreatePinnedToCore(sendNodeStatusReport, "NodeStatusReportTask", 4096,
+    xTaskCreatePinnedToCore(sendNodeStatusReport, "NodeStatusReportTask", 16384,
                             NULL, 1, &nodeStatusTaskHandle, 1);
+
+    // Mesh checker task
+    xTaskCreatePinnedToCore(checkMesh, "MeshCheckTask", 16384, NULL, 1,
+                            &meshCheckTaskHandle, 1);
 }
 
 void loop() { mesh.update(); }

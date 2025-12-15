@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import shutil
 from pathlib import Path
 from pickle import dump, load
 from secrets import token_urlsafe
@@ -49,9 +48,9 @@ class CustomRequestSizeMiddleware(BaseHTTPMiddleware):
 MAX_REQUEST_SIZE = 10_000_000
 
 app = FastAPI()
+app.add_middleware(CustomRequestSizeMiddleware, max_content_size=MAX_REQUEST_SIZE)
 app.add_middleware(SessionMiddleware, secret_key="!secret")
 app.add_middleware(MetricsMiddleware)
-app.add_middleware(CustomRequestSizeMiddleware, max_content_size=MAX_REQUEST_SIZE)
 app.add_route("/metrics", metrics)
 mqtt.init_app(app)
 
@@ -122,6 +121,7 @@ async def upload_firmware(
     file: UploadFile = File(...),
     access_token: Optional[str] = Cookie(None),
 ):
+    print("Uploading firmware for device:", device)
     user = request.session.get("user")
     if not (user and access_token in access_cookies):
         return RedirectResponse(url="/")
@@ -131,11 +131,21 @@ async def upload_firmware(
             {"status": "error", "reason": "unknown device"}, status_code=400
         )
 
-    save_path = Path(f"static/data/{device}/firmware.bin")
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(save_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-    return JSONResponse({"status": "ok", "device": device})
+    try:
+        save_path = Path(f"static/data/{device}/firmware.bin")
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+
+        contents = await file.read()
+
+        with open(save_path, "wb") as buffer:
+            buffer.write(contents)
+
+        logger.info(f"Successfully saved {len(contents)} bytes to {save_path}")
+        return JSONResponse({"status": "ok", "device": device, "size": len(contents)})
+
+    except Exception as e:
+        logger.error(f"Error uploading firmware: {e}", exc_info=True)
+        return JSONResponse({"status": "error", "reason": str(e)}, status_code=500)
 
 
 @app.get("/auto")

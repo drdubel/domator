@@ -15,6 +15,8 @@
 #include <utility>
 #include <vector>
 
+#include "esp_task_wdt.h"
+
 #define HOSTNAME "mesh_root"
 #define NLIGHTS 8
 
@@ -72,6 +74,9 @@ TaskHandle_t meshCheckTaskHandle = NULL;
 // Node-parent mapping
 std::map<uint32_t, uint32_t> nodeParentMap;
 
+// OTA update flag
+volatile bool otaInProgress = false;
+
 const char* firmware_url =
     "https://czupel.dry.pl/static/data/root/firmware.bin";
 
@@ -109,6 +114,16 @@ void telnetPrintln(const String& msg) { telnetPrint(msg + "\n"); }
 
 void handleTelnet(void* pvParameters) {
     while (true) {
+        if (otaInProgress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        if (!WiFi.isConnected()) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
         // Check for new clients
         if (telnetServer.hasClient()) {
             bool clientConnected = false;
@@ -157,26 +172,23 @@ void handleTelnet(void* pvParameters) {
     }
 }
 
-void suspendBridgeTasks() {
-    if (telnetTaskHandle) vTaskSuspend(telnetTaskHandle);
-    if (wifiMqttTaskHandle) vTaskSuspend(wifiMqttTaskHandle);
-    if (statusTaskHandle) vTaskSuspend(statusTaskHandle);
-    if (nodeStatusTaskHandle) vTaskSuspend(nodeStatusTaskHandle);
-    if (meshCheckTaskHandle) vTaskSuspend(meshCheckTaskHandle);
+void otaTask(void* pv) {
+    otaInProgress = true;
+
+    esp_task_wdt_deinit();  // REQUIRED
+
+    mqttClient.disconnect();
+
+    DEBUG_PRINTLN("[OTA] Stopping mesh...");
+    mesh.stop();
+
+    vTaskDelay(pdMS_TO_TICKS(1000));
+
+    performFirmwareUpdate();  // now safe
 }
 
 void performFirmwareUpdate() {
     DEBUG_PRINTLN("[OTA] Starting firmware update...");
-
-    // Clean up existing connections
-    suspendBridgeTasks();
-
-    if (mqttClient.connected()) {
-        mqttClient.disconnect();
-    }
-
-    DEBUG_PRINTLN("[OTA] Stopping mesh...");
-    mesh.stop();
 
     delay(1000);  // Give time for cleanup
 
@@ -414,8 +426,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         if (msg == "U") {
             DEBUG_PRINTLN("MQTT: Firmware update requested for root node");
 
-            vTaskDelay(1000 / portTICK_PERIOD_MS);
-            performFirmwareUpdate();
+            otaInProgress = true;
 
             return;
         }
@@ -615,19 +626,30 @@ void checkWiFi() {
         DEBUG_PRINTF("WiFi: IP address: %s\n", myIP.toString().c_str());
 
         // Start Telnet server
-        telnetServer.begin();
-        telnetServer.setNoDelay(true);
-        DEBUG_PRINTLN("Telnet: Server started on port 23");
-        DEBUG_PRINTF("Telnet: Connect using: telnet %s\n",
-                     myIP.toString().c_str());
+        if (!telnetServer) {
+            DEBUG_PRINTLN("Telnet: Starting server...");
+
+            telnetServer.begin();
+            telnetServer.setNoDelay(true);
+            DEBUG_PRINTLN("Telnet: Server started on port 23");
+            DEBUG_PRINTF("Telnet: Connect using: telnet %s\n",
+                         myIP.toString().c_str());
+        }
     }
 }
 
 void checkWiFiAndMQTT(void* pvParameters) {
     while (true) {
-        while (WiFi.status() != WL_CONNECTED) {
-            checkWiFi();
-            vTaskDelay(pdMS_TO_TICKS(200));
+        if (otaInProgress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        checkWiFi();
+
+        while (!WiFi.isConnected()) {
+            DEBUG_PRINTLN("WiFi: Not connected, attempting reconnection...");
+            vTaskDelay(5000 / portTICK_PERIOD_MS);
         }
 
         if (!mqttClient.connected()) {
@@ -646,6 +668,11 @@ void checkWiFiAndMQTT(void* pvParameters) {
 
 void checkMesh(void* pvParameters) {
     while (true) {
+        if (otaInProgress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
         for (auto nodeId : mesh.getNodeList()) {
             if (nodes.find(nodeId) == nodes.end()) {
                 DEBUG_PRINTF(
@@ -670,6 +697,11 @@ void buildParentMap(const painlessmesh::protocol::NodeTree& node,
 
 void sendNodeStatusReport(void* pvParameters) {
     while (true) {
+        if (otaInProgress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
         DEBUG_PRINTF("MESH: Preparing node status report...\n");
 
         lastNodeStatusReport = millis();
@@ -752,6 +784,11 @@ void meshStatusReport() {
 
 void statusReport(void* pvParameters) {
     while (true) {
+        if (otaInProgress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
         lastPrint = millis();
 
         DEBUG_PRINTLN("\n--- Status Report ---");
@@ -810,4 +847,20 @@ void setup() {
                             &meshCheckTaskHandle, 1);
 }
 
-void loop() { mesh.update(); }
+void loop() {
+    static bool otaTaskStarted = false;
+
+    if (otaInProgress && !otaTaskStarted) {
+        otaTaskStarted = true;
+
+        xTaskCreatePinnedToCore(otaTask, "OTA", 16384, NULL, 5, NULL,
+                                0  // Core 0
+        );
+    }
+
+    if (!otaInProgress) {
+        mesh.update();
+    } else {
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}

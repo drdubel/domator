@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
+import sentry_sdk
 from aioprometheus.asgi.middleware import MetricsMiddleware
 from aioprometheus.asgi.starlette import metrics
 from authlib.integrations.starlette_client import OAuth, OAuthError
@@ -19,16 +20,12 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
 from starlette.types import ASGIApp
 
+from czupel.auth import JWT_EXPIRE_MINUTES, create_jwt, get_current_user, websocket_auth
 from czupel.broker import mqtt
-from czupel.auth import (
-    JWT_EXPIRE_MINUTES,
-    create_jwt,
-    get_current_user,
-    websocket_auth,
-)
 from czupel.data.authorized import authorized
 from czupel.state import relay_state
 from czupel.websocket import ws_manager
+from czupel.data.secrets import DSN
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +47,12 @@ class CustomRequestSizeMiddleware(BaseHTTPMiddleware):
 
 
 MAX_REQUEST_SIZE = 10_000_000
+
+sentry_sdk.init(
+    dsn=DSN,
+    send_default_pii=True,
+    traces_sample_rate=1.0,
+)
 
 app = FastAPI()
 app.add_middleware(CustomRequestSizeMiddleware, max_content_size=MAX_REQUEST_SIZE)

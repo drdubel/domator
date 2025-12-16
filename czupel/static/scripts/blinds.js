@@ -1,5 +1,3 @@
-import { SENTRY_DSN } from './sentry-config.js';
-
 var wsId = Math.floor(Math.random() * 2000000000)
 var ws = null
 var reconnectTimeout = null

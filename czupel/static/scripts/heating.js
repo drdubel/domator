@@ -11,7 +11,7 @@ Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, "Segoe UI", Rob
 Chart.defaults.font.size = 13
 
 Sentry.init({
-	dsn: SENTRY_DSN,
+	dsn: window.SENTRY_DSN,
 	// Setting this option to true will send default PII data to Sentry.
 	// For example, automatic IP address collection on events
 	integrations: [Sentry.browserTracingIntegration()],

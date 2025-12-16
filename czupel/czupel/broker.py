@@ -248,12 +248,18 @@ async def handle_root_state(payload_str):
             status["name"] = status["name"].replace(" ", "\ ")
 
             if status["parent"] != "0":
-                status["parent_name"] = data[status["parent"]]["name"]
+                try:
+                    status["parent_name"] = data[status["parent"]]["name"]
+                except KeyError:
+                    status["parent_name"] = status["parent"]
             else:
-                status["parent_name"] = "none"
+                status["parent_name"] = "unknown"
 
             metric_node = f"node_info,id={switch_id},name={status['name']} uptime={status['uptime']},clicks={status['clicks']},disconnects={status['disconnects']},last_seen={status['last_seen']}"
             metric_mesh = f"mesh_node,id={switch_id},name={status['name']},parent={status['parent']},parent_name={status['parent_name']},firmware={status['firmware']},status={status['status']},type={status['type']} rssi={status['rssi']}"
+
+            if "free_heap" in status:
+                metric_node += f",free_heap={status['free_heap']}"
 
             print(metric_node)  # Debug print
             print(metric_mesh)  # Debug print

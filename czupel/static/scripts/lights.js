@@ -86,8 +86,6 @@ function changeSwitchState(id) {
 	pendingClicks.add(id)
 
 	var newState = lights[id] === 1 ? 0 : 1
-	lights[id] = newState
-	updateLightUI(id, newState)
 
 	var msg = JSON.stringify({ "id": id, "state": newState })
 	console.log(msg)
@@ -96,8 +94,6 @@ function changeSwitchState(id) {
 		ws.send(msg)
 	} catch (e) {
 		console.error('Failed to send:', e)
-		lights[id] = newState === 1 ? 0 : 1
-		updateLightUI(id, lights[id])
 		pendingClicks.delete(id)
 		connectWebSocket()
 	}

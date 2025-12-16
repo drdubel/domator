@@ -245,7 +245,7 @@ async def handle_root_state(payload_str):
                 status["name"] = namer.generate(category="astronomy")
 
         for switch_id, status in data.items():
-            status["name"] = status["name"].replace(" ", "\ ")
+            status["name"] = status["name"].replace(" ", "\\ ")
 
             if status["parent"] != "0":
                 try:

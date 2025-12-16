@@ -221,31 +221,27 @@ async def auth(request: Request):
 
     user = token.get("userinfo")
 
-    if user:
-        request.session["user"] = dict(user)
+    if user and user["email"] in authorized:
+        jwt_token = create_jwt(
+            {
+                "sub": user["email"],
+                "name": user.get("name"),
+            }
+        )
 
-        if user["email"] in authorized:
-            jwt_token = create_jwt(
-                {
-                    "sub": user["email"],
-                    "name": user.get("name"),
-                }
-            )
+        response = RedirectResponse(url="/auto")
+        response.set_cookie(
+            "access_token",
+            jwt_token,
+            httponly=False,
+            secure=True,  # Set to False in development if not using HTTPS
+            samesite="lax",
+            max_age=JWT_EXPIRE_MINUTES * 60,
+        )
 
-            response = RedirectResponse(url="/auto")
-            response.set_cookie(
-                "access_token",
-                jwt_token,
-                httponly=False,
-                secure=True,  # Set to False in development if not using HTTPS
-                samesite="lax",
-                max_age=JWT_EXPIRE_MINUTES * 60,
-            )
+        return response
 
-            return response
-
-        else:
-            return RedirectResponse(url="/")
+    return RedirectResponse(url="/")
 
 
 @app.get("/logout")

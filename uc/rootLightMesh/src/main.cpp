@@ -745,7 +745,8 @@ void sendNodeStatusReport(void* pvParameters) {
         rootNode["disconnects"] = "0";
         rootNode["type"] = "root";
         rootNode["status"] = "online";
-        rootNode["parent"] = "0";
+        rootNode["parent"] = "root";
+        rootNode["free_heap"] = String(ESP.getFreeHeap());
 
         String message;
         serializeJson(doc, message);

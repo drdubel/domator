@@ -6,7 +6,7 @@ var maxReconnectDelay = 30000
 var isReconnecting = false
 
 Sentry.init({
-	dsn: "https://5f6bf7564d8d0462fb16de94af6096d7@o4506468887494656.ingest.us.sentry.io/4510545906499584",
+	dsn: SENTRY_DSN,
 	// Setting this option to true will send default PII data to Sentry.
 	// For example, automatic IP address collection on events
 	integrations: [Sentry.browserTracingIntegration()],

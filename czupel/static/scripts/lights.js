@@ -7,12 +7,29 @@ var reconnectDelay = 1000
 var maxReconnectDelay = 30000
 var isReconnecting = false
 
+function getCookie(cname) {
+	let name = cname + "=";
+	let decodedCookie = decodeURIComponent(document.cookie);
+	let ca = decodedCookie.split(';');
+	for (let i = 0; i < ca.length; i++) {
+		let c = ca[i];
+		while (c.charAt(0) == ' ') {
+			c = c.substring(1);
+		}
+		if (c.indexOf(name) == 0) {
+			return c.substring(name.length, c.length);
+		}
+	}
+	return "";
+}
+
 function connectWebSocket() {
 	if (isReconnecting) return
 	isReconnecting = true
 
 	console.log('Connecting WebSocket...')
-	ws = new WebSocket(`wss://${window.location.host}/lights/ws/` + wsId)
+	auth_token = getCookie("access_token")
+	ws = new WebSocket(`wss://${window.location.host}/lights/ws/` + wsId + `?token=` + auth_token)
 
 	ws.onopen = function () {
 		console.log('WebSocket connected!')

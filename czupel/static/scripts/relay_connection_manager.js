@@ -1042,10 +1042,29 @@ function restoreState(data) {
 }
 
 
+// Get cookie value
+function getCookie(cname) {
+    let name = cname + "=";
+    let decodedCookie = decodeURIComponent(document.cookie);
+    let ca = decodedCookie.split(';');
+    for (let i = 0; i < ca.length; i++) {
+        let c = ca[i];
+        while (c.charAt(0) == ' ') {
+            c = c.substring(1);
+        }
+        if (c.indexOf(name) == 0) {
+            return c.substring(name.length, c.length);
+        }
+    }
+    return "";
+}
+
+
 // WebSocket functions
 function initWebSocket() {
     try {
-        ws = new WebSocket(`wss://${window.location.host}/rcm/ws/` + wsId);
+        auth_token = getCookie("access_token")
+        ws = new WebSocket(`wss://${window.location.host}/rcm/ws/` + wsId + `?token=` + auth_token)
 
         ws.onopen = function () {
             console.log('✅ WebSocket connected');

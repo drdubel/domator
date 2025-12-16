@@ -18,12 +18,14 @@ def create_jwt(data: dict) -> str:
             "exp": now + timedelta(minutes=JWT_EXPIRE_MINUTES),
         }
     )
+
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
 
 
 def verify_jwt(token: str) -> dict | None:
     try:
         return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+
     except JWTError:
         return None
 
@@ -31,11 +33,13 @@ def verify_jwt(token: str) -> dict | None:
 def get_current_user(access_token: str | None) -> dict | None:
     if not access_token:
         return None
+
     return verify_jwt(access_token)
 
 
 async def websocket_auth(websocket: WebSocket) -> dict | None:
     token = websocket.query_params.get("token")
+
     if not token:
         return None
 

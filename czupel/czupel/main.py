@@ -2,8 +2,6 @@ import json
 import logging
 import os
 from pathlib import Path
-from pickle import dump, load
-from secrets import token_urlsafe
 from typing import Optional
 
 from aioprometheus.asgi.middleware import MetricsMiddleware
@@ -22,6 +20,12 @@ from starlette.responses import HTMLResponse, RedirectResponse
 from starlette.types import ASGIApp
 
 from czupel.broker import mqtt
+from czupel.auth import (
+    JWT_EXPIRE_MINUTES,
+    create_jwt,
+    get_current_user,
+    websocket_auth,
+)
 from czupel.data.authorized import authorized
 from czupel.state import relay_state
 from czupel.websocket import ws_manager
@@ -69,9 +73,6 @@ oauth.register(
     client_kwargs={"scope": "openid email profile"},
 )
 
-with open("czupel/data/cookies.pickle", "rb") as cookies:
-    access_cookies: dict = load(cookies)
-
 
 @app.exception_handler(StarletteHTTPException)
 async def custom_http_exception_handler(request: Request, exc):
@@ -82,18 +83,19 @@ async def custom_http_exception_handler(request: Request, exc):
 
 @app.get("/")
 async def homepage(request: Request, access_token: Optional[str] = Cookie(None)):
-    user = request.session.get("user")
-    if access_token in access_cookies:
-        return RedirectResponse(url="/auto")
+    user = get_current_user(access_token)
+
     if user:
-        return HTMLResponse('<h1>Sio!</h1><a href="/login">login</a>')
+        return RedirectResponse(url="/auto")
+
     return HTMLResponse('<a href="/login">login</a>')
 
 
 @app.get("/rcm")
 async def rcm_page(request: Request, access_token: Optional[str] = Cookie(None)):
-    user = request.session.get("user")
-    if not (user and access_token in access_cookies):
+    user = get_current_user(access_token)
+
+    if not user:
         return RedirectResponse(url="/")
 
     with open(os.path.join("static", "relay_connection_manager.html")) as fh:
@@ -104,8 +106,9 @@ async def rcm_page(request: Request, access_token: Optional[str] = Cookie(None))
 
 @app.get("/upload")
 async def upload_page(request: Request, access_token: Optional[str] = Cookie(None)):
-    user = request.session.get("user")
-    if not (user and access_token in access_cookies):
+    user = get_current_user(access_token)
+
+    if not user:
         return RedirectResponse(url="/")
 
     with open(os.path.join("static", "upload.html")) as fh:
@@ -121,10 +124,12 @@ async def upload_firmware(
     file: UploadFile = File(...),
     access_token: Optional[str] = Cookie(None),
 ):
-    print("Uploading firmware for device:", device)
-    user = request.session.get("user")
-    if not (user and access_token in access_cookies):
+    user = get_current_user(access_token)
+
+    if not user:
         return RedirectResponse(url="/")
+
+    print("Uploading firmware for device:", device)
 
     if device not in ["switch", "relay", "root"]:
         return JSONResponse(
@@ -150,41 +155,53 @@ async def upload_firmware(
 
 @app.get("/auto")
 async def main(request: Request, access_token: Optional[str] = Cookie(None)):
-    user = request.session.get("user")
-    if user and access_token in access_cookies:
+    user = get_current_user(access_token)
+
+    if user:
         with open(os.path.join("static", "index.html")) as fh:
             data = fh.read()
+
         return Response(content=data, media_type="text/html")
+
     return RedirectResponse(url="/")
 
 
 @app.get("/heating")
 async def heating(request: Request, access_token: Optional[str] = Cookie(None)):
-    user = request.session.get("user")
-    if user and access_token in access_cookies:
+    user = get_current_user(access_token)
+
+    if user:
         with open(os.path.join("static", "heating.html")) as fh:
             data = fh.read()
+
         return Response(content=data, media_type="text/html")
+
     return RedirectResponse(url="/")
 
 
 @app.get("/blinds")
 async def blinds(request: Request, access_token: Optional[str] = Cookie(None)):
-    user = request.session.get("user")
-    if user and access_token in access_cookies:
+    user = get_current_user(access_token)
+
+    if user:
         with open(os.path.join("static", "blinds.html")) as fh:
             data = fh.read()
+
         return Response(content=data, media_type="text/html")
+
     return RedirectResponse(url="/")
 
 
 @app.get("/lights")
 async def lights(request: Request, access_token: Optional[str] = Cookie(None)):
-    user = request.session.get("user")
-    if user and access_token in access_cookies:
+    user = get_current_user(access_token)
+
+    if user:
         with open(os.path.join("static", "lights.html")) as fh:
             data = fh.read()
+
         return Response(content=data, media_type="text/html")
+
     return RedirectResponse(url="/")
 
 
@@ -198,33 +215,45 @@ async def login(request: Request):
 async def auth(request: Request):
     try:
         token = await oauth.google.authorize_access_token(request)
+
     except OAuthError as error:
         return HTMLResponse(f"<h1>{error.error}</h1>")
+
     user = token.get("userinfo")
+
     if user:
         request.session["user"] = dict(user)
+
         if user["email"] in authorized:
-            access_token = token_urlsafe()
-            access_cookies[access_token] = user["email"]
-            with open("czupel/data/cookies.pickle", "wb") as cookies:
-                dump(access_cookies, cookies)
+            jwt_token = create_jwt(
+                {
+                    "sub": user["email"],
+                    "name": user.get("name"),
+                }
+            )
+
             response = RedirectResponse(url="/auto")
-            response.set_cookie("access_token", access_token, max_age=3600 * 24 * 14)
+            response.set_cookie(
+                "access_token",
+                jwt_token,
+                httponly=False,
+                secure=True,  # Set to False in development if not using HTTPS
+                samesite="lax",
+                max_age=JWT_EXPIRE_MINUTES * 60,
+            )
+
             return response
+
         else:
             return RedirectResponse(url="/")
 
 
 @app.get("/logout")
-async def logout(
-    request: Request, response: Response, access_token: Optional[str] = Cookie(None)
-):
-    access_cookies.pop(access_token)
-    with open("czupel/data/cookies.pickle", "wb") as cookies:
-        dump(access_cookies, cookies)
-    request.session.pop("user", None)
-    response.delete_cookie(key="access_token")
-    return RedirectResponse(url="/")
+async def logout(response: Response):
+    response = RedirectResponse(url="/")
+    response.delete_cookie("access_token")
+
+    return response
 
 
 class BlindRequest(BaseModel):
@@ -243,11 +272,16 @@ async def set_blind(req: BlindRequest):
 
 
 @app.websocket("/blinds/ws/{client_id}")
-async def websocket_blinds(websocket: WebSocket, access_token=Cookie()):
-    if access_token not in access_cookies:
+async def websocket_blinds(websocket: WebSocket):
+    user = await websocket_auth(websocket)
+
+    if not user:
+        await websocket.close(code=1008)
+
         return
 
     await ws_manager.connect(websocket)
+
     mqtt.publish("/blind/cmd", "S")
 
     async def receive_command(websocket: WebSocket):
@@ -267,7 +301,11 @@ async def websocket_blinds(websocket: WebSocket, access_token=Cookie()):
 
 @app.websocket("/heating/ws/{client_id}")
 async def websocket_heating(websocket: WebSocket, access_token=Cookie()):
-    if access_token not in access_cookies:
+    user = await websocket_auth(websocket)
+
+    if not user:
+        await websocket.close(code=1008)
+
         return
 
     await ws_manager.connect(websocket)
@@ -281,8 +319,12 @@ async def websocket_heating(websocket: WebSocket, access_token=Cookie()):
 
 
 @app.websocket("/lights/ws/{client_id}")
-async def websocket_lights(websocket: WebSocket, access_token=Cookie()):
-    if access_token not in access_cookies:
+async def websocket_lights(websocket: WebSocket):
+    user = await websocket_auth(websocket)
+
+    if not user:
+        await websocket.close(code=1008)
+
         return
 
     await ws_manager.connect(websocket)
@@ -326,7 +368,11 @@ async def websocket_lights(websocket: WebSocket, access_token=Cookie()):
 
 @app.websocket("/rcm/ws/{client_id}")
 async def websocket_rcm(websocket: WebSocket, access_token=Cookie()):
-    if access_token not in access_cookies:
+    user = await websocket_auth(websocket)
+
+    if not user:
+        await websocket.close(code=1008)
+
         return
 
     await ws_manager.connect(websocket)
@@ -358,7 +404,7 @@ def start():
     import uvicorn
 
     logging.basicConfig(level=logging.DEBUG)
-    uvicorn.run("czupel.main:app", log_level="debug", port=8002, reload=True)
+    uvicorn.run("czupel.main:app", log_level="debug", port=8002, reload=True, workers=4)
 
 
 if __name__ == "__main__":

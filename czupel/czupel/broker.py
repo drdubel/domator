@@ -239,7 +239,7 @@ async def handle_root_state(payload_str):
         for switch_id, status in data.items():
             if switch_id in names:
                 status["name"] = names[switch_id]
-            elif switch_id == "319356544":
+            elif status["type"] == "root":
                 status["name"] = "root"
             else:
                 status["name"] = namer.generate(category="astronomy")
@@ -276,6 +276,21 @@ async def handle_root_state(payload_str):
                     logger.error(
                         "Failed to write metric for %s: %s", switch_id, response.text
                     )
+
+        with open("czupel/data/connections.json", "r", encoding="utf-8") as f:
+            conf = json.load(f)
+            connections = conf["connections"]
+            names = conf["deviceNames"]
+            names.update(
+                {
+                    switch_id: data[switch_id]["name"].replace("\\", "")
+                    for switch_id in data
+                }
+            )
+            conf["deviceNames"] = names
+
+        with open("czupel/data/connections.json", "w", encoding="utf-8") as f:
+            json.dump(conf, f, ensure_ascii=False, indent=4)
 
     except json.JSONDecodeError:
         logger.error("Invalid JSON payload for root state: %s", payload_str)

@@ -1,10 +1,10 @@
 /* ============================================
-   BLINDS - Style specyficzne dla rolet
-   ============================================
-   Wymaga: common.css
-   ============================================ */
+	BLINDS - Styles specific to blinds/shutters
+	============================================
+	Requires: common.css
+	============================================ */
 
-/* Flex containers dla rolet */
+/* Flex containers for blinds */
 .flex-containers {
 	display: flex;
 	flex-wrap: wrap;
@@ -35,8 +35,8 @@
 }
 
 /* ============================================
-   jQuery UI Slider - Customizacja
-   ============================================ */
+	jQuery UI Slider - Customization
+	============================================ */
 
 .ui-slider-vertical {
 	background: var(--glass-bg) !important;
@@ -77,8 +77,8 @@
 }
 
 /* ============================================
-   RESPONSIVE
-   ============================================ */
+	RESPONSIVE
+	============================================ */
 
 @media (max-width: 768px) {
 	.flex-containers {

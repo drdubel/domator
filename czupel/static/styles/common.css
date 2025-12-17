@@ -1,8 +1,8 @@
 /* ============================================
-   CZUPEL - Wspólne style bazowe
-   ============================================ */
+    CZUPEL - Common base styles
+    ============================================ */
 
-/* Reset i基础设置 */
+/* Reset and basic settings */
 * {
     margin: 0;
     padding: 0;
@@ -10,7 +10,7 @@
 }
 
 :root {
-    /* Kolory główne */
+    /* Primary colors */
     --color-primary: #667eea;
     --color-primary-dark: #764ba2;
     --color-secondary: #3b82f6;
@@ -18,21 +18,21 @@
     --color-warning: #f59e0b;
     --color-danger: #ef4444;
 
-    /* Tło */
+    /* Background */
     --bg-gradient-start: #1a1f2e;
     --bg-gradient-end: #2d3748;
 
-    /* Kolory tekstu */
+    /* Text colors */
     --text-primary: #ffffff;
     --text-secondary: #cbd5e0;
     --text-muted: #a0aec0;
 
-    /* Przezroczystości */
+    /* Transparency */
     --glass-bg: rgba(255, 255, 255, 0.05);
     --glass-border: rgba(255, 255, 255, 0.1);
     --glass-hover: rgba(255, 255, 255, 0.15);
 
-    /* Cienie */
+    /* Shadows */
     --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.1);
     --shadow-md: 0 4px 12px rgba(102, 126, 234, 0.2);
     --shadow-lg: 0 8px 24px rgba(102, 126, 234, 0.3);
@@ -57,7 +57,7 @@
     --transition-smooth: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Body bazowe */
+/* Base body */
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
     background: linear-gradient(135deg, var(--bg-gradient-start) 0%, var(--bg-gradient-end) 100%);
@@ -67,8 +67,8 @@ body {
 }
 
 /* ============================================
-   HEADER - Wspólny nagłówek
-   ============================================ */
+    HEADER - Common header
+    ============================================ */
 
 .header {
     display: flex;
@@ -115,8 +115,8 @@ h1 img {
 }
 
 /* ============================================
-   BUTTONS - Ujednolicone przyciski
-   ============================================ */
+    BUTTONS - Unified buttons
+    ============================================ */
 
 .btn,
 .openbtn,
@@ -204,8 +204,8 @@ h1 img {
 }
 
 /* ============================================
-   SIDEBAR - Wspólne menu boczne
-   ============================================ */
+    SIDEBAR - Common side menu
+    ============================================ */
 
 .sidenav {
     height: 100%;
@@ -255,7 +255,7 @@ h1 img {
     color: var(--color-primary);
 }
 
-/* Logout button w sidebarze */
+/* Logout button in sidebar */
 .sidenav #logout {
     position: absolute;
     bottom: 30px;
@@ -276,8 +276,8 @@ h1 img {
 }
 
 /* ============================================
-   MAIN CONTENT
-   ============================================ */
+    MAIN CONTENT
+    ============================================ */
 
 #main {
     transition: margin-left var(--transition-smooth);
@@ -286,8 +286,8 @@ h1 img {
 }
 
 /* ============================================
-   CARDS & CONTAINERS
-   ============================================ */
+    CARDS & CONTAINERS
+    ============================================ */
 
 .card,
 .glass-card {
@@ -306,8 +306,8 @@ h1 img {
 }
 
 /* ============================================
-   INPUTS & FORMS
-   ============================================ */
+    INPUTS & FORMS
+    ============================================ */
 
 input[type="text"],
 input[type="number"],
@@ -341,8 +341,8 @@ textarea::placeholder {
 }
 
 /* ============================================
-   UTILITY CLASSES
-   ============================================ */
+    UTILITY CLASSES
+    ============================================ */
 
 .text-center {
     text-align: center;
@@ -413,8 +413,8 @@ textarea::placeholder {
 }
 
 /* ============================================
-   SCROLLBAR
-   ============================================ */
+    SCROLLBAR
+    ============================================ */
 
 ::-webkit-scrollbar {
     width: 8px;
@@ -435,8 +435,8 @@ textarea::placeholder {
 }
 
 /* ============================================
-   RESPONSIVE
-   ============================================ */
+    RESPONSIVE
+    ============================================ */
 
 @media (max-width: 768px) {
     :root {

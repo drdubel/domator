@@ -94,6 +94,105 @@ async def homepage(request: Request, access_token: Optional[str] = Cookie(None))
     return HTMLResponse('<a href="/login">login</a>')
 
 
+@app.get("/login")
+async def login(request: Request):
+    redirect_uri = request.url_for("auth")
+    return await oauth.google.authorize_redirect(request, redirect_uri)
+
+
+@app.get("/auth")
+async def auth(request: Request):
+    try:
+        token = await oauth.google.authorize_access_token(request)
+
+    except OAuthError as error:
+        return HTMLResponse(f"<h1>{error.error}</h1>")
+
+    user = token.get("userinfo")
+
+    if user and user["email"] in authorized:
+        jwt_token = create_jwt(
+            {
+                "sub": user["email"],
+                "name": user.get("name"),
+            }
+        )
+
+        response = RedirectResponse(url="/auto")
+        response.set_cookie(
+            "access_token",
+            jwt_token,
+            httponly=False,
+            secure=True,  # Set to False in development if not using HTTPS
+            samesite="lax",
+            max_age=JWT_EXPIRE_MINUTES * 60,
+        )
+
+        return response
+
+    return RedirectResponse(url="/")
+
+
+@app.get("/logout")
+async def logout(response: Response):
+    response = RedirectResponse(url="/")
+    response.delete_cookie("access_token")
+
+    return response
+
+
+@app.get("/auto")
+async def main(request: Request, access_token: Optional[str] = Cookie(None)):
+    user = get_current_user(access_token)
+
+    if user:
+        with open(os.path.join("static", "index.html")) as fh:
+            data = fh.read()
+
+        return Response(content=data, media_type="text/html")
+
+    return RedirectResponse(url="/")
+
+
+@app.get("/heating")
+async def heating(request: Request, access_token: Optional[str] = Cookie(None)):
+    user = get_current_user(access_token)
+
+    if user:
+        with open(os.path.join("static", "heating.html")) as fh:
+            data = fh.read()
+
+        return Response(content=data, media_type="text/html")
+
+    return RedirectResponse(url="/")
+
+
+@app.get("/blinds")
+async def blinds(request: Request, access_token: Optional[str] = Cookie(None)):
+    user = get_current_user(access_token)
+
+    if user:
+        with open(os.path.join("static", "blinds.html")) as fh:
+            data = fh.read()
+
+        return Response(content=data, media_type="text/html")
+
+    return RedirectResponse(url="/")
+
+
+@app.get("/lights")
+async def lights(request: Request, access_token: Optional[str] = Cookie(None)):
+    user = get_current_user(access_token)
+
+    if user:
+        with open(os.path.join("static", "lights.html")) as fh:
+            data = fh.read()
+
+        return Response(content=data, media_type="text/html")
+
+    return RedirectResponse(url="/")
+
+
 @app.get("/rcm")
 async def rcm_page(request: Request, access_token: Optional[str] = Cookie(None)):
     user = get_current_user(access_token)
@@ -156,105 +255,6 @@ async def upload_firmware(
         return JSONResponse({"status": "error", "reason": str(e)}, status_code=500)
 
 
-@app.get("/auto")
-async def main(request: Request, access_token: Optional[str] = Cookie(None)):
-    user = get_current_user(access_token)
-
-    if user:
-        with open(os.path.join("static", "index.html")) as fh:
-            data = fh.read()
-
-        return Response(content=data, media_type="text/html")
-
-    return RedirectResponse(url="/")
-
-
-@app.get("/heating")
-async def heating(request: Request, access_token: Optional[str] = Cookie(None)):
-    user = get_current_user(access_token)
-
-    if user:
-        with open(os.path.join("static", "heating.html")) as fh:
-            data = fh.read()
-
-        return Response(content=data, media_type="text/html")
-
-    return RedirectResponse(url="/")
-
-
-@app.get("/blinds")
-async def blinds(request: Request, access_token: Optional[str] = Cookie(None)):
-    user = get_current_user(access_token)
-
-    if user:
-        with open(os.path.join("static", "blinds.html")) as fh:
-            data = fh.read()
-
-        return Response(content=data, media_type="text/html")
-
-    return RedirectResponse(url="/")
-
-
-@app.get("/lights")
-async def lights(request: Request, access_token: Optional[str] = Cookie(None)):
-    user = get_current_user(access_token)
-
-    if user:
-        with open(os.path.join("static", "lights.html")) as fh:
-            data = fh.read()
-
-        return Response(content=data, media_type="text/html")
-
-    return RedirectResponse(url="/")
-
-
-@app.get("/login")
-async def login(request: Request):
-    redirect_uri = request.url_for("auth")
-    return await oauth.google.authorize_redirect(request, redirect_uri)
-
-
-@app.get("/auth")
-async def auth(request: Request):
-    try:
-        token = await oauth.google.authorize_access_token(request)
-
-    except OAuthError as error:
-        return HTMLResponse(f"<h1>{error.error}</h1>")
-
-    user = token.get("userinfo")
-
-    if user and user["email"] in authorized:
-        jwt_token = create_jwt(
-            {
-                "sub": user["email"],
-                "name": user.get("name"),
-            }
-        )
-
-        response = RedirectResponse(url="/auto")
-        response.set_cookie(
-            "access_token",
-            jwt_token,
-            httponly=False,
-            secure=True,  # Set to False in development if not using HTTPS
-            samesite="lax",
-            max_age=JWT_EXPIRE_MINUTES * 60,
-        )
-
-        return response
-
-    return RedirectResponse(url="/")
-
-
-@app.get("/logout")
-async def logout(response: Response):
-    response = RedirectResponse(url="/")
-    response.delete_cookie("access_token")
-
-    return response
-
-
 class BlindRequest(BaseModel):
     blind: str
     position: int
@@ -286,7 +286,7 @@ async def websocket_blinds(websocket: WebSocket):
     async def receive_command(websocket: WebSocket):
         async for cmd in websocket.iter_json():
             try:
-                req = BlindRequest.parse_obj(cmd)
+                req = BlindRequest.model_validate(cmd)
             except ValidationError as err:
                 logger.error("Cannot parse %s %s", cmd, err)
                 continue
@@ -299,7 +299,7 @@ async def websocket_blinds(websocket: WebSocket):
 
 
 @app.websocket("/heating/ws/{client_id}")
-async def websocket_heating(websocket: WebSocket, access_token=Cookie()):
+async def websocket_heating(websocket: WebSocket):
     user = await websocket_auth(websocket)
 
     if not user:
@@ -337,7 +337,7 @@ async def websocket_lights(websocket: WebSocket):
     async def receive_command(websocket: WebSocket):
         async for cmd in websocket.iter_json():
             try:
-                chg = SwitchChange.parse_obj(cmd)
+                chg = SwitchChange.model_validate(cmd)
             except ValidationError as err:
                 logger.error("Cannot parse %s %s", cmd, err)
                 continue
@@ -366,7 +366,7 @@ async def websocket_lights(websocket: WebSocket):
 
 
 @app.websocket("/rcm/ws/{client_id}")
-async def websocket_rcm(websocket: WebSocket, access_token=Cookie()):
+async def websocket_rcm(websocket: WebSocket):
     user = await websocket_auth(websocket)
 
     if not user:
@@ -403,7 +403,7 @@ def start():
     import uvicorn
 
     logging.basicConfig(level=logging.DEBUG)
-    uvicorn.run("czupel.main:app", port=8002, workers=4)
+    uvicorn.run("czupel.main:app", port=8002, reload=True)
 
 
 if __name__ == "__main__":

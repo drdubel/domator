@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import time
 from string import ascii_lowercase
 
 import httpx

@@ -5,15 +5,6 @@ var reconnectDelay = 1000
 var maxReconnectDelay = 30000
 var isReconnecting = false
 
-Sentry.init({
-	dsn: window.SENTRY_DSN,
-	// Setting this option to true will send default PII data to Sentry.
-	// For example, automatic IP address collection on events
-	integrations: [Sentry.browserTracingIntegration()],
-	tracesSampleRate: 1.0,
-	sendDefaultPii: true,
-	tracePropagationTargets: ["localhost", /^https:\/\/czupel\.dry\.pl\//],
-});
 
 function getCookie(cname) {
 	let name = cname + "=";

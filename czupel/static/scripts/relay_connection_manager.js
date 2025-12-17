@@ -27,16 +27,6 @@ let wsConnected = false;
 let reconnectTimeout = null;
 
 
-Sentry.init({
-    dsn: window.SENTRY_DSN,
-    // Setting this option to true will send default PII data to Sentry.
-    // For example, automatic IP address collection on events
-    integrations: [Sentry.browserTracingIntegration()],
-    tracesSampleRate: 1.0,
-    sendDefaultPii: true,
-    tracePropagationTargets: ["localhost", /^https:\/\/czupel\.dry\.pl\//],
-});
-
 // Wait for jsPlumb to load with better error handling
 function waitForJsPlumb() {
     return new Promise((resolve, reject) => {

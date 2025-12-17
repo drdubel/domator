@@ -234,63 +234,66 @@ async def handle_root_state(payload_str):
     try:
         data = json.loads(payload_str)
 
-        url = "http://192.168.3.10:8428/api/v2/write"
-
-        for switch_id, status in data.items():
-            if switch_id in names:
-                status["name"] = names[switch_id]
-            elif status["type"] == "root":
-                status["name"] = "root"
-            else:
-                status["name"] = namer.generate(category="astronomy")
-
-        for switch_id, status in data.items():
-            status["name"] = status["name"].replace(" ", "\\ ")
-
-            if status["parent"] != "0":
-                try:
-                    status["parent_name"] = data[status["parent"]]["name"]
-                except KeyError:
-                    status["parent_name"] = status["parent"]
-            else:
-                status["parent_name"] = "unknown"
-
-            metric_node = f"node_info,id={switch_id},name={status['name']} uptime={status['uptime']},clicks={status['clicks']},disconnects={status['disconnects']},last_seen={status['last_seen']}"
-            metric_mesh = f"mesh_node,id={switch_id},name={status['name']},parent={status['parent']},parent_name={status['parent_name']},firmware={status['firmware']},status={status['status']},type={status['type']} rssi={status['rssi']}"
-
-            if "free_heap" in status:
-                metric_node += f",free_heap={status['free_heap']}"
-
-            print(metric_node)  # Debug print
-            print(metric_mesh)  # Debug print
-
-            async with httpx.AsyncClient() as client:
-                response = await client.post(url, content=metric_node)
-                if response.status_code != 204:
-                    logger.error(
-                        "Failed to write metric for %s: %s", switch_id, response.text
-                    )
-
-                response = await client.post(url, content=metric_mesh)
-                if response.status_code != 204:
-                    logger.error(
-                        "Failed to write metric for %s: %s", switch_id, response.text
-                    )
-
-        with open("czupel/data/connections.json", "r", encoding="utf-8") as f:
-            conf = json.load(f)
-            connections = conf["connections"]
-            names = conf["deviceNames"]
-            names.update(
-                {
-                    switch_id: data[switch_id]["name"].replace("\\", "")
-                    for switch_id in data
-                }
-            )
-            conf["deviceNames"] = names
-
-        with open("czupel/data/connections.json", "w", encoding="utf-8") as f:
-            json.dump(conf, f, ensure_ascii=False, indent=4)
-
     except json.JSONDecodeError:
         logger.error("Invalid JSON payload for root state: %s", payload_str)
+        return
+
+    url = "http://192.168.3.10:8428/api/v2/write"
+
+    for switch_id, status in data.items():
+        if switch_id in names:
+            status["name"] = names[switch_id]
+        elif status["type"] == "root":
+            status["name"] = "root"
+        else:
+            status["name"] = namer.generate(category="astronomy")
+
+    for switch_id, status in data.items():
+        status["name"] = status["name"].replace(" ", "\\ ")
+
+        if status["parent"] != "0":
+            try:
+                status["parent_name"] = data[status["parent"]]["name"]
+            except KeyError:
+                status["parent_name"] = status["parent"]
+        else:
+            status["parent_name"] = "unknown"
+
+        metric_node = f"node_info,id={switch_id},name={status['name']} uptime={status['uptime']},clicks={status['clicks']},disconnects={status['disconnects']},last_seen={status['last_seen']}"
+        metric_mesh = f"mesh_node,id={switch_id},name={status['name']},parent={status['parent']},parent_name={status['parent_name']},firmware={status['firmware']},status={status['status']},type={status['type']} rssi={status['rssi']}"
+
+        if "free_heap" in status:
+            metric_node += f",free_heap={status['free_heap']}"
+
+        print(metric_node)  # Debug print
+        print(metric_mesh)  # Debug print
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, content=metric_node)
+            if response.status_code != 204:
+                logger.error(
+                    "Failed to write metric for %s: %s", switch_id, response.text
+                )
+
+            response = await client.post(url, content=metric_mesh)
+            if response.status_code != 204:
+                logger.error(
+                    "Failed to write metric for %s: %s", switch_id, response.text
+                )
+
+    with open("czupel/data/connections.json", "r", encoding="utf-8") as f:
+        try:
+            conf = json.load(f)
+        except json.JSONDecodeError:
+            logger.error("Invalid JSON in connections file.")
+            return
+
+        connections = conf["connections"]
+        names = conf["deviceNames"]
+        names.update(
+            {switch_id: data[switch_id]["name"].replace("\\", "") for switch_id in data}
+        )
+        conf["deviceNames"] = names
+
+    with open("czupel/data/connections.json", "w", encoding="utf-8") as f:
+        json.dump(conf, f, ensure_ascii=False, indent=4)

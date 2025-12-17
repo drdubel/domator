@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
+import httpx
 import sentry_sdk
 from aioprometheus.asgi.middleware import MetricsMiddleware
 from aioprometheus.asgi.starlette import metrics
@@ -165,6 +166,50 @@ async def heating(request: Request, access_token: Optional[str] = Cookie(None)):
         return Response(content=data, media_type="text/html")
 
     return RedirectResponse(url="/")
+
+
+@app.get("/api/temperatures")
+async def get_temperatures(request: Request, start: int, end: int, step: int):
+    async with httpx.AsyncClient() as client:
+        response1 = await client.get(
+            "http://127.0.0.1:8428/api/v1/query_range",
+            params={
+                "start": start,
+                "end": end,
+                "query": "water_temperature",
+                "step": step,
+            },
+        )
+
+        response2 = await client.get(
+            "http://127.0.0.1:8428/api/v1/query_range",
+            params={
+                "start": start,
+                "end": end,
+                "query": "pid_target",
+                "step": step,
+            },
+        )
+
+    if response1.status_code != 200 or response2.status_code != 200:
+        return "connection not working"
+
+    water_temperatures = (
+        response1.json()["data"]["result"] + response2.json()["data"]["result"]
+    )
+
+    result = [
+        {
+            "timestamp": water_temperatures[0]["values"][i][0],
+            "cold": water_temperatures[0]["values"][i][1],
+            "hot": water_temperatures[1]["values"][i][1],
+            "mixed": water_temperatures[2]["values"][i][1],
+            "target": water_temperatures[3]["values"][i][1],
+        }
+        for i in range(len(water_temperatures[0]["values"]))
+    ]
+
+    return result
 
 
 @app.get("/blinds")

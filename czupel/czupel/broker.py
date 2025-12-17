@@ -93,34 +93,16 @@ async def handle_heating_metrics(payload_str):
         # Update Prometheus metrics
         for probe in ("cold", "mixed", "hot"):
             metrics.water_temp.set({"probe": probe}, data[probe])
+
         metrics.pid_integral.set({}, data["integral"])
         metrics.pid_output.set({}, data["pid_output"])
         metrics.pid_target.set({}, data["target"])
+
         for multiplier in ("kp", "ki", "kd"):
             metrics.pid_multiplier.set({"multiplier": multiplier}, data[multiplier])
 
-        # Update chart data
-        chart_file = "./static/data/heating_chart.json"
-        with open(chart_file, "r") as f:
-            chart_data = json.load(f)
-
-        # Maintain max 1000 entries
-        if len(chart_data["labels"]) == 1000:
-            for key in ["labels", "cold", "mixed", "hot", "target"]:
-                chart_data[key] = chart_data[key][1:]
-
-        # Append new data
-        timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-        chart_data["labels"].append(timestamp)
-        chart_data["cold"].append(data["cold"])
-        chart_data["mixed"].append(data["mixed"])
-        chart_data["hot"].append(data["hot"])
-        chart_data["target"].append(data["target"])
-
-        with open(chart_file, "w") as f:
-            json.dump(chart_data, f)
-
         await ws_manager.broadcast(data, "heating")
+
     except (json.JSONDecodeError, KeyError) as e:
         logger.error("Error processing heating metrics: %s", e)
 

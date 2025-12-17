@@ -69,15 +69,45 @@ const data = {
 	}]
 }
 
-fetch("/static/data/heating_chart.json")
+const now = new Date()
+const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000)
+
+const startParam = Math.floor(oneHourAgo.getTime() / 1000)
+const endParam = Math.floor(now.getTime() / 1000)
+
+
+fetch(`https://czupel.dry.pl/api/temperatures?start=${startParam}&end=${endParam}&step=4`)
 	.then(response => response.json())
 	.then(data => {
-		const json_chart_data = data
-		chart.data.labels = json_chart_data["labels"]
-		chart.data.datasets[0].data = json_chart_data["cold"]
-		chart.data.datasets[1].data = json_chart_data["mixed"]
-		chart.data.datasets[2].data = json_chart_data["hot"]
-		chart.data.datasets[3].data = json_chart_data["target"]
+		// data is expected to be a list of dicts with keys: cold, mixed, hot, target, timestamp
+		console.log('Chart data loaded:', data)
+		const labels = data.map(item => {
+			const date = new Date(item.timestamp * 1000)
+			let year = date.getFullYear()
+			let month = date.getMonth() + 1
+			let day = date.getDate()
+			let hour = date.getHours()
+			let minute = date.getMinutes()
+			let second = date.getSeconds()
+			year = ('0000' + year).slice(-4)
+			month = ('00' + month).slice(-2)
+			day = ('00' + day).slice(-2)
+			hour = ('00' + hour).slice(-2)
+			minute = ('00' + minute).slice(-2)
+			second = ('00' + second).slice(-2)
+
+			return `${year}-${month}-${day} ${hour}:${minute}:${second}`
+		})
+		const cold = data.map(item => item.cold)
+		const mixed = data.map(item => item.mixed)
+		const hot = data.map(item => item.hot)
+		const target = data.map(item => item.target)
+
+		chart.data.labels = labels
+		chart.data.datasets[0].data = cold
+		chart.data.datasets[1].data = mixed
+		chart.data.datasets[2].data = hot
+		chart.data.datasets[3].data = target
 		chart.update()
 	})
 	.catch(error => {
@@ -159,7 +189,7 @@ var chart = new Chart(ctx, {
 				ticks: {
 					color: '#a0aec0',
 					callback: function (value) {
-						return value + '°C'
+						return value.toFixed(2) + '°C'
 					}
 				}
 			}

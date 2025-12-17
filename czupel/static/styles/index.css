@@ -1,19 +1,19 @@
-* {
-	margin: 0;
-	padding: 0;
-	box-sizing: border-box;
-}
+/* ============================================
+   INDEX - Style dla strony głównej
+   ============================================
+   Wymaga: common.css
+   ============================================ */
 
 body {
-	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
-	background: linear-gradient(135deg, #1a1f2e 0%, #2d3748 100%);
-	min-height: 100vh;
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	color: #fff;
 	padding: 20px;
 }
+
+/* ============================================
+   CONTAINER
+   ============================================ */
 
 .container {
 	max-width: 600px;
@@ -24,29 +24,23 @@ body {
 h1 {
 	font-size: 2.5rem;
 	font-weight: 700;
-	margin-bottom: 1rem;
-	background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-	-webkit-background-clip: text;
-	-webkit-text-fill-color: transparent;
-	background-clip: text;
-}
-
-h1 img {
-	height: 1.5em;
-	vertical-align: middle;
-	margin-right: 0.2em;
+	margin-bottom: var(--spacing-md);
 }
 
 .subtitle {
 	font-size: 1.1rem;
-	color: #a0aec0;
-	margin-bottom: 3rem;
+	color: var(--text-muted);
+	margin-bottom: var(--spacing-2xl);
 }
+
+/* ============================================
+   APP BUTTONS GRID
+   ============================================ */
 
 #apps {
 	display: grid;
-	gap: 1.5rem;
-	margin-bottom: 3rem;
+	gap: var(--spacing-lg);
+	margin-bottom: var(--spacing-2xl);
 }
 
 .app-link {
@@ -55,16 +49,16 @@ h1 img {
 
 .app-button {
 	width: 100%;
-	padding: 2rem;
-	background: rgba(255, 255, 255, 0.05);
+	padding: var(--spacing-xl);
+	background: var(--glass-bg);
 	backdrop-filter: blur(10px);
-	border: 2px solid rgba(255, 255, 255, 0.1);
-	border-radius: 16px;
-	color: #fff;
+	border: 2px solid var(--glass-border);
+	border-radius: var(--radius-lg);
+	color: var(--text-primary);
 	font-size: 1.5rem;
 	font-weight: 600;
 	cursor: pointer;
-	transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+	transition: all var(--transition-smooth);
 	position: relative;
 	overflow: hidden;
 }
@@ -78,7 +72,7 @@ h1 img {
 	bottom: 0;
 	background: linear-gradient(135deg, rgba(102, 126, 234, 0.2), rgba(118, 75, 162, 0.2));
 	opacity: 0;
-	transition: opacity 0.3s ease;
+	transition: opacity var(--transition-normal);
 }
 
 .app-button:hover::before {
@@ -88,7 +82,7 @@ h1 img {
 .app-button:hover {
 	transform: translateY(-4px);
 	border-color: rgba(102, 126, 234, 0.5);
-	box-shadow: 0 20px 40px rgba(102, 126, 234, 0.2);
+	box-shadow: var(--shadow-xl);
 }
 
 .app-button:active {
@@ -97,7 +91,7 @@ h1 img {
 
 .icon {
 	font-size: 2.5rem;
-	margin-bottom: 0.5rem;
+	margin-bottom: var(--spacing-xs);
 	display: block;
 }
 
@@ -106,35 +100,68 @@ h1 img {
 	z-index: 1;
 }
 
+/* ============================================
+   LOGOUT BUTTON
+   ============================================ */
+
 #logout {
 	display: inline-block;
 	padding: 12px 32px;
-	color: #a0aec0;
+	color: var(--text-muted);
 	text-decoration: none;
 	border: 2px solid rgba(160, 174, 192, 0.3);
-	border-radius: 8px;
+	border-radius: var(--radius-sm);
 	font-size: 1rem;
 	font-weight: 500;
-	transition: all 0.3s ease;
+	transition: all var(--transition-normal);
 }
 
 #logout:hover {
-	color: #fff;
+	color: var(--text-primary);
 	border-color: rgba(255, 255, 255, 0.5);
-	background: rgba(255, 255, 255, 0.05);
+	background: var(--glass-bg);
+	transform: translateY(-2px);
 }
 
-@media (max-width: 480px) {
+/* ============================================
+   RESPONSIVE
+   ============================================ */
+
+@media (max-width: 768px) {
 	h1 {
 		font-size: 2rem;
 	}
 
+	.subtitle {
+		font-size: 1rem;
+	}
+
 	.app-button {
-		padding: 1.5rem;
+		padding: var(--spacing-lg);
+		font-size: 1.3rem;
+	}
+
+	.icon {
+		font-size: 2.2rem;
+	}
+}
+
+@media (max-width: 480px) {
+	h1 {
+		font-size: 1.8rem;
+	}
+
+	.app-button {
+		padding: var(--spacing-lg);
 		font-size: 1.25rem;
 	}
 
 	.icon {
 		font-size: 2rem;
+	}
+
+	#logout {
+		padding: 10px 24px;
+		font-size: 0.9rem;
 	}
 }

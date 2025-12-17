@@ -1,7 +1,10 @@
+/* ============================================
+   UPLOAD - Style dla upload firmware
+   ============================================
+   Wymaga: common.css
+   ============================================ */
+
 body {
-    font-family: "Segoe UI", Roboto, sans-serif;
-    background: linear-gradient(135deg, #2c3e50, #3498db);
-    color: #333;
     display: flex;
     justify-content: center;
     align-items: center;
@@ -9,58 +12,135 @@ body {
     margin: 0;
 }
 
+/* ============================================
+   CARD CONTAINER
+   ============================================ */
+
 .card {
-    background: #fff;
-    padding: 2rem;
-    border-radius: 1rem;
+    background: rgba(255, 255, 255, 0.95);
+    padding: var(--spacing-xl);
+    border-radius: var(--radius-lg);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
     width: 100%;
     max-width: 400px;
     text-align: center;
+    backdrop-filter: blur(10px);
+    border: 2px solid rgba(255, 255, 255, 0.2);
 }
 
-h1 {
+.card h1 {
     font-size: 1.5rem;
     margin-bottom: 1.2rem;
     color: #2c3e50;
+    background: none;
+    -webkit-text-fill-color: initial;
 }
 
-label {
+/* ============================================
+   FORM ELEMENTS
+   ============================================ */
+
+.card label {
     display: block;
     text-align: left;
-    margin: 0.8rem 0 0.3rem;
+    margin: var(--spacing-sm) 0 var(--spacing-xs);
     font-weight: bold;
     color: #555;
 }
 
-select,
-input[type="file"] {
+.card select,
+.card input[type="file"] {
     width: 100%;
     padding: 0.6rem;
-    border: 1px solid #ccc;
-    border-radius: 0.5rem;
+    border: 2px solid #ddd;
+    border-radius: var(--radius-sm);
     font-size: 1rem;
-    margin-bottom: 1rem;
+    margin-bottom: var(--spacing-md);
+    background: white;
+    color: #333;
+    transition: all var(--transition-fast);
 }
 
-button {
+.card select:focus,
+.card input[type="file"]:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+/* ============================================
+   BUTTON
+   ============================================ */
+
+.card button {
     width: 100%;
     padding: 0.8rem;
-    background: #3498db;
-    color: #fff;
+    background: linear-gradient(135deg, var(--color-secondary) 0%, #2563eb 100%);
+    color: white;
     border: none;
-    border-radius: 0.5rem;
+    border-radius: var(--radius-sm);
     font-size: 1rem;
+    font-weight: 600;
     cursor: pointer;
-    transition: background 0.3s;
+    transition: all var(--transition-normal);
 }
 
-button:hover {
-    background: #2980b9;
+.card button:hover {
+    background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
 }
+
+.card button:active {
+    transform: translateY(0);
+}
+
+.card button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* ============================================
+   STATUS MESSAGE
+   ============================================ */
 
 .status {
-    margin-top: 1rem;
+    margin-top: var(--spacing-md);
     font-size: 0.9rem;
     color: #2c3e50;
+    padding: var(--spacing-sm);
+    border-radius: var(--radius-sm);
+    background: rgba(102, 126, 234, 0.1);
+    min-height: 20px;
+}
+
+.status.success {
+    background: rgba(16, 185, 129, 0.1);
+    color: #059669;
+}
+
+.status.error {
+    background: rgba(239, 68, 68, 0.1);
+    color: #dc2626;
+}
+
+/* ============================================
+   RESPONSIVE
+   ============================================ */
+
+@media (max-width: 480px) {
+    .card {
+        padding: var(--spacing-lg);
+        max-width: 90%;
+    }
+
+    .card h1 {
+        font-size: 1.3rem;
+    }
+
+    .card button {
+        padding: 0.7rem;
+        font-size: 0.95rem;
+    }
 }

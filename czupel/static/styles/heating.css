@@ -1,172 +1,115 @@
-* {
-	margin: 0;
-	padding: 0;
-	box-sizing: border-box;
-}
+/* ============================================
+   HEATING - Style specyficzne dla ogrzewania
+   ============================================
+   Wymaga: common.css
+   ============================================ */
 
-body {
-	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
-	background: linear-gradient(135deg, #1a1f2e 0%, #2d3748 100%);
-	min-height: 100vh;
-	color: #fff;
-}
-
-#logout {
-	position: absolute;
-	bottom: 30px;
-	left: 0;
-	right: 0;
-	margin: 0 32px;
-	padding: 12px 0 !important;
-	text-align: center;
-	border: 2px solid rgba(160, 174, 192, 0.3);
-	border-radius: 8px;
-}
-
-/* Header */
-.header {
-	display: flex;
-	align-items: center;
-	gap: 1rem;
-	padding: 1.5rem 2rem;
-	background: rgba(255, 255, 255, 0.05);
-	backdrop-filter: blur(10px);
-	border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-	position: sticky;
-	top: 0;
-	z-index: 50;
-}
-
-.openbtn {
-	font-size: 1.5rem;
-	background: rgba(255, 255, 255, 0.1);
-	border: 1px solid rgba(255, 255, 255, 0.2);
-	color: white;
-	padding: 10px 16px;
-	cursor: pointer;
-	border-radius: 10px;
-	transition: all 0.3s ease;
-}
-
-.openbtn:hover {
-	background: rgba(255, 255, 255, 0.15);
-	transform: scale(1.05);
-}
-
-h1 {
-	font-size: 1.8rem;
-	font-weight: 700;
-	background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-	-webkit-background-clip: text;
-	-webkit-text-fill-color: transparent;
-	background-clip: text;
-}
-
-/* Main Content */
+/* Main content override */
 #main {
-	transition: margin-left 0.3s;
-	padding: 2rem;
 	max-width: 1400px;
 	margin: 0 auto;
 }
 
-/* Chart Container */
+/* ============================================
+   CHART CONTAINER
+   ============================================ */
+
 .chart-container {
-	background: rgba(255, 255, 255, 0.05);
+	background: var(--glass-bg);
 	backdrop-filter: blur(10px);
-	padding: 2rem;
-	border-radius: 16px;
-	border: 2px solid rgba(255, 255, 255, 0.1);
-	margin-bottom: 2rem;
+	padding: var(--spacing-xl);
+	border-radius: var(--radius-lg);
+	border: 2px solid var(--glass-border);
+	margin-bottom: var(--spacing-xl);
+	margin-top: var(--spacing-xl);
+	transition: all var(--transition-normal);
 }
 
-/* Temperature Grid */
+.chart-container:hover {
+	border-color: rgba(102, 126, 234, 0.3);
+	box-shadow: var(--shadow-md);
+}
+
+/* ============================================
+   TEMPERATURE GRID
+   ============================================ */
+
 #temperatures {
 	display: grid;
 	grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-	gap: 1.5rem;
+	gap: var(--spacing-lg);
 }
 
 #temperatures p {
-	background: rgba(255, 255, 255, 0.05);
+	background: var(--glass-bg);
 	backdrop-filter: blur(10px);
-	padding: 1.5rem;
-	border-radius: 12px;
-	border: 2px solid rgba(255, 255, 255, 0.1);
+	padding: var(--spacing-lg);
+	border-radius: var(--radius-md);
+	border: 2px solid var(--glass-border);
 	font-size: 1rem;
 	display: flex;
 	flex-direction: column;
-	gap: 0.75rem;
-	transition: all 0.3s ease;
+	gap: var(--spacing-sm);
+	transition: all var(--transition-normal);
 }
 
 #temperatures p:hover {
 	border-color: rgba(102, 126, 234, 0.5);
-	box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
-}
-
-#temperatures p span {
-	font-size: 1.5rem;
-	font-weight: 700;
-	color: #667eea;
-}
-
-/* Input Fields */
-input[type="text"] {
-	background: rgba(255, 255, 255, 0.1);
-	border: 2px solid rgba(255, 255, 255, 0.2);
-	color: #fff;
-	padding: 10px 14px;
-	border-radius: 8px;
-	font-size: 1rem;
-	font-family: inherit;
-	transition: all 0.3s ease;
-	margin-top: 0.5rem;
-}
-
-input[type="text"]:focus {
-	outline: none;
-	border-color: #667eea;
-	background: rgba(255, 255, 255, 0.15);
-	box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
-}
-
-input[type="text"]::placeholder {
-	color: rgba(255, 255, 255, 0.4);
+	box-shadow: var(--shadow-md);
+	transform: translateY(-2px);
 }
 
 /* Label styling */
 #temperatures p>span:first-child {
 	font-size: 0.9rem;
 	font-weight: 600;
-	color: #cbd5e0;
+	color: var(--text-secondary);
 	text-transform: uppercase;
 	letter-spacing: 0.5px;
 }
 
+/* Value styling */
+#temperatures p>span:nth-child(2) {
+	font-size: 1.5rem;
+	font-weight: 700;
+	color: var(--color-primary);
+}
+
+/* Input fields specific to heating */
+#temperatures input[type="text"] {
+	margin-top: var(--spacing-xs);
+}
+
+/* ============================================
+   RESPONSIVE
+   ============================================ */
+
 @media (max-width: 768px) {
-	#main {
-		padding: 1.5rem;
-	}
-
-	.header {
-		padding: 1rem 1.5rem;
-	}
-
-	h1 {
-		font-size: 1.5rem;
-	}
-
 	.chart-container {
-		padding: 1.5rem;
+		padding: var(--spacing-lg);
 	}
 
 	#temperatures {
 		grid-template-columns: 1fr;
-		gap: 1rem;
+		gap: var(--spacing-md);
 	}
 
 	#temperatures p {
 		padding: 1.25rem;
+	}
+
+	#temperatures p>span:nth-child(2) {
+		font-size: 1.3rem;
+	}
+}
+
+@media (max-width: 480px) {
+	.chart-container {
+		padding: var(--spacing-md);
+		margin-top: var(--spacing-lg);
+	}
+
+	#temperatures p {
+		padding: var(--spacing-md);
 	}
 }

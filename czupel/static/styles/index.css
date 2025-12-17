@@ -31,6 +31,12 @@ h1 {
 	background-clip: text;
 }
 
+h1 img {
+	height: 1.5em;
+	vertical-align: middle;
+	margin-right: 0.2em;
+}
+
 .subtitle {
 	font-size: 1.1rem;
 	color: #a0aec0;

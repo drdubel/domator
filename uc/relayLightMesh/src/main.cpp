@@ -237,6 +237,12 @@ void receivedCallback(const uint32_t& from, const String& msg) {
         return;
     }
 
+    if (msg == "P") {
+        Serial.printf("MESH: Received ping from %u, sending pong\n", from);
+        mesh.sendSingle(from, "P");
+        return;
+    }
+
     // Handle light control messages (e.g., "a0", "b1", etc.)
     if (msg.length() == 2 && msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
         int lightIndex = msg[0] - 'a';

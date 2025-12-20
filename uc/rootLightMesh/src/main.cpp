@@ -588,13 +588,19 @@ void receivedCallback(const uint32_t& from, const String& msg) {
         } else {
             handleSwitchMessage(from, msg[0], msg[1] - '0');
         }
-        vTaskDelay(10 / portTICK_PERIOD_MS);
+        vTaskDelay(5 / portTICK_PERIOD_MS);
         return;
     }
 
     if (msg.length() == 2 && msg[0] >= 'A' && msg[0] < 'A' + NLIGHTS) {
         handleRelayMessage(from, msg);
-        vTaskDelay(10 / portTICK_PERIOD_MS);
+        vTaskDelay(5 / portTICK_PERIOD_MS);
+        return;
+    }
+
+    if (msg == "P") {
+        DEBUG_PRINTLN("MESH: Received ping, sending pong");
+        mqttClient.publish(("/relay/state/" + String(from)).c_str(), "P");
         return;
     }
 

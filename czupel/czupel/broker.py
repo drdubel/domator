@@ -314,4 +314,6 @@ async def get_delays():
             mqtt.publish(f"/relay/cmd/{relay}", "P", qos=1)
             relay_state.update_send_ping_time(relay, perf_counter_ns())
 
-            await asyncio.sleep(5)  # seconds
+            await asyncio.sleep(0.2)  # seconds
+
+        await asyncio.sleep(3)  # seconds

@@ -24,9 +24,9 @@ from starlette.types import ASGIApp
 from czupel.auth import JWT_EXPIRE_MINUTES, create_jwt, get_current_user, websocket_auth
 from czupel.broker import mqtt
 from czupel.data.authorized import authorized
+from czupel.data.secrets import DSN
 from czupel.state import relay_state
 from czupel.websocket import ws_manager
-from czupel.data.secrets import DSN
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,8 @@ sentry_sdk.init(
     traces_sample_rate=1.0,
 )
 
-app = FastAPI()
+
+app = FastAPI(title="Czupel Home Automation System", version="0.1.0")
 app.add_middleware(CustomRequestSizeMiddleware, max_content_size=MAX_REQUEST_SIZE)
 app.add_middleware(SessionMiddleware, secret_key="!secret")
 app.add_middleware(MetricsMiddleware)

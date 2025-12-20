@@ -3,6 +3,7 @@ import json
 import logging
 from string import ascii_lowercase
 
+from time import perf_counter_ns
 import httpx
 import namer
 from fastapi_mqtt import FastMQTT, MQTTConfig
@@ -24,12 +25,7 @@ mqtt_config = MQTTConfig(
 )
 
 mqtt = FastMQTT(config=mqtt_config)
-
-
-route_lights = {
-    "1074130365": ["s8", "s9", "s10", "s11", "s12", "s13", "s14", "s15"],
-    "1074122133": ["s16", "s17", "s18", "s19", "s20", "s21", "s22", "s23"],
-}
+task: asyncio.Task | None = None
 
 
 def process_connections(connections):
@@ -53,12 +49,27 @@ def process_connections(connections):
 
 @mqtt.on_connect()
 def connect(client, flags, rc, properties):
+    global task
+
     mqtt.client.subscribe("/blind/pos")
     mqtt.client.subscribe("/heating/metrics")
     mqtt.client.subscribe("/switch/1/state")
     mqtt.client.subscribe("/relay/state/+")
     mqtt.client.subscribe("/switch/state/+")
+
+    if task is None:
+        task = asyncio.create_task(get_delays())
+
     logger.info("Connected: %s %s %s %s", client, flags, rc, properties)
+
+
+@mqtt.on_disconnect()
+async def on_disconnect(client, packet, exc=None):
+    global task
+
+    if task:
+        task.cancel()
+        task = None
 
 
 @mqtt.on_message()
@@ -70,14 +81,19 @@ async def message(client, topic, payload, qos, properties):
 
     if topic == "/heating/metrics":
         await handle_heating_metrics(payload_str)
+
     elif topic == "/blind/pos":
         await handle_blind_position(payload_str)
+
     elif topic == "/switch/1/state":
         await handle_old_switch_state(payload_str)
+
     elif topic.startswith("/relay/state/"):
         await handle_relay_state(payload_str, topic)
+
     elif topic.startswith("/switch/state/root"):
         await handle_root_state(payload_str)
+
     elif topic.startswith("/switch/state/"):
         await handle_switch_state(payload_str, topic)
 
@@ -128,7 +144,7 @@ async def handle_old_switch_state(payload_str):
             state = int(payload_str[1])
             data = {"id": switch_id, "state": state}
 
-            relay_state.update(switch_id, state)
+            relay_state.update_state(switch_id, state)
 
             asyncio.create_task(ws_manager.broadcast(data, "lights"))
         else:
@@ -144,11 +160,22 @@ async def handle_relay_state(payload_str, topic):
     """
     try:
         relay_id = topic.split("/")[-1]
+
+        if payload_str == "P":
+            # Handle ping message
+            relay_state.update_ping_time(relay_id, perf_counter_ns())
+            print(
+                "Ping from relay:",
+                relay_id,
+                relay_state.get_ping_time(relay_id=relay_id),
+            )  # Debug print
+            return
+
         state = int(payload_str[1])
         idx = ord(payload_str[0]) - ord("A")
-        light_id = route_lights[relay_id][idx]
+        light_id = relay_state.route_lights(relay_id, idx)
 
-        relay_state.update(light_id, state)
+        relay_state.update_state(light_id, state)
 
         data = {"id": light_id, "state": state}
         asyncio.create_task(ws_manager.broadcast(data, "lights"))
@@ -278,3 +305,13 @@ async def handle_root_state(payload_str):
 
     with open("czupel/data/connections.json", "w", encoding="utf-8") as f:
         json.dump(conf, f, ensure_ascii=False, indent=4)
+
+
+async def get_delays():
+    while True:
+        for relay in relay_state.relays:
+            print("Pinging relay:", relay)  # Debug print
+            mqtt.publish(f"/relay/cmd/{relay}", "P", qos=1)
+            relay_state.update_send_ping_time(relay, perf_counter_ns())
+
+            await asyncio.sleep(5)  # seconds

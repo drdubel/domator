@@ -98,7 +98,10 @@ async def homepage(request: Request, access_token: Optional[str] = Cookie(None))
     if user:
         return RedirectResponse(url="/auto")
 
-    return HTMLResponse('<a href="/login">login</a>')
+    with open(os.path.join("static", "login.html")) as fh:
+        data = fh.read()
+
+    return HTMLResponse(content=data, media_type="text/html")
 
 
 @app.get("/login")

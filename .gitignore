@@ -18,4 +18,4 @@ turbacz_app
 turbacz/wifiLightButton/plain_passwords
 connections.json
 *.bin
-Czupel.egg-info
+*.egg-info

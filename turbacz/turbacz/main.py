@@ -457,6 +457,7 @@ def start():
     import uvicorn
 
     logging.basicConfig(level=logging.INFO)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     uvicorn.run(app, host="127.0.0.1", port=8002)
 
 

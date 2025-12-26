@@ -449,7 +449,7 @@ def start():
     import uvicorn
 
     logging.basicConfig(level=logging.DEBUG)
-    uvicorn.run("czupel.main:app", port=8002, reload=True)
+    uvicorn.run("czupel.main:app", port=8002)
 
 
 if __name__ == "__main__":

@@ -43,7 +43,7 @@ def process_connections(connections):
                 outputs[i] = (str(relay_id), str(output_id))
                 processed[switch_id[:10]][button_id] = outputs
 
-    print(processed)  # Debug print
+    logger.debug("Processed connections: %s", processed)  # Debug log
     return processed
 
 
@@ -164,11 +164,11 @@ async def handle_relay_state(payload_str, topic):
         if payload_str == "P":
             # Handle ping message
             relay_state.update_ping_time(relay_id, perf_counter_ns())
-            print(
-                "Ping from relay:",
+            logger.debug(
+                "Ping from relay: %s %s %s",
                 relay_id,
                 relay_state.get_ping_time(relay_id=relay_id),
-            )  # Debug print
+            )  # Debug log
             return
 
         state = int(payload_str[1])
@@ -192,17 +192,19 @@ async def handle_switch_state(payload_str, topic):
         switch_id = topic.split("/")[-1]
         light_id = payload_str[0]
 
-        print(switch_id, light_id)  # Debug print
+        logger.debug("Switch ID: %s, Light ID: %s", switch_id, light_id)  # Debug log
 
         with open("turbacz/data/connections.json", "r", encoding="utf-8") as f:
             conf = json.load(f)
             connections = conf["connections"]
             outputs = connections[switch_id][light_id]
 
-        print(outputs)  # Debug print
+        logger.debug("Outputs: %s", outputs)  # Debug log
 
         for relay_id, output_id in outputs:
-            print(relay_id, output_id)  # Debug print
+            logger.debug(
+                "Relay ID: %s, Output ID: %s", relay_id, output_id
+            )  # Debug log
             if len(payload_str) == 2:
                 state = payload_str[1]
 
@@ -229,7 +231,7 @@ async def handle_root_state(payload_str):
         return
 
     if payload_str == "connected":
-        print(connections)  # Debug print
+        logger.debug("Connections: %s", connections)  # Debug log
         processed_connections = process_connections(connections)
 
         mqtt.client.publish("/switch/cmd/root", processed_connections)
@@ -273,8 +275,8 @@ async def handle_root_state(payload_str):
         if "free_heap" in status:
             metric_node += f",free_heap={status['free_heap']}"
 
-        print(metric_node)  # Debug print
-        print(metric_mesh)  # Debug print
+        logger.debug(metric_node)  # Debug log
+        logger.debug(metric_mesh)  # Debug log
 
         async with httpx.AsyncClient() as client:
             response = await client.post(url, content=metric_node)
@@ -292,6 +294,7 @@ async def handle_root_state(payload_str):
     with open("turbacz/data/connections.json", "r", encoding="utf-8") as f:
         try:
             conf = json.load(f)
+
         except json.JSONDecodeError:
             logger.error("Invalid JSON in connections file.")
             return
@@ -310,7 +313,7 @@ async def handle_root_state(payload_str):
 async def get_delays():
     while True:
         for relay in relay_state.relays:
-            print("Pinging relay:", relay)  # Debug print
+            logger.debug("Pinging relay: %s", relay)  # Debug log
             mqtt.publish(f"/relay/cmd/{relay}", "P", qos=1)
             relay_state.update_send_ping_time(relay, perf_counter_ns())
 

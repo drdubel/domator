@@ -285,7 +285,7 @@ async def upload_firmware(
     if not user:
         return RedirectResponse(url="/")
 
-    print("Uploading firmware for device:", device)
+    logger.debug("Uploading firmware for device: %s", device)
 
     if device not in ["switch", "relay", "root"]:
         return JSONResponse(
@@ -413,7 +413,7 @@ async def websocket_lights(websocket: WebSocket):
 
             chg.id = chr(chg.id % 8 + 97)
 
-            print(topic, f"{chg.id}{chg.state}")  # Debug print
+            logger.debug("%s %s", topic, f"{chg.id}{chg.state}")  # Debug log
             mqtt.client.publish(topic, f"{chg.id}{chg.state}")
 
     await receive_command(websocket)
@@ -432,7 +432,7 @@ async def websocket_rcm(websocket: WebSocket):
 
     with open("turbacz/data/connections.json", "r", encoding="utf-8") as f:
         rcm_config = json.load(f)
-        print(rcm_config)
+        logger.debug("RCM Config: %s", rcm_config)
 
         await ws_manager.send_personal_message(rcm_config, websocket)
 
@@ -446,7 +446,7 @@ async def websocket_rcm(websocket: WebSocket):
             for connection in list(cmd["connections"].keys()):
                 cmd["connections"][connection[:10]] = cmd["connections"].pop(connection)
 
-            print(f"Updated connections: {cmd['connections']}")
+            logger.debug("Updated connections: %s", cmd["connections"])  # Debug log
 
             mqtt.client.publish("/switch/cmd/root", cmd["connections"])
 
@@ -456,7 +456,7 @@ async def websocket_rcm(websocket: WebSocket):
 def start():
     import uvicorn
 
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=logging.INFO)
     uvicorn.run(app, host="127.0.0.1", port=8002)
 
 

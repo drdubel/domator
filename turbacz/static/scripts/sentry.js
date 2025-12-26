@@ -3,5 +3,5 @@ Sentry.init({
     integrations: [Sentry.browserTracingIntegration()],
     tracesSampleRate: 1.0,
     sendDefaultPii: true,
-    tracePropagationTargets: ["localhost", /^https:\/\/czupel\.dry\.pl\//],
+    tracePropagationTargets: ["localhost", /^https:\/\/turbacz\.dry\.pl\//],
 });

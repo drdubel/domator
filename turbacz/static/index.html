@@ -2,26 +2,44 @@
 <html lang="en">
 
 <head>
-	<title>Turbacz</title>
+	<title>Turbacz - Home Automation</title>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<link rel="icon" href="/static/favicon.ico" type="image/x-icon">
-	<link rel="stylesheet" href="/static/styles/index.css" type="text/css" />
+	<link rel="stylesheet" href="/static/styles/common.css">
+	<link rel="stylesheet" href="/static/styles/index.css">
+	<script src="https://browser.sentry-cdn.com/10.31.0/bundle.min.js"></script>
+	<script src="/static/scripts/sentry.js"></script>
 </head>
 
 <body>
-	<div id="apps">
-		<a href="heating">
-			<button type="button" class="block">Heating</button>
-		</a>
-		<a href="blinds">
-			<button type="button" class="block">Blinds</button>
-		</a>
-		<a href="lights">
-			<button type="button" class="block">Lights</button>
-		</a>
+	<div class="container">
+		<h1><img src="/static/favicon.ico" alt="Turbacz Logo"> Turbacz</h1>
+		<p class="subtitle">Home Automation Control</p>
+
+		<div id="apps">
+			<a href="heating" class="app-link">
+				<button type="button" class="app-button">
+					<span class="icon">🌡️</span>
+					<span>Heating</span>
+				</button>
+			</a>
+			<a href="blinds" class="app-link">
+				<button type="button" class="app-button">
+					<span class="icon">🪟</span>
+					<span>Blinds</span>
+				</button>
+			</a>
+			<a href="lights" class="app-link">
+				<button type="button" class="app-button">
+					<span class="icon">💡</span>
+					<span>Lights</span>
+				</button>
+			</a>
+		</div>
+
+		<a id="logout" href="/logout">Logout</a>
 	</div>
-	<a id="logout" style=" position: absolute; bottom: 25px;" href="/logout">Logout</a>
 </body>
 
 </html>

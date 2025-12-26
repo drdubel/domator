@@ -3,7 +3,8 @@ import logging
 from typing import Any, List
 
 from fastapi import WebSocket
-from wsproto.utilities import LocalProtocolError
+from starlette.websockets import WebSocketDisconnect
+from uvicorn.protocols.utils import ClientDisconnected
 
 logger = logging.getLogger(__name__)
 
@@ -17,23 +18,33 @@ class ConnectionManager:
         await websocket.accept()
         self.active_connections.append(websocket)
 
-    def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+    def disconnect(self, connection):
+        if connection in self.active_connections:
+            self.active_connections.remove(connection)
 
     async def send_personal_message(self, message: Any, websocket: WebSocket):
-        await websocket.send_json(message)
+        try:
+            await websocket.send_json(message)
+        except (WebSocketDisconnect, RuntimeError, ConnectionResetError) as err:
+            logger.warning(
+                "Error sending personal message to %s: %s", websocket, err.args[0]
+            )
 
     async def broadcast(self, message: Any, app: Any):
         for connection in tuple(self.active_connections):
-            try:
-                if app in connection.url.path:
+            if app in connection.url.path:
+                try:
                     await connection.send_json(message)
-            except LocalProtocolError as err:
-                self.active_connections.remove(connection)
-                logger.warning(
-                    "removing closed connection %s (%s)", connection, err.args[0]
-                )
-                continue
+                except (
+                    WebSocketDisconnect,
+                    ClientDisconnected,
+                    RuntimeError,
+                    ConnectionResetError,
+                ) as err:
+                    self.disconnect(connection)
+                    logger.warning(
+                        "removing closed connection %s (%s)", connection, str(err)
+                    )
 
 
 ws_manager = ConnectionManager()

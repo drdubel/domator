@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import WebSocket
 from jose import JWTError, jwt
 
-from czupel.data.secrets import JWT_SECRET
+from turbacz.data.secrets import JWT_SECRET
 
 JWT_ALG = "HS256"
 JWT_EXPIRE_MINUTES = 60 * 24 * 14  # 14 days

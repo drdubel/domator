@@ -2,48 +2,83 @@
 <html lang="en">
 
 <head>
-	<title>Heating</title>
+	<title>Heating Control - Turbacz</title>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<link rel="stylesheet" href="/static/styles/heating.css" type="text/css" />
-	<link rel="stylesheet" href="/static/styles/sidebar.css" type="text/css" />
 	<link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+	<script src="https://browser.sentry-cdn.com/10.31.0/bundle.min.js"></script>
 	<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+	<script src="/static/scripts/sentry.js"></script>
+	<link rel="stylesheet" href="/static/styles/common.css">
+	<link rel="stylesheet" href="/static/styles/heating.css">
 </head>
 
 <body>
 	<div class="sidenav" id="sidenav">
 		<a href="javascript:void(0)" class="closebtn" onclick="closeNav()">&times;</a>
-		<a href="/auto">Home</a>
-		<a href="blinds">Blinds</a>
-		<a href="lights">Lights</a>
-		<a id="logout" style=" position: absolute; bottom: 25px;" href="/logout">Logout</a>
+		<a href="/auto">🏡 Home</a>
+		<a href="blinds">🪟 Blinds</a>
+		<a href="lights">💡 Lights</a>
+		<a id="logout" href="/logout">Logout</a>
 	</div>
+
 	<div id="main">
-		<button class="openbtn" id="openbtn" onclick="openNav()">&#9776;</button>
-		<div>
+		<header class="header">
+			<button class="openbtn" id="openbtn" onclick="openNav()">☰</button>
+			<h1>🌡️ Heating Control</h1>
+		</header>
+
+		<div class="chart-container">
 			<canvas id="myChart"></canvas>
 		</div>
-		<br>
 		<script src="/static/scripts/heating.js"></script>
+
 		<div id="temperatures">
-			<p>Cold water temperature: <span id="cold"></span>°C</p>
-			<p>Mixed water temperature: <span id="mixed"></span>°C</p>
-			<p>Hot water temperature: <span id="hot"></span>°C</p>
-			<p>Target water temperature: <span id="target"></span>°C <input type="text" id="targer_temp"
-					onchange="send_value('t', this.value)" pattern="[0-9.]*">
+			<p>
+				<span>Cold Water</span>
+				<span id="cold">--</span>°C
 			</p>
-			<p>Integral value: <span id="integral"></span> <input type="text" id="targer_integral"
-					onchange="send_value('I', this.value)" pattern="[0-9.]*"></p>
-			<p>PID output: <span id="pid_output"></span></p>
-			<p>Kp: <span id="kp"></span> <input type="text" id="targer_kp" onchange="send_value('p', this.value)"
-					pattern="[0-9.]*">
+			<p>
+				<span>Mixed Water</span>
+				<span id="mixed">--</span>°C
 			</p>
-			<p>Ki: <span id="ki"></span> <input type="text" id="targer_ki" onchange="send_value('i', this.value)"
-					pattern="[0-9.]*">
+			<p>
+				<span>Hot Water</span>
+				<span id="hot">--</span>°C
 			</p>
-			<p>Kd: <span id="kd"></span> <input type="text" id="targer_kd" onchange="send_value('d', this.value)"
-					pattern="[0-9.]*">
+			<p>
+				<span>Target Temperature</span>
+				<span id="target">--</span>°C
+				<input type="text" id="targer_temp" onchange="send_value('t', this.value)" pattern="[0-9.]*"
+					placeholder="Enter target temp">
+			</p>
+			<p>
+				<span>Integral Value</span>
+				<span id="integral">--</span>
+				<input type="text" id="targer_integral" onchange="send_value('I', this.value)" pattern="[0-9.]*"
+					placeholder="Enter integral">
+			</p>
+			<p>
+				<span>PID Output</span>
+				<span id="pid_output">--</span>
+			</p>
+			<p>
+				<span>Kp (Proportional)</span>
+				<span id="kp">--</span>
+				<input type="text" id="targer_kp" onchange="send_value('p', this.value)" pattern="[0-9.]*"
+					placeholder="Enter Kp">
+			</p>
+			<p>
+				<span>Ki (Integral)</span>
+				<span id="ki">--</span>
+				<input type="text" id="targer_ki" onchange="send_value('i', this.value)" pattern="[0-9.]*"
+					placeholder="Enter Ki">
+			</p>
+			<p>
+				<span>Kd (Derivative)</span>
+				<span id="kd">--</span>
+				<input type="text" id="targer_kd" onchange="send_value('d', this.value)" pattern="[0-9.]*"
+					placeholder="Enter Kd">
 			</p>
 		</div>
 	</div>

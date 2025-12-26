@@ -1,1 +1,0 @@
-uvicorn turbacz.main:app --log-level debug --port 8000 --reload

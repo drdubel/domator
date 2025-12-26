@@ -1,34 +1,127 @@
-body {
-	background-color: rgba(39, 51, 48, 0.918);
-}
+/* ============================================
+	BLINDS - Styles specific to blinds/shutters
+	============================================
+	Requires: common.css
+	============================================ */
 
-#nazwa_rolety>span {
-	color: rgb(255, 255, 255);
-	text-align: center;
-}
-
-#blind>span {
-	height: 300px;
-	float: left;
-	margin: 45.5px;
-	margin-top: 10px;
+/* Flex containers for blinds */
+.flex-containers {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--spacing-2xl);
+	justify-content: center;
+	max-width: 1400px;
+	margin: var(--spacing-2xl) auto 0;
 }
 
 .flex-container {
 	display: flex;
 	flex-direction: column;
 	align-items: center;
-	width: 100px;
+	gap: var(--spacing-md);
+}
+
+.flex-container>a {
+	font-size: 1rem;
+	font-weight: 600;
+	color: var(--text-secondary);
+	text-align: center;
+	white-space: nowrap;
 }
 
 .flex-container>span {
-	margin-top: 12px;
+	width: 30px;
 	height: 250px;
 }
 
+/* ============================================
+	jQuery UI Slider - Customization
+	============================================ */
 
-.flex-containers {
-	display: flex;
-	flex-direction: row;
-	flex-wrap: wrap;
+.ui-slider-vertical {
+	background: var(--glass-bg) !important;
+	border: 1px solid var(--glass-border) !important;
+	border-radius: 15px !important;
+	width: 30px !important;
+	box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+.ui-slider-handle {
+	background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%) !important;
+	border: 3px solid rgba(255, 255, 255, 0.9) !important;
+	border-radius: 50% !important;
+	cursor: grab !important;
+	width: 20px !important;
+	height: 20px !important;
+	margin-left: -4px !important;
+	transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+	box-shadow: 0 3px 8px rgba(102, 126, 234, 0.4);
+}
+
+.ui-slider-handle:hover {
+	transform: scale(1.2);
+	box-shadow: 0 4px 12px rgba(102, 126, 234, 0.6),
+		0 0 0 6px rgba(102, 126, 234, 0.15);
+}
+
+.ui-slider-handle:active {
+	cursor: grabbing !important;
+	transform: scale(1.1);
+}
+
+.ui-slider-range-max {
+	background: linear-gradient(180deg,
+			rgba(102, 126, 234, 0.5) 0%,
+			rgba(102, 126, 234, 0.7) 100%) !important;
+	border-radius: 15px !important;
+}
+
+/* ============================================
+	RESPONSIVE
+	============================================ */
+
+@media (max-width: 768px) {
+	.flex-containers {
+		gap: var(--spacing-xl);
+	}
+
+	.flex-container>span {
+		height: 220px;
+		width: 28px;
+	}
+
+	.ui-slider-vertical {
+		width: 28px !important;
+	}
+
+	.ui-slider-handle {
+		width: 24px !important;
+		height: 24px !important;
+		margin-left: -9px !important;
+	}
+}
+
+@media (max-width: 480px) {
+	.flex-containers {
+		gap: var(--spacing-lg);
+	}
+
+	.flex-container>span {
+		height: 200px;
+		width: 26px;
+	}
+
+	.ui-slider-vertical {
+		width: 26px !important;
+	}
+
+	.ui-slider-handle {
+		width: 22px !important;
+		height: 22px !important;
+		margin-left: -8px !important;
+	}
+
+	.flex-container>a {
+		font-size: 0.9rem;
+	}
 }

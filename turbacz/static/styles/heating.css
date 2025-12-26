@@ -1,4 +1,115 @@
-body {
-	background-color: rgba(39, 51, 48, 0.918);
-	color: rgb(255, 255, 255);
+/* ============================================
+	HEATING - Styles specific to heating
+	============================================
+	Requires: common.css
+	============================================ */
+
+/* Main content override */
+#main {
+	max-width: 1400px;
+	margin: 0 auto;
+}
+
+/* ============================================
+	CHART CONTAINER
+	============================================ */
+
+.chart-container {
+	background: var(--glass-bg);
+	backdrop-filter: blur(10px);
+	padding: var(--spacing-xl);
+	border-radius: var(--radius-lg);
+	border: 2px solid var(--glass-border);
+	margin-bottom: var(--spacing-xl);
+	margin-top: var(--spacing-xl);
+	transition: all var(--transition-normal);
+}
+
+.chart-container:hover {
+	border-color: rgba(102, 126, 234, 0.3);
+	box-shadow: var(--shadow-md);
+}
+
+/* ============================================
+	TEMPERATURE GRID
+	============================================ */
+
+#temperatures {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+	gap: var(--spacing-lg);
+}
+
+#temperatures p {
+	background: var(--glass-bg);
+	backdrop-filter: blur(10px);
+	padding: var(--spacing-lg);
+	border-radius: var(--radius-md);
+	border: 2px solid var(--glass-border);
+	font-size: 1rem;
+	display: flex;
+	flex-direction: column;
+	gap: var(--spacing-sm);
+	transition: all var(--transition-normal);
+}
+
+#temperatures p:hover {
+	border-color: rgba(102, 126, 234, 0.5);
+	box-shadow: var(--shadow-md);
+	transform: translateY(-2px);
+}
+
+/* Label styling */
+#temperatures p>span:first-child {
+	font-size: 0.9rem;
+	font-weight: 600;
+	color: var(--text-secondary);
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+}
+
+/* Value styling */
+#temperatures p>span:nth-child(2) {
+	font-size: 1.5rem;
+	font-weight: 700;
+	color: var(--color-primary);
+}
+
+/* Input fields specific to heating */
+#temperatures input[type="text"] {
+	margin-top: var(--spacing-xs);
+}
+
+/* ============================================
+	RESPONSIVE
+	============================================ */
+
+@media (max-width: 768px) {
+	.chart-container {
+		padding: var(--spacing-lg);
+	}
+
+	#temperatures {
+		grid-template-columns: 1fr;
+		gap: var(--spacing-md);
+	}
+
+	#temperatures p {
+		padding: 1.25rem;
+	}
+
+	#temperatures p>span:nth-child(2) {
+		font-size: 1.3rem;
+	}
+}
+
+@media (max-width: 480px) {
+	.chart-container {
+		padding: var(--spacing-md);
+		margin-top: var(--spacing-lg);
+	}
+
+	#temperatures p {
+		padding: var(--spacing-md);
+	}
 }

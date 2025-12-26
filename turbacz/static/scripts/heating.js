@@ -76,7 +76,7 @@ const startParam = Math.floor(oneHourAgo.getTime() / 1000)
 const endParam = Math.floor(now.getTime() / 1000)
 
 
-fetch(`https://${window.location.hostname}/api/temperatures?start=${startParam}&end=${endParam}&step=4`)
+fetch(`https://${window.location.hostname}/api/temperatures?start=${startParam}&end=${endParam}&step=1`)
 	.then(response => response.json())
 	.then(data => {
 		// data is expected to be a list of dicts with keys: cold, mixed, hot, target, timestamp

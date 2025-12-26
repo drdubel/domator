@@ -158,5 +158,5 @@ style.textContent = `
 `;
 document.head.appendChild(style);
 
-// Uncomment to enable floating particles
+// Comment to disable floating particles
 createParticles();

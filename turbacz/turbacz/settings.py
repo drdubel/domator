@@ -1,6 +1,6 @@
 from typing import Optional
 
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,

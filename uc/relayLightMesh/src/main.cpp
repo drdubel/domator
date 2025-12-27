@@ -16,7 +16,7 @@ const byte wifiActivityPin = 255;
 #define NLIGHTS 8
 
 // Timing constants
-#define STATUS_PRINT_INTERVAL 30000
+#define STATUS_PRINT_INTERVAL 10000
 #define WIFI_CONNECT_TIMEOUT 20000
 #define REGISTRATION_RETRY_INTERVAL 10000
 #define STATUS_REPORT_INTERVAL 15000
@@ -47,10 +47,8 @@ bool registeredWithRoot = false;
 unsigned long lastRegistrationAttempt = 0;
 unsigned long lastStatusPrint = 0;
 unsigned long lastStatusReport = 0;
+unsigned long long resetTimer = 0;
 String fw_md5;  // MD5 of the firmware as flashed
-
-const char* firmware_url =
-    "https://turbacz.dry.pl/static/data/relay/firmware.bin";
 
 void performFirmwareUpdate() {
     vTaskDelay(1000 / portTICK_PERIOD_MS);  // Allow message to be sent
@@ -435,6 +433,8 @@ void loop() {
 
         if (mesh.getNodeList().empty()) {
             registeredWithRoot = false;
+        } else {
+            resetTimer = millis();
         }
     }
 
@@ -457,7 +457,7 @@ void loop() {
         sendStatusReport();
     }
 
-    if (millis() > 30000 && !registeredWithRoot) {
+    if (millis() - resetTimer > 30000 && !registeredWithRoot) {
         Serial.println("MESH: Not registered after 30 seconds, restarting...");
         vTaskDelay(1000 / portTICK_PERIOD_MS);
         ESP.restart();

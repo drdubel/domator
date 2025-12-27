@@ -50,7 +50,7 @@ unsigned long lastStatusPrint = 0;
 unsigned long lastStatusReport = 0;
 
 const char* firmware_url =
-    "https://czupel.dry.pl/static/data/switch/firmware.bin";
+    "https://turbacz.dry.pl/static/data/switch/firmware.bin";
 
 void setLedColor(uint8_t r, uint8_t g, uint8_t b) {
     pixels.setPixelColor(0, pixels.Color(r, g, b));

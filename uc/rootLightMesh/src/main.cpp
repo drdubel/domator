@@ -78,7 +78,7 @@ std::map<uint32_t, uint32_t> nodeParentMap;
 volatile bool otaInProgress = false;
 
 const char* firmware_url =
-    "https://czupel.dry.pl/static/data/root/firmware.bin";
+    "https://turbacz.dry.pl/static/data/root/firmware.bin";
 
 String fw_md5;  // MD5 of the firmware as flashed
 
@@ -679,17 +679,9 @@ void checkMesh(void* pvParameters) {
             continue;
         }
 
-        for (auto nodeId : mesh.getNodeList()) {
-            if (nodes.find(nodeId) == nodes.end()) {
-                DEBUG_PRINTF(
-                    "MESH: Detected new node %u, requesting registration\n",
-                    nodeId);
-                mesh.sendSingle(nodeId, "Q");
-                vTaskDelay(50 / portTICK_PERIOD_MS);
-            }
-        }
+        mesh.sendBroadcast("Q");
 
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        vTaskDelay(5000 / portTICK_PERIOD_MS);
     }
 }
 

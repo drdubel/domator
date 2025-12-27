@@ -457,8 +457,8 @@ void loop() {
         sendStatusReport();
     }
 
-    if (millis() - resetTimer > 30000 && !registeredWithRoot) {
-        Serial.println("MESH: Not registered after 30 seconds, restarting...");
+    if (millis() - resetTimer > 90000 && !registeredWithRoot) {
+        Serial.println("MESH: Not registered after 90 seconds, restarting...");
         vTaskDelay(1000 / portTICK_PERIOD_MS);
         ESP.restart();
     }

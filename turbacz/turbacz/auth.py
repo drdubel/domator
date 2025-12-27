@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import WebSocket
 from jose import JWTError, jwt
 
-from turbacz.data.secrets import JWT_SECRET
+from turbacz.settings import config
 
 JWT_ALG = "HS256"
 JWT_EXPIRE_MINUTES = 60 * 24 * 14  # 14 days
@@ -19,12 +19,12 @@ def create_jwt(data: dict) -> str:
         }
     )
 
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+    return jwt.encode(payload, config.jwt_secret, algorithm=JWT_ALG)
 
 
 def verify_jwt(token: str) -> dict | None:
     try:
-        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+        return jwt.decode(token, config.jwt_secret, algorithms=[JWT_ALG])
 
     except JWTError:
         return None

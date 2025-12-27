@@ -13,7 +13,6 @@ from fastapi import Cookie, FastAPI, File, Response, UploadFile, WebSocket
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
-from starlette.config import Config
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -21,15 +20,10 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
 from starlette.types import ASGIApp
 
-from turbacz.auth import (
-    JWT_EXPIRE_MINUTES,
-    create_jwt,
-    get_current_user,
-    websocket_auth,
-)
+from turbacz.auth import (JWT_EXPIRE_MINUTES, create_jwt, get_current_user,
+                          websocket_auth)
 from turbacz.broker import mqtt
-from turbacz.data.authorized import authorized
-from turbacz.data.secrets import DSN
+from turbacz.settings import config
 from turbacz.state import relay_state
 from turbacz.websocket import ws_manager
 
@@ -54,11 +48,12 @@ class CustomRequestSizeMiddleware(BaseHTTPMiddleware):
 
 MAX_REQUEST_SIZE = 10_000_000
 
-sentry_sdk.init(
-    dsn=DSN,
-    send_default_pii=True,
-    traces_sample_rate=1.0,
-)
+if config.sentry_dsn:
+    sentry_sdk.init(
+        dsn=config.sentry_dsn,
+        send_default_pii=True,
+        traces_sample_rate=1.0,
+    )
 
 
 app = FastAPI(title="Turbacz Home Automation System", version="0.1.0")
@@ -68,20 +63,18 @@ app.add_middleware(MetricsMiddleware)
 app.add_route("/metrics", metrics)
 mqtt.init_app(app)
 
-config = Config("turbacz/data/.env")
-oauth = OAuth(config)
+oauth = OAuth()
+oauth.register(
+    config.oidc.provider,
+    client_id=config.oidc.client_id,
+    client_secret=config.oidc.client_secret,
+    server_metadata_url=config.oidc.server_metadata_url,
+    client_kwargs={"scope": "openid email profile"},
+)
 
 background_task_started = False
 
 app.mount("/static", StaticFiles(directory="./static", html=True), name="static")
-
-
-CONF_URL = "https://accounts.google.com/.well-known/openid-configuration"
-oauth.register(
-    name="google",
-    server_metadata_url=CONF_URL,
-    client_kwargs={"scope": "openid email profile"},
-)
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -181,7 +174,7 @@ async def heating(request: Request, access_token: Optional[str] = Cookie(None)):
 async def get_temperatures(request: Request, start: int, end: int, step: int):
     async with httpx.AsyncClient() as client:
         response1 = await client.get(
-            "http://127.0.0.1:8428/api/v1/query_range",
+            f"{config.prometheus}/api/v1/query_range",
             params={
                 "start": start,
                 "end": end,
@@ -191,7 +184,7 @@ async def get_temperatures(request: Request, start: int, end: int, step: int):
         )
 
         response2 = await client.get(
-            "http://127.0.0.1:8428/api/v1/query_range",
+            f"{config.prometheus}/api/v1/query_range",
             params={
                 "start": start,
                 "end": end,
@@ -346,7 +339,7 @@ async def websocket_blinds(websocket: WebSocket):
                 continue
             logger.debug("putting %s in command queue", req)
             mqtt.client.publish(
-                "/blind/cmd", f"{chr(int(req.blind[1])+96)}{req.position}"
+                "/blind/cmd", f"{chr(int(req.blind[1]) + 96)}{req.position}"
             )
 
     await receive_command(websocket)
@@ -458,7 +451,7 @@ def start():
 
     logging.basicConfig(level=logging.INFO)
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    uvicorn.run(app, host="127.0.0.1", port=8002)
+    uvicorn.run(app, host=config.server.host, port=config.server.port)
 
 
 if __name__ == "__main__":

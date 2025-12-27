@@ -32,9 +32,7 @@
 WiFiServer telnetServer(23);
 WiFiClient telnetClients[MAX_TELNET_CLIENTS];
 
-IPAddress mqtt_broker(192, 168, 3, 10);
 const int mqtt_port = 1883;
-const char* mqttUser = "mesh_root";
 uint32_t device_id;
 
 std::map<uint32_t, String[6]> nodesStatus;
@@ -420,6 +418,10 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         msg += (char)payload[i];
     }
 
+    if (msg == "P") {
+        return;
+    }
+
     DEBUG_PRINTF("MQTT: [%s] %s\n", topic, msg.c_str());
 
     if (strcmp(topic, "/switch/cmd/root") == 0) {
@@ -679,7 +681,15 @@ void checkMesh(void* pvParameters) {
             continue;
         }
 
-        mesh.sendBroadcast("Q");
+        for (auto nodeId : mesh.getNodeList()) {
+            if (nodes.find(nodeId) == nodes.end()) {
+                DEBUG_PRINTF(
+                    "MESH: Detected new node %u, requesting registration\n",
+                    nodeId);
+                mesh.sendSingle(nodeId, "Q");
+                vTaskDelay(25 / portTICK_PERIOD_MS);
+            }
+        }
 
         vTaskDelay(5000 / portTICK_PERIOD_MS);
     }

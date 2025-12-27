@@ -11,7 +11,7 @@
 #include <painlessMesh.h>
 
 // Pin and hardware definitions
-#define NLIGHTS 5
+#define NLIGHTS 8
 #define LED_PIN 8
 #define NUM_LEDS 1
 
@@ -41,9 +41,9 @@ uint32_t clicks = 0;
 
 String fw_md5;  // MD5 of the firmware as flashed
 
-const int buttonPins[NLIGHTS] = {A0, A1, A3, A4, A5};
+const int buttonPins[NLIGHTS] = {A0, A1, A2, A3, A4, A5, 6, 7};
 unsigned long lastTimeClick[NLIGHTS] = {0};
-int lastButtonState[NLIGHTS] = {HIGH, HIGH, HIGH, HIGH, HIGH};
+int lastButtonState[NLIGHTS] = {HIGH, HIGH, HIGH, HIGH, HIGH, HIGH, HIGH, HIGH};
 bool registeredWithRoot = false;
 unsigned long lastRegistrationAttempt = 0;
 unsigned long lastStatusPrint = 0;
@@ -417,5 +417,11 @@ void loop() {
     if (millis() - lastStatusReport >= STATUS_REPORT_INTERVAL &&
         registeredWithRoot) {
         sendStatusReport();
+    }
+
+    if (millis() > 30000 && !registeredWithRoot) {
+        Serial.println("MESH: Not registered after 30 seconds, restarting...");
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        ESP.restart();
     }
 }

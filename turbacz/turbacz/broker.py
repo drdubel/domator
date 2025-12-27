@@ -9,7 +9,7 @@ import namer
 from fastapi_mqtt import FastMQTT, MQTTConfig
 
 from turbacz import metrics
-from turbacz.data.secrets import mqtt_password
+from turbacz.settings import config
 from turbacz.state import relay_state
 from turbacz.websocket import ws_manager
 
@@ -17,11 +17,11 @@ logger = logging.getLogger(__name__)
 
 
 mqtt_config = MQTTConfig(
-    host="127.0.0.1",
-    port=1883,
+    host=config.mqtt.host,
+    port=config.mqtt.port,
     keepalive=60,
-    username="turbacz",
-    password=mqtt_password,
+    username=config.mqtt.username,
+    password=config.mqtt.password,
 )
 
 mqtt = FastMQTT(config=mqtt_config)

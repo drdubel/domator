@@ -456,4 +456,10 @@ void loop() {
         registeredWithRoot) {
         sendStatusReport();
     }
+
+    if (millis() > 30000 && !registeredWithRoot) {
+        Serial.println("MESH: Not registered after 30 seconds, restarting...");
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        ESP.restart();
+    }
 }

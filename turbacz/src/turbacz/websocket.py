@@ -28,7 +28,7 @@ class ConnectionManager:
             try:
                 if app in connection.url.path:
                     await connection.send_json(message)
-            except LocalProtocolError as err:
+            except RuntimeError as err:
                 self.active_connections.remove(connection)
                 logger.warning(
                     "removing closed connection %s (%s)", connection, err.args[0]

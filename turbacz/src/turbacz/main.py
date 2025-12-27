@@ -151,8 +151,7 @@ async def websocket_lights(websocket: WebSocket, access_token=Cookie()):
             except ValidationError as err:
                 logger.error("Cannot parse %s %s", cmd, err)
                 continue
-            logger.debug("putting %s in command queue", cmd)
-            print(f"{chg.id} {chg.light} {chg.state}")
+            logger.debug("putting %s in command queue", chg)
             mqtt.client.publish(f"/relay/{chg.id}/cmd", f"{chg.light}{chg.state}")
 
     if access_token in access_cookies:
@@ -163,7 +162,7 @@ def start():
     import uvicorn
 
     logging.basicConfig(level=logging.DEBUG)
-    uvicorn.run(app, host="0.0.0.0", port=8000, forwarded_allow_ips="192.168.3.10")
+    uvicorn.run(app, host="0.0.0.0", port=8000, forwarded_allow_ips="192.168.42.10")
 
 
 if __name__ == "__main__":

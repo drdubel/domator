@@ -14,131 +14,151 @@
 <body>
 	<div id="sidenav" class="sidenav">
 		<a href="javascript:void(0)" class="closebtn" onclick="closeNav()">&times;</a>
-		<a href="/auto">Home</a>
-		<a href="blinds">Blinds</a>
-		<a href="heating">Heating</a>
+		<!-- <a href="/auto">Home</a> -->
 		<a id="logout" style=" position: absolute; bottom: 25px;" href="/logout">Logout</a>
+		<a href=#dol>Dół</a><a href=#gora>Góra</a><a href=#rozne>Różne</a>
 	</div>
 	<div id="main">
 		<button class="openbtn" id="openbtn" onclick="openNav()">&#9776;</button>
-		<h1>Relay 1</h1>
-		<div id="relay1" class="flex-containers-small">
-			<h2 class="small">Salon:</h2>
+		<hr id="dol">
+		<div id="przedpokoj" class="flex-containers-small">
+			<h2>Przedpokoj</h2>
 			<div class="break"></div>
 			<div class="flex-container-small">
-				<a>1 a</a>
-				<img id="1a" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
-			</div>
-			<div class="flex-container-small">
-				<a>1 b</a>
-				<img id="1b" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
-			</div>
-			<div class="flex-container-small">
-				<a>1 c</a>
-				<img id="1c" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
-			</div>
-			<div class="flex-container-small">
-				<a>1 d</a>
-				<img id="1d" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
-			</div>
-			<div class="flex-container-small">
-				<a>1 e</a>
-				<img id="1e" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
-			</div>
-			<div class="flex-container-small">
-				<a>1 f</a>
-				<img id="1f" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
-			</div>
-			<div class="flex-container-small">
-				<a>1 g</a>
-				<img id="1g" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
-			</div>
-			<div class="flex-container-small">
-				<a>1 h</a>
-				<img id="1h" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
-			</div>
-		</div>
-
-		<h2>Relay 2</h2>
-		<div id="relay2" class="flex-containers-small">
-			<h2 class="small">Salon:</h2>
-			<div class="break"></div>
-			<div class="flex-container-small">
-				<a>2 a</a>
-				<img id="2a" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
-			</div>
-			<div class="flex-container-small">
-				<a>2 b</a>
 				<img id="2b" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<a>sufit x3</a>
 			</div>
 			<div class="flex-container-small">
-				<a>2 c</a>
-				<img id="2c" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
-			</div>
-			<div class="flex-container-small">
-				<a>2 d</a>
-				<img id="2d" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
-			</div>
-			<div class="flex-container-small">
-				<a>2 e</a>
-				<img id="2e" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
-			</div>
-			<div class="flex-container-small">
-				<a>2 f</a>
-				<img id="2f" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
-			</div>
-			<div class="flex-container-small">
-				<a>2 g</a>
-				<img id="2g" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
-			</div>
-			<div class="flex-container-small">
-				<a>2 h</a>
-				<img id="2h" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<img id="2a" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<a>sufit x1</a>
 			</div>
 		</div>
-
-		<h3>Relay 3</h3>
-		<div id="relay3" class="flex-containers-small">
-			<h2 class="small">Salon:</h2>
+		<div id="salon" class="flex-containers-small">
+			<h2>Salon</h2>
 			<div class="break"></div>
 			<div class="flex-container-small">
-				<a>3 a</a>
-				<img id="3a" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<img id="2e" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<a>kinkiety</a>
 			</div>
 			<div class="flex-container-small">
-				<a>3 b</a>
-				<img id="3b" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<img id="1g" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<a>halogeny</a>
 			</div>
 			<div class="flex-container-small">
-				<a>3 c</a>
-				<img id="3c" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
-			</div>
-			<div class="flex-container-small">
-				<a>3 d</a>
-				<img id="3d" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
-			</div>
-			<div class="flex-container-small">
-				<a>3 e</a>
-				<img id="3e" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
-			</div>
-			<div class="flex-container-small">
-				<a>3 f</a>
-				<img id="3f" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
-			</div>
-			<div class="flex-container-small">
-				<a>3 g</a>
 				<img id="3g" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
-			</div>
-			<div class="flex-container-small">
-				<a>3 h</a>
-				<img id="3h" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<a>korytarz</a>
 			</div>
 		</div>
-
-		<div id="debug" class="debug">
+		<div id="kuchnia" class="flex-containers-small">
+			<h2>Kuchnia</h2>
+			<div class="break"></div>
 			<div class="flex-container-small">
-				<a>Debug</a>
+				<img id="1f" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<a>wyspa</a>
+			</div>
+			<div class="flex-container-small">
+				<img id="1e" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<a>komin</a>
+			</div>
+			<div class="flex-container-small">
+				<img id="1d" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<a>wywietrznik</a>
+			</div>
+		</div>
+		<div id="lazienkadolna" class="flex-containers-small">
+			<h2>Lazienka dolna</h2>
+			<div class="break"></div>
+			<div class="flex-container-small">
+				<img id="1b" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<a>sufit</a>
+			</div>
+			<div class="flex-container-small">
+				<img id="1a" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<a>wentylator</a>
+			</div>
+		</div>
+		<div id="gabinet" class="flex-containers-small">
+			<h2>Gabinet</h2>
+			<div class="break"></div>
+			<div class="flex-container-small">
+				<img id="3h" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<a>sufit</a>
+			</div>
+		</div>
+		<hr id="gora">
+		<div id="antresola" class="flex-containers-small">
+			<h2>Antresola</h2>
+			<div class="break"></div>
+			<div class="flex-container-small">
+				<img id="3e" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<a>komin</a>
+			</div>
+			<div class="flex-container-small">
+				<img id="3f" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<a>sufit</a>
+			</div>
+		</div>
+		<div id="sypialnia" class="flex-containers-small">
+			<h2>Sypialnia</h2>
+			<div class="break"></div>
+			<div class="flex-container-small">
+				<img id="3d" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<a>sufit</a>
+			</div>
+		</div>
+		<div id="lazienkagorna" class="flex-containers-small">
+			<h2>Lazienka Gorna</h2>
+			<div class="break"></div>
+			<!-- te dwa spokojnie mogly byc razem -->
+			<div class="flex-container-small">
+				<img id="3a" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<a>prysznic</a>
+			</div>
+			<div class="flex-container-small">
+				<img id="3c" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<a>toaleta</a>
+			</div>
+		</div>
+		<hr>
+		<div class="flex-containers-small">
+			<h2 id="rozne">Rozne</h2>
+			<div class="break"></div>
+			<div class="flex-container-small">
+				<img id="1c" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<a>1c</a>
+			</div>
+			<div class="flex-container-small">
+				<img id="1h" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<a>1h</a>
+			</div>
+			<div class="flex-container-small">
+				<img id="2c" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<a>2c</a>
+			</div>
+			<div class="flex-container-small">
+				<img id="2d" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<a>2d</a>
+			</div>
+			<div class="flex-container-small">
+				<img id="2f" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<a>2f</a>
+			</div>
+			<div class="flex-container-small">
+				<img id="2g" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<a>2g</a>
+			</div>
+			<div class="flex-container-small">
+				<img id="2h" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<a>2h</a>
+			</div>
+			<div class="flex-container-small">
+				<img id="3b" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<a>3b</a>
+			</div>
+
+			<div class="flex-container-small">
 				<img id="s8" src="/static/data/img/off.png" onclick="changeSwitchState(this.id)" />
+				<a>Debug</a>
 			</div>
 		</div>
 	</div>

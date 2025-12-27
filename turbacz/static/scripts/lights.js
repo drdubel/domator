@@ -17,6 +17,23 @@ ws.onmessage = function (event) {
 	}
 }
 
+document.querySelectorAll('.editable').forEach(el => {
+  el.addEventListener('click', () => {
+    el.contentEditable = "true";
+    el.focus();
+  });
+
+  el.addEventListener('blur', () => {
+    el.contentEditable = "false";
+  });
+
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault(); // prevent line break
+      el.blur(); // trigger blur to save
+    }
+  });
+});
 
 function changeSwitchState(id) {
 	switch (lights[id]) {

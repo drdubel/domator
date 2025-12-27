@@ -41,7 +41,7 @@ uint32_t clicks = 0;
 
 String fw_md5;  // MD5 of the firmware as flashed
 
-const int buttonPins[NLIGHTS] = {A0, A1, A2, A3, A4, A5, A6, A7};
+const int buttonPins[NLIGHTS] = {A0, A1, A2, A3, A4, A5, 6, 7};
 unsigned long lastTimeClick[NLIGHTS] = {0};
 int lastButtonState[NLIGHTS] = {HIGH, HIGH, HIGH, HIGH, HIGH, HIGH, HIGH, HIGH};
 bool registeredWithRoot = false;

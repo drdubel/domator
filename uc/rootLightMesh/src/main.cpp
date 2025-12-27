@@ -418,6 +418,10 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         msg += (char)payload[i];
     }
 
+    if (msg == "P") {
+        return;
+    }
+
     DEBUG_PRINTF("MQTT: [%s] %s\n", topic, msg.c_str());
 
     if (strcmp(topic, "/switch/cmd/root") == 0) {
@@ -677,7 +681,15 @@ void checkMesh(void* pvParameters) {
             continue;
         }
 
-        mesh.sendBroadcast("Q");
+        for (auto nodeId : mesh.getNodeList()) {
+            if (nodes.find(nodeId) == nodes.end()) {
+                DEBUG_PRINTF(
+                    "MESH: Detected new node %u, requesting registration\n",
+                    nodeId);
+                mesh.sendSingle(nodeId, "Q");
+                vTaskDelay(25 / portTICK_PERIOD_MS);
+            }
+        }
 
         vTaskDelay(5000 / portTICK_PERIOD_MS);
     }

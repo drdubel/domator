@@ -685,7 +685,7 @@ void checkMesh(void* pvParameters) {
                     "MESH: Detected new node %u, requesting registration\n",
                     nodeId);
                 mesh.sendSingle(nodeId, "Q");
-                vTaskDelay(10 / portTICK_PERIOD_MS);
+                vTaskDelay(50 / portTICK_PERIOD_MS);
             }
         }
 

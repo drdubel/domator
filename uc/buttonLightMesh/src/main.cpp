@@ -11,13 +11,13 @@
 #include <painlessMesh.h>
 
 // Pin and hardware definitions
-#define NLIGHTS 8
+#define NLIGHTS 7
 #define LED_PIN 8
 #define NUM_LEDS 1
 
 // Timing constants
 #define DEBOUNCE_DELAY 250
-#define STATUS_PRINT_INTERVAL 30000
+#define STATUS_PRINT_INTERVAL 10000
 #define WIFI_CONNECT_TIMEOUT 20000
 #define REGISTRATION_RETRY_INTERVAL 10000
 #define STATUS_REPORT_INTERVAL 15000
@@ -41,16 +41,14 @@ uint32_t clicks = 0;
 
 String fw_md5;  // MD5 of the firmware as flashed
 
-const int buttonPins[NLIGHTS] = {A0, A1, A2, A3, A4, A5, 6, 7};
+const int buttonPins[NLIGHTS] = {A0, A1, A3, A4, A5, 6, 7};
 unsigned long lastTimeClick[NLIGHTS] = {0};
-int lastButtonState[NLIGHTS] = {HIGH, HIGH, HIGH, HIGH, HIGH, HIGH, HIGH, HIGH};
+int lastButtonState[NLIGHTS] = {HIGH, HIGH, HIGH, HIGH, HIGH, HIGH, HIGH};
 bool registeredWithRoot = false;
 unsigned long lastRegistrationAttempt = 0;
 unsigned long lastStatusPrint = 0;
 unsigned long lastStatusReport = 0;
-
-const char* firmware_url =
-    "https://turbacz.dry.pl/static/data/switch/firmware.bin";
+unsigned long long resetTimer = 0;
 
 void setLedColor(uint8_t r, uint8_t g, uint8_t b) {
     pixels.setPixelColor(0, pixels.Color(r, g, b));
@@ -398,6 +396,8 @@ void loop() {
 
         if (mesh.getNodeList().empty()) {
             registeredWithRoot = false;
+        } else {
+            resetTimer = millis();
         }
     }
 
@@ -419,7 +419,7 @@ void loop() {
         sendStatusReport();
     }
 
-    if (millis() > 30000 && !registeredWithRoot) {
+    if (millis() - resetTimer > 30000 && !registeredWithRoot) {
         Serial.println("MESH: Not registered after 30 seconds, restarting...");
         vTaskDelay(1000 / portTICK_PERIOD_MS);
         ESP.restart();

@@ -75,9 +75,6 @@ std::map<uint32_t, uint32_t> nodeParentMap;
 // OTA update flag
 volatile bool otaInProgress = false;
 
-const char* firmware_url =
-    "https://turbacz.dry.pl/static/data/root/firmware.bin";
-
 String fw_md5;  // MD5 of the firmware as flashed
 
 // Telnet helper functions
@@ -741,6 +738,10 @@ void sendNodeStatusReport(void* pvParameters) {
             status["status"] =
                 status["last_seen"].as<uint32_t>() < 60 ? "online" : "offline";
             status["parent"] = String(nodeParentMap[nodeId]);
+
+            if (status["status"] == "offline") {
+                nodes.erase(nodeId);
+            }
         }
 
         JsonObject rootNode =

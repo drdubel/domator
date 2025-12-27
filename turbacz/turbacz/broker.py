@@ -2,8 +2,8 @@ import asyncio
 import json
 import logging
 from string import ascii_lowercase
-
 from time import perf_counter_ns
+
 import httpx
 import namer
 from fastapi_mqtt import FastMQTT, MQTTConfig
@@ -57,8 +57,8 @@ def connect(client, flags, rc, properties):
     mqtt.client.subscribe("/relay/state/+")
     mqtt.client.subscribe("/switch/state/+")
 
-    if task is None:
-        task = asyncio.create_task(get_delays())
+    # if task is None:
+    #     task = asyncio.create_task(get_delays())
 
     logger.info("Connected: %s %s %s %s", client, flags, rc, properties)
 

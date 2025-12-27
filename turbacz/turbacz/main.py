@@ -20,8 +20,12 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
 from starlette.types import ASGIApp
 
-from turbacz.auth import (JWT_EXPIRE_MINUTES, create_jwt, get_current_user,
-                          websocket_auth)
+from turbacz.auth import (
+    JWT_EXPIRE_MINUTES,
+    create_jwt,
+    get_current_user,
+    websocket_auth,
+)
 from turbacz.broker import mqtt
 from turbacz.settings import config
 from turbacz.state import relay_state
@@ -48,7 +52,7 @@ class CustomRequestSizeMiddleware(BaseHTTPMiddleware):
 
 MAX_REQUEST_SIZE = 10_000_000
 
-if config.sentry_dsn:
+if config.sentry_dsn is not None:
     sentry_sdk.init(
         dsn=config.sentry_dsn,
         send_default_pii=True,
@@ -113,7 +117,7 @@ async def auth(request: Request):
 
     user = token.get("userinfo")
 
-    if user and user["email"] in authorized:
+    if user and user["email"] in config.authorized:
         jwt_token = create_jwt(
             {
                 "sub": user["email"],

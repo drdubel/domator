@@ -1,15 +1,19 @@
 from typing import Optional
 
 from pydantic import BaseModel, HttpUrl
-from pydantic_settings import (BaseSettings, PydanticBaseSettingsSource,
-                               SettingsConfigDict, TomlConfigSettingsSource)
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+    TomlConfigSettingsSource,
+)
 
 
 class OIDCSettings(BaseModel):
     provider: str = "google"
     client_id: str
     client_secret: str
-    server_metadata_url: HttpUrl = (
+    server_metadata_url: str = (
         "https://accounts.google.com/.well-known/openid-configuration"
     )
 
@@ -31,8 +35,8 @@ class TurbaczSettings(BaseSettings):
     jwt_secret: str
     mqtt: MQTTServerSettings
     oidc: OIDCSettings
-    prometheus: HttpUrl = "http://127.0.0.1:8248"
-    sentry_dsn: Optional[HttpUrl] = None
+    prometheus: str = "http://127.0.0.1:8248"
+    sentry_dsn: Optional[str] = None
     server: ServerSettings
 
     model_config = SettingsConfigDict(toml_file="turbacz.toml")

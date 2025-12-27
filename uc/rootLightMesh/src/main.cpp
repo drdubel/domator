@@ -32,9 +32,7 @@
 WiFiServer telnetServer(23);
 WiFiClient telnetClients[MAX_TELNET_CLIENTS];
 
-IPAddress mqtt_broker(192, 168, 3, 10);
 const int mqtt_port = 1883;
-const char* mqttUser = "mesh_root";
 uint32_t device_id;
 
 std::map<uint32_t, String[6]> nodesStatus;

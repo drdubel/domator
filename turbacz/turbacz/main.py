@@ -8,7 +8,6 @@ import httpx
 import sentry_sdk
 from aioprometheus.asgi.middleware import MetricsMiddleware
 from aioprometheus.asgi.starlette import metrics
-from authlib.integrations.starlette_client import OAuth, OAuthError
 from fastapi import Cookie, FastAPI, File, Response, UploadFile, WebSocket
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -20,8 +19,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
 from starlette.types import ASGIApp
 
-from turbacz.auth import (JWT_EXPIRE_MINUTES, create_jwt, get_current_user,
-                          websocket_auth)
+from turbacz import auth
 from turbacz.broker import mqtt
 from turbacz.settings import config
 from turbacz.state import relay_state
@@ -48,7 +46,7 @@ class CustomRequestSizeMiddleware(BaseHTTPMiddleware):
 
 MAX_REQUEST_SIZE = 10_000_000
 
-if config.sentry_dsn:
+if config.sentry_dsn is not None:
     sentry_sdk.init(
         dsn=config.sentry_dsn,
         send_default_pii=True,
@@ -61,16 +59,8 @@ app.add_middleware(CustomRequestSizeMiddleware, max_content_size=MAX_REQUEST_SIZ
 app.add_middleware(SessionMiddleware, secret_key="!secret")
 app.add_middleware(MetricsMiddleware)
 app.add_route("/metrics", metrics)
+app.include_router(auth.router)
 mqtt.init_app(app)
-
-oauth = OAuth()
-oauth.register(
-    config.oidc.provider,
-    client_id=config.oidc.client_id,
-    client_secret=config.oidc.client_secret,
-    server_metadata_url=config.oidc.server_metadata_url,
-    client_kwargs={"scope": "openid email profile"},
-)
 
 background_task_started = False
 
@@ -86,7 +76,7 @@ async def custom_http_exception_handler(request: Request, exc):
 
 @app.get("/")
 async def homepage(request: Request, access_token: Optional[str] = Cookie(None)):
-    user = get_current_user(access_token)
+    user = auth.get_current_user(access_token)
 
     if user:
         return RedirectResponse(url="/auto")
@@ -97,69 +87,9 @@ async def homepage(request: Request, access_token: Optional[str] = Cookie(None))
     return HTMLResponse(content=data, media_type="text/html")
 
 
-@app.get("/login")
-async def login(request: Request):
-    redirect_uri = request.url_for("auth")
-    return await oauth.google.authorize_redirect(request, redirect_uri)
-
-
-@app.get("/auth")
-async def auth(request: Request):
-    try:
-        token = await oauth.google.authorize_access_token(request)
-
-    except OAuthError as error:
-        return HTMLResponse(f"<h1>{error.error}</h1>")
-
-    user = token.get("userinfo")
-
-    if user and user["email"] in authorized:
-        jwt_token = create_jwt(
-            {
-                "sub": user["email"],
-                "name": user.get("name"),
-            }
-        )
-
-        response = RedirectResponse(url="/auto")
-        response.set_cookie(
-            "access_token",
-            jwt_token,
-            httponly=False,
-            secure=True,  # Set to False in development if not using HTTPS
-            samesite="lax",
-            max_age=JWT_EXPIRE_MINUTES * 60,
-        )
-
-        return response
-
-    return RedirectResponse(url="/")
-
-
-@app.get("/logout")
-async def logout(response: Response):
-    response = RedirectResponse(url="/")
-    response.delete_cookie("access_token")
-
-    return response
-
-
-@app.get("/auto")
-async def main(request: Request, access_token: Optional[str] = Cookie(None)):
-    user = get_current_user(access_token)
-
-    if user:
-        with open(os.path.join("static", "index.html")) as fh:
-            data = fh.read()
-
-        return Response(content=data, media_type="text/html")
-
-    return RedirectResponse(url="/")
-
-
 @app.get("/heating")
 async def heating(request: Request, access_token: Optional[str] = Cookie(None)):
-    user = get_current_user(access_token)
+    user = auth.get_current_user(access_token)
 
     if user:
         with open(os.path.join("static", "heating.html")) as fh:
@@ -216,7 +146,7 @@ async def get_temperatures(request: Request, start: int, end: int, step: int):
 
 @app.get("/blinds")
 async def blinds(request: Request, access_token: Optional[str] = Cookie(None)):
-    user = get_current_user(access_token)
+    user = auth.get_current_user(access_token)
 
     if user:
         with open(os.path.join("static", "blinds.html")) as fh:
@@ -229,7 +159,7 @@ async def blinds(request: Request, access_token: Optional[str] = Cookie(None)):
 
 @app.get("/lights")
 async def lights(request: Request, access_token: Optional[str] = Cookie(None)):
-    user = get_current_user(access_token)
+    user = auth.get_current_user(access_token)
 
     if user:
         with open(os.path.join("static", "lights.html")) as fh:
@@ -242,7 +172,7 @@ async def lights(request: Request, access_token: Optional[str] = Cookie(None)):
 
 @app.get("/rcm")
 async def rcm_page(request: Request, access_token: Optional[str] = Cookie(None)):
-    user = get_current_user(access_token)
+    user = auth.get_current_user(access_token)
 
     if not user:
         return RedirectResponse(url="/")
@@ -255,7 +185,7 @@ async def rcm_page(request: Request, access_token: Optional[str] = Cookie(None))
 
 @app.get("/upload")
 async def upload_page(request: Request, access_token: Optional[str] = Cookie(None)):
-    user = get_current_user(access_token)
+    user = auth.get_current_user(access_token)
 
     if not user:
         return RedirectResponse(url="/")
@@ -273,7 +203,7 @@ async def upload_firmware(
     file: UploadFile = File(...),
     access_token: Optional[str] = Cookie(None),
 ):
-    user = get_current_user(access_token)
+    user = auth.get_current_user(access_token)
 
     if not user:
         return RedirectResponse(url="/")
@@ -319,7 +249,7 @@ async def set_blind(req: BlindRequest):
 
 @app.websocket("/blinds/ws/{client_id}")
 async def websocket_blinds(websocket: WebSocket):
-    user = await websocket_auth(websocket)
+    user = await auth.websocket_auth(websocket)
 
     if not user:
         await websocket.close(code=1008)
@@ -347,7 +277,7 @@ async def websocket_blinds(websocket: WebSocket):
 
 @app.websocket("/heating/ws/{client_id}")
 async def websocket_heating(websocket: WebSocket):
-    user = await websocket_auth(websocket)
+    user = await auth.websocket_auth(websocket)
 
     if not user:
         await websocket.close(code=1008)
@@ -366,7 +296,7 @@ async def websocket_heating(websocket: WebSocket):
 
 @app.websocket("/lights/ws/{client_id}")
 async def websocket_lights(websocket: WebSocket):
-    user = await websocket_auth(websocket)
+    user = await auth.websocket_auth(websocket)
 
     if not user:
         await websocket.close(code=1008)
@@ -414,7 +344,7 @@ async def websocket_lights(websocket: WebSocket):
 
 @app.websocket("/rcm/ws/{client_id}")
 async def websocket_rcm(websocket: WebSocket):
-    user = await websocket_auth(websocket)
+    user = await auth.websocket_auth(websocket)
 
     if not user:
         await websocket.close(code=1008)

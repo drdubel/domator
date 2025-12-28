@@ -1,12 +1,27 @@
+import os
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
-from fastapi import WebSocket
+from authlib.integrations.starlette_client import OAuth, OAuthError
+from fastapi import APIRouter, Cookie, Request, Response, WebSocket
 from jose import JWTError, jwt
+from starlette.responses import HTMLResponse, RedirectResponse
 
 from turbacz.settings import config
 
+router = APIRouter()
+
 JWT_ALG = "HS256"
 JWT_EXPIRE_MINUTES = 60 * 24 * 14  # 14 days
+
+oauth = OAuth()
+oauth.register(
+    config.oidc.provider,
+    client_id=config.oidc.client_id,
+    client_secret=config.oidc.client_secret,
+    server_metadata_url=config.oidc.server_metadata_url,
+    client_kwargs={"scope": "openid email profile"},
+)
 
 
 def create_jwt(data: dict) -> str:
@@ -48,3 +63,63 @@ async def websocket_auth(websocket: WebSocket) -> dict | None:
         return None
 
     return user
+
+
+@router.get("/login")
+async def login(request: Request):
+    redirect_uri = request.url_for("auth")
+    return await oauth.google.authorize_redirect(request, redirect_uri)
+
+
+@router.get("/auth")
+async def auth(request: Request):
+    try:
+        token = await oauth.google.authorize_access_token(request)
+
+    except OAuthError as error:
+        return HTMLResponse(f"<h1>{error.error}</h1>")
+
+    user = token.get("userinfo")
+
+    if user and user["email"] in config.authorized:
+        jwt_token = create_jwt(
+            {
+                "sub": user["email"],
+                "name": user.get("name"),
+            }
+        )
+
+        response = RedirectResponse(url="/auto")
+        response.set_cookie(
+            "access_token",
+            jwt_token,
+            httponly=False,
+            secure=True,  # Set to False in development if not using HTTPS
+            samesite="lax",
+            max_age=JWT_EXPIRE_MINUTES * 60,
+        )
+
+        return response
+
+    return RedirectResponse(url="/")
+
+
+@router.get("/logout")
+async def logout(response: Response):
+    response = RedirectResponse(url="/")
+    response.delete_cookie("access_token")
+
+    return response
+
+
+@router.get("/auto")
+async def main(request: Request, access_token: Optional[str] = Cookie(None)):
+    user = get_current_user(access_token)
+
+    if user:
+        with open(os.path.join("static", "index.html")) as fh:
+            data = fh.read()
+
+        return Response(content=data, media_type="text/html")
+
+    return RedirectResponse(url="/")

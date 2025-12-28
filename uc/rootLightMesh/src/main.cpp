@@ -58,7 +58,6 @@ WiFiClient wifiClient;
 PubSubClient mqttClient(mqtt_broker, mqtt_port, wifiClient);
 
 // Timing variables
-static unsigned long lastPrint = 0;
 static unsigned long lastMqttReconnect = 0;
 static unsigned long lastNodeStatusReport = 0;
 
@@ -678,6 +677,18 @@ void checkMesh(void* pvParameters) {
             continue;
         }
 
+        auto nowNodes = mesh.getNodeList();
+        for (auto node : nodes) {
+            uint32_t nodeId = node.first;
+            if (std::find(nowNodes.begin(), nowNodes.end(), nodeId) ==
+                nowNodes.end()) {
+                DEBUG_PRINTF(
+                    "MESH: Node %u not in mesh, removing from registry\n",
+                    nodeId);
+                nodes.erase(nodeId);
+            }
+        }
+
         for (auto nodeId : mesh.getNodeList()) {
             if (nodes.find(nodeId) == nodes.end()) {
                 DEBUG_PRINTF(
@@ -798,8 +809,6 @@ void statusReport(void* pvParameters) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
-
-        lastPrint = millis();
 
         DEBUG_PRINTLN("\n--- Status Report ---");
         DEBUG_PRINTF("Firmware MD5: %s\n", fw_md5.c_str());

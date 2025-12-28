@@ -338,10 +338,7 @@ void resetTask(void* pvParameters) {
 
 void IRAM_ATTR buttonISR(void* arg) {
     uint32_t index = (uint32_t)arg;
-    uint32_t now = millis();
-
     portENTER_CRITICAL_ISR(&isrMux);
-    isrTime[index] = now;
     buttonEvent[index] = true;
     portEXIT_CRITICAL_ISR(&isrMux);
 }
@@ -355,21 +352,18 @@ void handleButtonsTask(void* pvParameters) {
 
         for (int i = 0; i < NLIGHTS; i++) {
             bool event;
-            uint32_t eventTime;
 
             portENTER_CRITICAL(&isrMux);
             event = buttonEvent[i];
-            eventTime = isrTime[i];
-            if (event) buttonEvent[i] = false;
+            if (event) buttonEvent[i] = false;  // reset flag
             portEXIT_CRITICAL(&isrMux);
 
             if (!event) continue;
 
-            // debounce
-            if (eventTime - lastTimeClick[i] < DEBOUNCE_DELAY) {
-                continue;
-            }
-            lastTimeClick[i] = eventTime;
+            uint32_t now = millis();
+            if (now - lastTimeClick[i] < DEBOUNCE_DELAY) continue;  // debounce
+
+            lastTimeClick[i] = now;
             clicks++;
 
             char msg = 'a' + i;

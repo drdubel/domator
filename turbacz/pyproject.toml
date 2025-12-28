@@ -31,7 +31,6 @@ turbacz = "turbacz.main:start"
 
 [project.optional-dependencies]
 dev = [
-    "black>=25.11.0",
     "isort>=7.0.0",
 ]
 
@@ -44,3 +43,9 @@ turbacz = ["../static/**"]
 [build-system]
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14.10",
+    "ty>=0.0.7",
+]

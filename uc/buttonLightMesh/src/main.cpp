@@ -482,6 +482,7 @@ void setup() {
     xTaskCreatePinnedToCore(handleButtonsTask, "ButtonTask", 4096, NULL, 2,
                             &buttonTaskHandle, 0);
 
+    // Start LED status update task
     xTaskCreatePinnedToCore(updateLedStatus, "LedTask", 4096, NULL, 1,
                             &ledTaskHandle, 0);
 
@@ -489,12 +490,15 @@ void setup() {
     xTaskCreatePinnedToCore(statusPrint, "StatusPrintTask", 4096, NULL, 1,
                             &statusTaskHandle, 0);
 
+    // Start reset watchdog task
     xTaskCreatePinnedToCore(resetTask, "ResetTask", 4096, NULL, 1,
                             &resetTaskHandle, 0);
 
+    // Start status report task
     xTaskCreatePinnedToCore(sendStatusReport, "SendStatusReportTask", 4096,
                             NULL, 1, &statusReportTaskHandle, 0);
 
+    // Start registration task
     xTaskCreatePinnedToCore(registerTask, "RegisterTask", 4096, NULL, 1, NULL,
                             0);
 

@@ -18,7 +18,7 @@
 #define NUM_LEDS 1
 
 // Timing constants
-#define DEBOUNCE_DELAY 250
+#define BUTTON_DEBOUNCE_TIME 250
 #define STATUS_PRINT_INTERVAL 10000
 #define WIFI_CONNECT_TIMEOUT 20000
 #define REGISTRATION_RETRY_INTERVAL 10000
@@ -44,7 +44,8 @@ uint32_t clicks = 0;
 String fw_md5;  // MD5 of the firmware as flashed
 
 const int buttonPins[NLIGHTS] = {A0, A1, A3, A4, A5, 6, 7};
-unsigned long lastTimeClick[NLIGHTS] = {0};
+volatile uint32_t lastPress[NLIGHTS] = {0};
+volatile uint8_t pressed = 0;
 bool registeredWithRoot = false;
 unsigned long lastRegistrationAttempt = 0;
 unsigned long lastStatusPrint = 0;
@@ -337,33 +338,31 @@ void resetTask(void* pvParameters) {
 }
 
 void IRAM_ATTR buttonISR(void* arg) {
-    uint32_t index = (uint32_t)arg;
-    portENTER_CRITICAL_ISR(&isrMux);
-    buttonEvent[index] = true;
-    portEXIT_CRITICAL_ISR(&isrMux);
+    int index = (intptr_t)arg;
+    uint32_t now = micros();
+    if (now - lastPress[index] > BUTTON_DEBOUNCE_TIME * 1000) {
+        pressed |= (1 << index);
+    }
+    lastPress[index] = now;
 }
 
 void handleButtonsTask(void* pvParameters) {
     while (true) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
 
+        if (!pressed) continue;
+
         for (int i = 0; i < NLIGHTS; i++) {
-            bool event;
+            if (!(pressed & (1 << i))) continue;
 
-            portENTER_CRITICAL(&isrMux);
-            event = buttonEvent[i];
-            if (event) buttonEvent[i] = false;  // reset flag
-            portEXIT_CRITICAL(&isrMux);
+            Serial.printf("RELAY: Button for light %d pressed\n", i);
 
-            if (!event) continue;
-
-            uint32_t now = millis();
-            if (now - lastTimeClick[i] < DEBOUNCE_DELAY) continue;  // debounce
-
-            lastTimeClick[i] = now;
+            pressed &= ~(1 << i);
             clicks++;
 
             char msg = 'a' + i;
@@ -388,8 +387,6 @@ void handleButtonsTask(void* pvParameters) {
                 vTaskDelay(pdMS_TO_TICKS(100));
             }
         }
-
-        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
@@ -477,8 +474,6 @@ void setup() {
 
     for (int i = 0; i < NLIGHTS; i++) {
         pinMode(buttonPins[i], INPUT_PULLDOWN);
-        buttonEvent[i] = false;
-        lastTimeClick[i] = 0;
 
         attachInterruptArg(buttonPins[i], buttonISR, (void*)i, RISING);
     }

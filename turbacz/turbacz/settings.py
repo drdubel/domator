@@ -38,6 +38,8 @@ class TurbaczSettings(BaseSettings):
     prometheus: str = "http://127.0.0.1:8248"
     sentry_dsn: Optional[str] = None
     server: ServerSettings
+    use_prometheus: bool = True
+    use_mqtt: bool = True
 
     model_config = SettingsConfigDict(toml_file="turbacz.toml")
 

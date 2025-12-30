@@ -245,6 +245,9 @@ async def handle_root_state(payload_str):
         logger.error("Invalid JSON payload for root state: %s", payload_str)
         return
 
+    if not config.use_prometheus:
+        return
+
     url = f"{config.prometheus}/api/v2/write"
 
     for switch_id, status in data.items():

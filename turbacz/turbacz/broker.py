@@ -235,9 +235,6 @@ async def handle_root_state(payload_str):
         processed_connections = process_connections(connections)
 
         mqtt.client.publish("/switch/cmd/root", processed_connections)
-        mqtt.client.publish("/switch/1/cmd", "S")
-        mqtt.client.publish("/relay/cmd/1074130365", "S")
-        mqtt.client.publish("/relay/cmd/1074122133", "S")
 
         return
 
@@ -248,7 +245,7 @@ async def handle_root_state(payload_str):
         logger.error("Invalid JSON payload for root state: %s", payload_str)
         return
 
-    url = "http://192.168.3.10:8428/api/v2/write"
+    url = f"{config.prometheus}/api/v2/write"
 
     for switch_id, status in data.items():
         if switch_id in names:

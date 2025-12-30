@@ -305,6 +305,10 @@ async def websocket_lights(websocket: WebSocket):
 
     await ws_manager.connect(websocket)
 
+    mqtt.client.publish("/switch/1/cmd", "S")
+    mqtt.client.publish("/relay/cmd/1074130365", "S")
+    mqtt.client.publish("/relay/cmd/1074122133", "S")
+
     current_states = relay_state.get_all()
     for light_id, state in current_states.items():
         await ws_manager.send_personal_message(

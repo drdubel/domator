@@ -47,12 +47,12 @@
 }
 
 /* ============================================
-	LIGHT GRID
+	LIGHT GRID (now flexbox)
 	============================================ */
 
 .light-grid {
-	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+	display: flex;
+	flex-wrap: wrap;
 	gap: var(--spacing-lg);
 	max-height: 5000px;
 	overflow: hidden;
@@ -82,7 +82,8 @@
 	flex-direction: column;
 	align-items: center;
 	gap: 0.8rem;
-	width: 100%;
+	flex: 1 1 110px;
+	min-width: 110px;
 }
 
 .light-card:hover {
@@ -141,8 +142,16 @@
 
 @media (max-width: 768px) {
 	.light-grid {
-		grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
 		gap: var(--spacing-sm);
+	}
+
+	.light-card {
+		flex: 1 1 90px;
+		min-width: 90px;
+		padding: 0.6rem 0.4rem;
+		gap: 0.6rem;
+		border-radius: var(--radius-md);
+		border-width: 1.5px;
 	}
 
 	.room {
@@ -160,13 +169,6 @@
 		font-size: 1.2rem;
 		margin-bottom: var(--spacing-md);
 		padding-bottom: 0.4rem;
-	}
-
-	.light-card {
-		padding: 0.6rem 0.4rem;
-		gap: 0.6rem;
-		border-radius: var(--radius-md);
-		border-width: 1.5px;
 	}
 
 	.light-card:hover {
@@ -188,18 +190,19 @@
 
 @media (max-width: 400px) {
 	.light-grid {
-		grid-template-columns: repeat(4, 1fr);
+		gap: var(--spacing-xs);
+	}
+
+	.light-card {
+		flex: 1 1 70px;
+		min-width: 70px;
+		padding: 0.5rem 0.3rem;
 		gap: var(--spacing-xs);
 	}
 
 	.room {
 		margin-top: 1.25rem;
 		margin-bottom: var(--spacing-lg);
-	}
-
-	.light-card {
-		padding: 0.5rem 0.3rem;
-		gap: var(--spacing-xs);
 	}
 
 	.light-card span {

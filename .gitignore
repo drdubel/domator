@@ -19,3 +19,4 @@ turbacz/wifiLightButton/plain_passwords
 connections.json
 *.bin
 *.egg-info
+turbacz.toml

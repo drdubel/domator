@@ -11,7 +11,11 @@
 #include <painlessMesh.h>
 
 #include <algorithm>
+#include <cctype>
+#include <cstdint>
+#include <cstdlib>
 #include <map>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -75,6 +79,15 @@ std::map<uint32_t, uint32_t> nodeParentMap;
 volatile bool otaInProgress = false;
 
 String fw_md5;  // MD5 of the firmware as flashed
+
+bool toUint64(const String& s, uint64_t& out) {
+    if (s.length() == 0) return false;
+
+    char* end;
+    out = strtoull(s.c_str(), &end, 10);
+
+    return (*end == '\0');
+}
 
 // Telnet helper functions
 void telnetPrint(const String& msg) {
@@ -443,6 +456,17 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
     if (msg == "U") {
         DEBUG_PRINTLN("MQTT: Broadcasting firmware update to mesh nodes");
+
+        String path = String(topic);
+        int lastSlash = path.lastIndexOf('/');
+        String last = path.substring(lastSlash + 1);
+        uint64_t nodeId;
+
+        if (toUint64(last, nodeId)) {
+            mesh.sendSingle(nodeId, "U");
+            DEBUG_PRINTF("MQTT: Sent update command to node %llu\n", nodeId);
+            return;
+        }
 
         for (const auto& pair : nodes) {
             uint32_t nodeId = pair.first;

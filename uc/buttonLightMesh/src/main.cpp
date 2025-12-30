@@ -44,8 +44,8 @@ uint32_t clicks = 0;
 String fw_md5;  // MD5 of the firmware as flashed
 
 const int buttonPins[NLIGHTS] = {A0, A1, A3, A4, A5, 6, 7};
-volatile uint32_t lastPress[NLIGHTS] = {0};
-volatile uint8_t pressed = 0;
+unsigned long lastTimeClick[NLIGHTS] = {0};
+int lastButtonState[NLIGHTS] = {HIGH};
 bool registeredWithRoot = false;
 unsigned long lastRegistrationAttempt = 0;
 unsigned long lastStatusPrint = 0;
@@ -337,15 +337,6 @@ void resetTask(void* pvParameters) {
     ESP.restart();
 }
 
-void IRAM_ATTR buttonISR(void* arg) {
-    int index = (intptr_t)arg;
-    uint32_t now = micros();
-    if (now - lastPress[index] > BUTTON_DEBOUNCE_TIME * 1000) {
-        pressed |= (1 << index);
-    }
-    lastPress[index] = now;
-}
-
 void handleButtonsTask(void* pvParameters) {
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(20));
@@ -355,37 +346,51 @@ void handleButtonsTask(void* pvParameters) {
             continue;
         }
 
-        if (!pressed) continue;
+        unsigned long currentMillis = millis();
 
         for (int i = 0; i < NLIGHTS; i++) {
-            if (!(pressed & (1 << i))) continue;
+            int currentState = digitalRead(buttonPins[i]);
 
-            Serial.printf("RELAY: Button for light %d pressed\n", i);
-
-            pressed &= ~(1 << i);
-            clicks++;
-
-            char msg = 'a' + i;
-            Serial.printf("BUTTON: Button %d pressed, sending '%c'\n", i, msg);
-
-            if (mesh.getNodeList().empty()) {
-                Serial.println("BUTTON: No mesh connection, message not sent");
-                setLedColor(255, 0, 0);
-                vTaskDelay(pdMS_TO_TICKS(100));
+            // Skip if within debounce period
+            if (currentMillis - lastTimeClick[i] < BUTTON_DEBOUNCE_TIME) {
                 continue;
             }
 
-            String message(msg);
-            if (mesh.sendSingle(rootId, message)) {
-                Serial.printf("BUTTON: Sent '%s' to root %u\n", message.c_str(),
-                              rootId);
-                setLedColor(0, 255, 255);
-                vTaskDelay(pdMS_TO_TICKS(50));
-            } else {
-                Serial.println("BUTTON: Failed to send message");
-                setLedColor(255, 128, 0);
-                vTaskDelay(pdMS_TO_TICKS(100));
+            // Detect button press (LOW to HIGH transition)
+            if (currentState == HIGH && lastButtonState[i] == LOW) {
+                lastTimeClick[i] = currentMillis;
+                clicks++;
+
+                char msg = 'a' + i;
+                Serial.printf("BUTTON: Button %d pressed, sending '%c'\n", i,
+                              msg);
+
+                // Check if we're connected to mesh
+                if (mesh.getNodeList().empty()) {
+                    Serial.println(
+                        "BUTTON: No mesh connection, message not sent");
+                    setLedColor(255, 0, 0);  // Flash red
+                    vTaskDelay(100 / portTICK_PERIOD_MS);
+                    continue;
+                }
+
+                String message =
+                    String(msg);  // Format: just the letter (e.g., 'a')
+                if (mesh.sendSingle(rootId, message)) {
+                    Serial.printf("BUTTON: Sent '%s' to root %u\n",
+                                  message.c_str(), rootId);
+
+                    // Flash LED to confirm
+                    setLedColor(0, 255, 255);  // Cyan flash
+                    vTaskDelay(50 / portTICK_PERIOD_MS);
+                } else {
+                    Serial.println("BUTTON: Failed to send message");
+                    setLedColor(255, 128, 0);  // Orange flash
+                    vTaskDelay(100 / portTICK_PERIOD_MS);
+                }
             }
+
+            lastButtonState[i] = currentState;
         }
     }
 }
@@ -471,12 +476,6 @@ void setup() {
         registeredWithRoot = false;
         disconnects++;
     });
-
-    for (int i = 0; i < NLIGHTS; i++) {
-        pinMode(buttonPins[i], INPUT_PULLDOWN);
-
-        attachInterruptArg(buttonPins[i], buttonISR, (void*)i, RISING);
-    }
 
     // Start button handler task
     xTaskCreatePinnedToCore(handleButtonsTask, "ButtonTask", 4096, NULL, 2,

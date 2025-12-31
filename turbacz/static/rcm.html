@@ -1,0 +1,1210 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Relay & Switch Manager</title>
+    <script src="https://cdn.jsdelivr.net/npm/jsplumb@2.15.6/dist/js/jsplumb.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        #toolbar {
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .toolbar-btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+            font-size: 14px;
+        }
+
+        .toolbar-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        .btn-primary {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .btn-secondary {
+            background: #2196F3;
+            color: white;
+        }
+
+        .btn-refresh {
+            background: #FF9800;
+            color: white;
+        }
+
+        #canvas {
+            background: white;
+            min-height: calc(100vh - 140px);
+            border-radius: 10px;
+            position: relative;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            background-image:
+                linear-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 0, 0, 0.05) 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+
+        .device-box {
+            position: absolute;
+            background: white;
+            border-radius: 12px;
+            padding: 15px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            cursor: move;
+            min-width: 250px;
+            transition: box-shadow 0.2s, border-color 0.2s;
+        }
+
+        .device-box:hover {
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+        }
+
+        .device-box.highlighted {
+            box-shadow: 0 8px 24px rgba(244, 67, 54, 0.5);
+            z-index: 1000;
+        }
+
+        .switch-box {
+            border: 3px solid #2196F3;
+        }
+
+        .switch-box.highlighted {
+            border-color: #f44336;
+            border-width: 4px;
+        }
+
+        .relay-box {
+            border: 3px solid #FF9800;
+        }
+
+        .relay-box.highlighted {
+            border-color: #f44336;
+            border-width: 4px;
+        }
+
+        .device-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+
+        .device-id {
+            font-size: 11px;
+            color: #666;
+            background: #f5f5f5;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+
+        .delete-btn {
+            background: #f44336;
+            color: white;
+            border: none;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+
+        .delete-btn:hover {
+            background: #d32f2f;
+            transform: scale(1.1);
+        }
+
+        .device-name {
+            font-weight: 600;
+            font-size: 16px;
+            margin-bottom: 10px;
+            color: #333;
+            cursor: pointer;
+            padding: 5px;
+            border-radius: 4px;
+        }
+
+        .device-name:hover {
+            background: #f5f5f5;
+        }
+
+        .button-item,
+        .output-item {
+            padding: 10px 15px;
+            margin: 5px 0;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: relative;
+            transition: all 0.3s;
+        }
+
+        .button-item {
+            background: #2196F3;
+            color: white;
+            cursor: pointer;
+        }
+
+        .button-item:hover {
+            background: #1976D2;
+            transform: translateX(5px);
+        }
+
+        .output-item {
+            background: #FF9800;
+            color: white;
+            cursor: pointer;
+        }
+
+        .output-item:hover {
+            background: #F57C00;
+            transform: translateX(-5px);
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            min-width: 400px;
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+        }
+
+        .modal-header {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #333;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #555;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border 0.3s;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #2196F3;
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .modal-btn {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+
+        .modal-btn.save {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .modal-btn.save:hover {
+            background: #45a049;
+        }
+
+        .modal-btn.cancel {
+            background: #f44336;
+            color: white;
+        }
+
+        .modal-btn.cancel:hover {
+            background: #d32f2f;
+        }
+
+        #loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 30px 50px;
+            border-radius: 12px;
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+            font-size: 18px;
+            font-weight: 600;
+            z-index: 2000;
+            display: none;
+        }
+
+        #loading.active {
+            display: block;
+        }
+
+        .button-name,
+        .output-name {
+            flex: 1;
+        }
+
+        .item-icon {
+            width: 24px;
+            height: 24px;
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+
+        /* jsPlumb connector styles */
+        ._jsPlumb_connector {
+            z-index: 4;
+        }
+
+        ._jsPlumb_endpoint {
+            z-index: 5;
+        }
+
+        ._jsPlumb_overlay {
+            z-index: 6;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="toolbar">
+        <button class="toolbar-btn btn-primary" onclick="showAddSwitchModal()">➕ Add Switch</button>
+        <button class="toolbar-btn btn-secondary" onclick="showAddRelayModal()">➕ Add Relay</button>
+        <button class="toolbar-btn btn-refresh" onclick="loadConfiguration()">🔄 Refresh</button>
+        <button class="toolbar-btn btn-refresh" onclick="clearAllConnections()">🗑️ Clear Connections</button>
+    </div>
+
+    <div id="canvas"></div>
+
+    <!-- Add Switch Modal -->
+    <div id="addSwitchModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Add New Switch</div>
+            <div class="form-group">
+                <label>Switch ID:</label>
+                <input type="number" id="switchId" placeholder="Enter unique ID">
+            </div>
+            <div class="form-group">
+                <label>Switch Name:</label>
+                <input type="text" id="switchName" placeholder="Enter switch name">
+            </div>
+            <div class="form-group">
+                <label>Number of Buttons:</label>
+                <select id="switchButtons">
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                    <option value="6">6</option>
+                    <option value="7">7</option>
+                    <option value="8">8</option>
+                </select>
+            </div>
+            <div class="modal-buttons">
+                <button class="modal-btn save" onclick="addSwitch()">Save</button>
+                <button class="modal-btn cancel" onclick="closeModal('addSwitchModal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Relay Modal -->
+    <div id="addRelayModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Add New Relay</div>
+            <div class="form-group">
+                <label>Relay ID:</label>
+                <input type="number" id="relayId" placeholder="Enter unique ID">
+            </div>
+            <div class="form-group">
+                <label>Relay Name:</label>
+                <input type="text" id="relayName" placeholder="Enter relay name">
+            </div>
+            <div class="modal-buttons">
+                <button class="modal-btn save" onclick="addRelay()">Save</button>
+                <button class="modal-btn cancel" onclick="closeModal('addRelayModal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Name Modal -->
+    <div id="editNameModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Edit Name</div>
+            <div class="form-group">
+                <label>New Name:</label>
+                <input type="text" id="editNameInput" placeholder="Enter new name">
+            </div>
+            <div class="modal-buttons">
+                <button class="modal-btn save" onclick="saveNameEdit()">Save</button>
+                <button class="modal-btn cancel" onclick="closeModal('editNameModal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="loading">Loading...</div>
+
+    <script>
+        // Global variables
+        let jsPlumbInstance;
+        let switches = {};
+        let relays = {};
+        let connections = {};
+        let currentEditTarget = null;
+        let highlightedDevice = null;
+        let isLoadingConnections = false; // Flag to prevent API calls during load
+
+        // API base URL - uses current host
+        const API_BASE_URL = `https://${window.location.host}`;
+
+        // Show loading indicator
+        function showLoading() {
+            document.getElementById('loading').classList.add('active');
+        }
+
+        function hideLoading() {
+            document.getElementById('loading').classList.remove('active');
+        }
+
+        // API Calls - GET
+        async function fetchAPI(endpoint) {
+            try {
+                const url = `${API_BASE_URL}${endpoint}`;
+                console.log('Fetching:', url);
+
+                const response = await fetch(url);
+
+                // Get the response text first
+                const text = await response.text();
+                console.log('Response text:', text.substring(0, 200));
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}, body: ${text.substring(0, 100)}`);
+                }
+
+                // Try to parse as JSON
+                try {
+                    return JSON.parse(text);
+                } catch (e) {
+                    console.error('JSON parse error:', e);
+                    console.error('Response was:', text);
+                    throw new Error(`Invalid JSON response: ${text.substring(0, 100)}`);
+                }
+            } catch (error) {
+                console.error('Fetch error:', error);
+                console.log('Using demo data instead');
+                return null;
+            }
+        }
+
+        // API Calls - POST with FormData
+        async function postForm(endpoint, data) {
+            try {
+                const formData = new FormData();
+                Object.keys(data).forEach(key => {
+                    formData.append(key, data[key]);
+                });
+
+                const url = `${API_BASE_URL}${endpoint}`;
+                console.log('Posting to:', url, data);
+
+                const response = await fetch(url, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                // Get the response text first
+                const text = await response.text();
+                console.log('Post response:', text.substring(0, 200));
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}, body: ${text.substring(0, 100)}`);
+                }
+
+                // Try to parse as JSON
+                try {
+                    return JSON.parse(text);
+                } catch (e) {
+                    console.log('Non-JSON response (might be OK):', text);
+                    // If it's just "OK" or similar, return success
+                    return { success: true, message: text };
+                }
+            } catch (error) {
+                console.error('Post error:', error);
+                alert('Error posting data to server: ' + error.message);
+                return null;
+            }
+        }
+
+        // Highlight device and its connections
+        function highlightDevice(deviceId) {
+            // Clear previous highlights
+            clearHighlights();
+
+            const element = document.getElementById(deviceId);
+            if (!element) return;
+
+            // Highlight the device
+            element.classList.add('highlighted');
+            highlightedDevice = deviceId;
+
+            // Get all connections related to this device and change their color
+            const allConnections = jsPlumbInstance.getAllConnections();
+
+            allConnections.forEach(conn => {
+                const sourceId = conn.sourceId;
+                const targetId = conn.targetId;
+
+                // Check if this connection involves the highlighted device
+                if (sourceId.startsWith(deviceId) || targetId.startsWith(deviceId)) {
+                    // Change connection color to red
+                    conn.setPaintStyle({ stroke: '#f44336', strokeWidth: 5 });
+
+                    // Also highlight the connected device
+                    if (sourceId.startsWith(deviceId)) {
+                        const targetMatch = targetId.match(/^(relay-\d+|switch-\d+)/);
+                        if (targetMatch) {
+                            const targetElement = document.getElementById(targetMatch[1]);
+                            if (targetElement) targetElement.classList.add('highlighted');
+                        }
+                    } else {
+                        const sourceMatch = sourceId.match(/^(relay-\d+|switch-\d+)/);
+                        if (sourceMatch) {
+                            const sourceElement = document.getElementById(sourceMatch[1]);
+                            if (sourceElement) sourceElement.classList.add('highlighted');
+                        }
+                    }
+                }
+            });
+
+            console.log('Highlighted device:', deviceId);
+        }
+
+        // Clear all highlights
+        function clearHighlights() {
+            // Remove device highlights
+            document.querySelectorAll('.device-box.highlighted').forEach(el => {
+                el.classList.remove('highlighted');
+            });
+
+            // Reset all connection colors
+            const allConnections = jsPlumbInstance.getAllConnections();
+            allConnections.forEach(conn => {
+                conn.setPaintStyle({ stroke: '#2196F3', strokeWidth: 3 });
+            });
+
+            highlightedDevice = null;
+        }
+
+        // Initialize jsPlumb
+        function initJsPlumb() {
+            jsPlumb.ready(function () {
+                // Create jsPlumb instance
+                jsPlumbInstance = jsPlumb.getInstance({
+                    Container: "canvas",
+                    Connector: ["Bezier", { curviness: 50 }],
+                    PaintStyle: {
+                        stroke: '#2196F3',
+                        strokeWidth: 3
+                    },
+                    HoverPaintStyle: {
+                        stroke: '#1976D2',
+                        strokeWidth: 4
+                    },
+                    Endpoint: ["Dot", { radius: 7 }],
+                    EndpointStyle: {
+                        fill: '#2196F3',
+                        stroke: '#1976D2',
+                        strokeWidth: 2
+                    },
+                    EndpointHoverStyle: {
+                        fill: '#1976D2'
+                    },
+                    DragOptions: { cursor: 'move', zIndex: 2000 }
+                });
+
+                // Bind connection event - ONLY for user-created connections
+                jsPlumbInstance.bind("connection", function (info, originalEvent) {
+                    console.log('Connection event fired, originalEvent:', originalEvent, 'isLoadingConnections:', isLoadingConnections);
+
+                    // Only handle user-created connections (originalEvent exists AND not loading)
+                    if (originalEvent && !isLoadingConnections) {
+                        const sourceId = info.sourceId;
+                        const targetId = info.targetId;
+
+                        const switchMatch = sourceId.match(/switch-(\d+)-btn-(\w+)/);
+                        const relayMatch = targetId.match(/relay-(\d+)-output-(\w+)/);
+
+                        if (switchMatch && relayMatch) {
+                            const switchId = parseInt(switchMatch[1]);
+                            const buttonId = switchMatch[2];
+                            const relayId = parseInt(relayMatch[1]);
+                            const outputId = relayMatch[2];
+
+                            console.log('User created connection:', { switchId, buttonId, relayId, outputId });
+
+                            // Post to API
+                            postForm('/lights/add_connection', {
+                                switch_id: switchId,
+                                button_id: buttonId,
+                                relay_id: relayId,
+                                output_id: outputId
+                            }).then(result => {
+                                if (result) {
+                                    // Store connection
+                                    if (!connections[switchId]) connections[switchId] = {};
+                                    if (!connections[switchId][buttonId]) connections[switchId][buttonId] = [];
+                                    connections[switchId][buttonId].push({
+                                        relayId,
+                                        outputId,
+                                        connection: info.connection
+                                    });
+                                    console.log('Connection saved successfully');
+                                } else {
+                                    console.error('Failed to save connection');
+                                    // Delete the connection if API call failed
+                                    jsPlumbInstance.deleteConnection(info.connection);
+                                }
+                            });
+                        }
+                    }
+                });
+
+                // Bind connection detach event
+                jsPlumbInstance.bind("connectionDetached", function (info, originalEvent) {
+                    // Only handle user-deleted connections
+                    if (originalEvent && !isLoadingConnections) {
+                        const sourceId = info.sourceId;
+                        const targetId = info.targetId;
+
+                        const switchMatch = sourceId.match(/switch-(\d+)-btn-(\w+)/);
+                        const relayMatch = targetId.match(/relay-(\d+)-output-(\w+)/);
+
+                        if (switchMatch && relayMatch) {
+                            const switchId = parseInt(switchMatch[1]);
+                            const buttonId = switchMatch[2];
+                            const relayId = parseInt(relayMatch[1]);
+                            const outputId = relayMatch[2];
+
+                            console.log('Connection removed:', { switchId, buttonId, relayId, outputId });
+
+                            // Post to API
+                            postForm('/lights/remove_connection', {
+                                switch_id: switchId,
+                                button_id: buttonId,
+                                relay_id: relayId,
+                                output_id: outputId
+                            }).then(result => {
+                                if (result) {
+                                    // Remove from local storage
+                                    if (connections[switchId] && connections[switchId][buttonId]) {
+                                        connections[switchId][buttonId] = connections[switchId][buttonId].filter(
+                                            conn => !(conn.relayId === relayId && conn.outputId === outputId)
+                                        );
+                                    }
+                                    console.log('Connection removed successfully');
+                                } else {
+                                    console.error('Failed to remove connection from API');
+                                }
+                            });
+                        }
+                    }
+                });
+
+                // Click on canvas to clear highlights
+                document.getElementById('canvas').addEventListener('click', function (e) {
+                    if (e.target.id === 'canvas') {
+                        clearHighlights();
+                    }
+                });
+
+                // Load initial configuration
+                loadConfiguration();
+            });
+        }
+
+        // Load configuration from API
+        async function loadConfiguration() {
+            showLoading();
+            isLoadingConnections = true; // Set flag to prevent API calls
+
+            // Clear existing
+            if (jsPlumbInstance) {
+                jsPlumbInstance.reset();
+            }
+            document.getElementById('canvas').innerHTML = '';
+            switches = {};
+            relays = {};
+            connections = {};
+
+            try {
+                // Fetch data from API
+                console.log('Loading configuration from API...');
+                const [relaysData, outputsData, switchesData, connectionsData] = await Promise.all([
+                    fetchAPI('/lights/get_relays'),
+                    fetchAPI('/lights/get_outputs'),
+                    fetchAPI('/lights/get_switches'),
+                    fetchAPI('/lights/get_connections')
+                ]);
+
+                console.log('Fetched data:', { relaysData, outputsData, switchesData, connectionsData });
+
+                // Use demo data if API fails
+                const relays_config = relaysData || getDemoRelays();
+                const outputs_config = outputsData || getDemoOutputs();
+                const switches_config = switchesData || getDemoSwitches();
+                const connections_config = connectionsData || getDemoConnections();
+
+                console.log('Using config:', { relays_config, outputs_config, switches_config, connections_config });
+
+                // Create relays first
+                let relayX = 800;
+                let relayY = 50;
+                for (let [relayId, relayName] of Object.entries(relays_config)) {
+                    const outputs = outputs_config[relayId] || {};
+                    createRelay(parseInt(relayId), relayName, outputs, relayX, relayY);
+                    relayY += 350;
+                    if (relayY > 1000) {
+                        relayY = 50;
+                        relayX += 300;
+                    }
+                }
+
+                // Create switches
+                let switchX = 50;
+                let switchY = 50;
+                for (let [switchId, switchData] of Object.entries(switches_config)) {
+                    const [switchName, buttonCount] = switchData;
+                    createSwitch(parseInt(switchId), switchName, buttonCount, switchX, switchY);
+                    switchY += 200;
+                    if (switchY > 1000) {
+                        switchY = 50;
+                        switchX += 320;
+                    }
+                }
+
+                // Wait for DOM to update, then create connections
+                setTimeout(() => {
+                    for (let [switchId, buttons] of Object.entries(connections_config)) {
+                        for (let [buttonId, targets] of Object.entries(buttons)) {
+                            for (let [relayId, outputId] of targets) {
+                                createConnection(parseInt(switchId), buttonId, parseInt(relayId), outputId);
+                            }
+                        }
+                    }
+                    isLoadingConnections = false; // Reset flag after loading
+                    hideLoading();
+                }, 200);
+
+            } catch (error) {
+                console.error('Error loading configuration:', error);
+                isLoadingConnections = false;
+                hideLoading();
+            }
+        }
+
+        // Demo data functions
+        function getDemoRelays() {
+            return {
+                1: "Światła Przedpokój",
+                2: "Rolety Przedpokój",
+                3: "Światła Kuchnia"
+            };
+        }
+
+        function getDemoOutputs() {
+            return {
+                1: { "1": "Warsztat 1", "2": "Warsztat 2", "3": "Kinkiet 1", "4": "Kinkiet 2", "5": "Przedpokój", "6": "Pokój Zo", "7": "Pokój Bobusi", "8": "Output 8" },
+                2: { "1": "Output 1", "2": "Output 2", "3": "Output 3", "4": "Output 4", "5": "Output 5", "6": "Output 6", "7": "Output 7", "8": "Output 8" },
+                3: { "1": "Spiżarnia", "2": "Output 2", "3": "Output 3", "4": "Output 4", "5": "Downlight 1", "6": "Downlight 2", "7": "Downlight 3", "8": "Downlight 4" }
+            };
+        }
+
+        function getDemoSwitches() {
+            return {
+                1: ["Wejście Do Domu", 3],
+                2: ["Pokój Bobusi", 3],
+                3: ["Pokój Zo", 3],
+                4: ["Salon Wejście", 4],
+                5: ["Schody Dół", 3],
+                6: ["Spiżarnia Drzwi", 1]
+            };
+        }
+
+        function getDemoConnections() {
+            return {
+                1: {
+                    "1": [[1, "5"], [1, "1"]],
+                    "2": [[1, "6"]],
+                    "3": [[1, "7"]]
+                },
+                2: {
+                    "1": [[1, "7"]],
+                    "2": [[1, "3"]],
+                    "3": [[2, "1"]]
+                },
+                3: {
+                    "1": [[1, "6"]],
+                    "2": [[2, "2"]]
+                },
+                4: {
+                    "1": [[3, "5"]],
+                    "2": [[3, "6"]],
+                    "3": [[3, "7"]],
+                    "4": [[3, "8"]]
+                },
+                6: {
+                    "1": [[3, "1"]]
+                }
+            };
+        }
+
+        // Create Switch
+        function createSwitch(switchId, switchName, buttonCount, x, y) {
+            const switchDiv = document.createElement('div');
+            switchDiv.id = `switch-${switchId}`;
+            switchDiv.className = 'device-box switch-box';
+            switchDiv.style.left = `${x}px`;
+            switchDiv.style.top = `${y}px`;
+
+            let buttonsHTML = '';
+            for (let i = 1; i <= buttonCount; i++) {
+                buttonsHTML += `
+                    <div class="button-item" id="switch-${switchId}-btn-${i}">
+                        <span class="button-name">Button ${i}</span>
+                        <span class="item-icon">🔘</span>
+                    </div>
+                `;
+            }
+
+            switchDiv.innerHTML = `
+                <div class="device-header">
+                    <span class="device-id">ID: ${switchId}</span>
+                    <button class="delete-btn" onclick="event.stopPropagation(); deleteSwitch(${switchId})">✕</button>
+                </div>
+                <div class="device-name" onclick="event.stopPropagation(); editDeviceName('switch', ${switchId})">${switchName}</div>
+                ${buttonsHTML}
+            `;
+
+            document.getElementById('canvas').appendChild(switchDiv);
+
+            // Add mouseenter event to highlight device (more efficient than click)
+            switchDiv.addEventListener('mouseenter', function () {
+                highlightDevice(`switch-${switchId}`);
+            });
+
+            // Make draggable with optimized settings
+            jsPlumbInstance.draggable(switchDiv, {
+                containment: true,
+                grid: [5, 5] // Snap to grid for smoother dragging
+            });
+
+            // Add source endpoints
+            for (let i = 1; i <= buttonCount; i++) {
+                const btnElement = document.getElementById(`switch-${switchId}-btn-${i}`);
+                jsPlumbInstance.makeSource(btnElement, {
+                    anchor: "Right",
+                    endpoint: ["Dot", { radius: 7 }],
+                    paintStyle: { fill: "#2196F3", stroke: "#1976D2", strokeWidth: 2 },
+                    connectorStyle: { stroke: "#2196F3", strokeWidth: 3 },
+                    maxConnections: -1
+                });
+            }
+
+            switches[switchId] = { name: switchName, buttonCount, element: switchDiv };
+        }
+
+        // Create Relay
+        function createRelay(relayId, relayName, outputs, x, y) {
+            const relayDiv = document.createElement('div');
+            relayDiv.id = `relay-${relayId}`;
+            relayDiv.className = 'device-box relay-box';
+            relayDiv.style.left = `${x}px`;
+            relayDiv.style.top = `${y}px`;
+
+            let outputsHTML = '';
+            for (let i = 1; i <= 8; i++) {
+                const outputName = outputs[i] || outputs[i.toString()] || `Output ${i}`;
+                outputsHTML += `
+                    <div class="output-item" id="relay-${relayId}-output-${i}">
+                        <span class="item-icon">💡</span>
+                        <span class="output-name" onclick="event.stopPropagation(); editOutputName(${relayId}, '${i}')">${outputName}</span>
+                    </div>
+                `;
+            }
+
+            relayDiv.innerHTML = `
+                <div class="device-header">
+                    <span class="device-id">ID: ${relayId}</span>
+                    <button class="delete-btn" onclick="event.stopPropagation(); deleteRelay(${relayId})">✕</button>
+                </div>
+                <div class="device-name" onclick="event.stopPropagation(); editDeviceName('relay', ${relayId})">${relayName}</div>
+                ${outputsHTML}
+            `;
+
+            document.getElementById('canvas').appendChild(relayDiv);
+
+            // Add mouseenter event to highlight device
+            relayDiv.addEventListener('mouseenter', function () {
+                highlightDevice(`relay-${relayId}`);
+            });
+
+            // Make draggable with optimized settings
+            jsPlumbInstance.draggable(relayDiv, {
+                containment: true,
+                grid: [5, 5] // Snap to grid for smoother dragging
+            });
+
+            // Add target endpoints
+            for (let i = 1; i <= 8; i++) {
+                const outputElement = document.getElementById(`relay-${relayId}-output-${i}`);
+                jsPlumbInstance.makeTarget(outputElement, {
+                    anchor: "Left",
+                    endpoint: ["Dot", { radius: 7 }],
+                    paintStyle: { fill: "#FF9800", stroke: "#F57C00", strokeWidth: 2 },
+                    maxConnections: -1
+                });
+            }
+
+            relays[relayId] = { name: relayName, outputs, element: relayDiv };
+        }
+
+        // Create Connection (does NOT send to API - only for loading existing connections)
+        function createConnection(switchId, buttonId, relayId, outputId) {
+            const sourceElement = document.getElementById(`switch-${switchId}-btn-${buttonId}`);
+            const targetElement = document.getElementById(`relay-${relayId}-output-${outputId}`);
+
+            if (!sourceElement || !targetElement) {
+                console.error('Source or target element not found', { switchId, buttonId, relayId, outputId });
+                return;
+            }
+
+            console.log('Creating connection from loaded data (no API call):', { switchId, buttonId, relayId, outputId });
+
+            // Create visual connection (does NOT trigger the API event because isLoadingConnections is true)
+            const conn = jsPlumbInstance.connect({
+                source: sourceElement,
+                target: targetElement,
+                paintStyle: { stroke: '#2196F3', strokeWidth: 3 },
+                endpoint: ["Dot", { radius: 7 }]
+            });
+
+            if (conn) {
+                // Store connection info
+                if (!connections[switchId]) connections[switchId] = {};
+                if (!connections[switchId][buttonId]) connections[switchId][buttonId] = [];
+                connections[switchId][buttonId].push({ relayId, outputId, connection: conn });
+            }
+        }
+
+        // Modal functions
+        function showAddSwitchModal() {
+            document.getElementById('addSwitchModal').classList.add('active');
+            document.getElementById('switchId').value = '';
+            document.getElementById('switchName').value = '';
+            document.getElementById('switchButtons').value = '3';
+        }
+
+        function showAddRelayModal() {
+            document.getElementById('addRelayModal').classList.add('active');
+            document.getElementById('relayId').value = '';
+            document.getElementById('relayName').value = '';
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).classList.remove('active');
+        }
+
+        // Add Switch
+        async function addSwitch() {
+            const switchId = parseInt(document.getElementById('switchId').value);
+            const switchName = document.getElementById('switchName').value;
+            const buttonCount = parseInt(document.getElementById('switchButtons').value);
+
+            if (!switchId || !switchName) {
+                alert('Please fill all fields');
+                return;
+            }
+
+            if (switches[switchId]) {
+                alert('Switch ID already exists');
+                return;
+            }
+
+            // Post to API
+            const result = await postForm('/lights/add_switch', {
+                switch_id: switchId,
+                switch_name: switchName,
+                buttons: buttonCount
+            });
+
+            if (result !== null) {
+                // Create switch
+                const x = 50 + (Object.keys(switches).length % 3) * 320;
+                const y = 50 + Math.floor(Object.keys(switches).length / 3) * 200;
+                createSwitch(switchId, switchName, buttonCount, x, y);
+                closeModal('addSwitchModal');
+            }
+        }
+
+        // Add Relay
+        async function addRelay() {
+            const relayId = parseInt(document.getElementById('relayId').value);
+            const relayName = document.getElementById('relayName').value;
+
+            if (!relayId || !relayName) {
+                alert('Please fill all fields');
+                return;
+            }
+
+            if (relays[relayId]) {
+                alert('Relay ID already exists');
+                return;
+            }
+
+            // Post to API
+            const result = await postForm('/lights/add_relay', {
+                relay_id: relayId,
+                relay_name: relayName
+            });
+
+            if (result !== null) {
+                // Create relay with default outputs
+                const outputs = {};
+                for (let i = 1; i <= 8; i++) {
+                    outputs[i] = `Output ${i}`;
+                }
+
+                const x = 800 + (Object.keys(relays).length % 3) * 300;
+                const y = 50 + Math.floor(Object.keys(relays).length / 3) * 350;
+                createRelay(relayId, relayName, outputs, x, y);
+                closeModal('addRelayModal');
+            }
+        }
+
+        // Delete Switch
+        async function deleteSwitch(switchId) {
+            if (!confirm('Are you sure you want to delete this switch?')) return;
+
+            // Post to API
+            const result = await postForm('/lights/remove_switch', {
+                switch_id: switchId
+            });
+
+            if (result !== null) {
+                const element = document.getElementById(`switch-${switchId}`);
+                if (element) {
+                    // Remove all connections
+                    jsPlumbInstance.removeAllEndpoints(element);
+                    // Remove element
+                    element.remove();
+                }
+
+                delete switches[switchId];
+                delete connections[switchId];
+
+                // Clear highlights if this was the highlighted device
+                if (highlightedDevice === `switch-${switchId}`) {
+                    clearHighlights();
+                }
+            }
+        }
+
+        // Delete Relay
+        async function deleteRelay(relayId) {
+            if (!confirm('Are you sure you want to delete this relay?')) return;
+
+            // Post to API
+            const result = await postForm('/lights/remove_relay', {
+                relay_id: relayId
+            });
+
+            if (result !== null) {
+                const element = document.getElementById(`relay-${relayId}`);
+                if (element) {
+                    // Remove all connections
+                    jsPlumbInstance.removeAllEndpoints(element);
+                    // Remove element
+                    element.remove();
+                }
+
+                delete relays[relayId];
+
+                // Clear highlights if this was the highlighted device
+                if (highlightedDevice === `relay-${relayId}`) {
+                    clearHighlights();
+                }
+            }
+        }
+
+        // Edit device name
+        function editDeviceName(type, id) {
+            currentEditTarget = { type, id };
+            const currentName = type === 'switch' ? switches[id].name : relays[id].name;
+            document.getElementById('editNameInput').value = currentName;
+            document.getElementById('editNameModal').classList.add('active');
+        }
+
+        // Edit output name
+        function editOutputName(relayId, outputId) {
+            currentEditTarget = { type: 'output', relayId, outputId };
+            const outputs = relays[relayId].outputs;
+            const currentName = outputs[outputId] || outputs[outputId.toString()] || `Output ${outputId}`;
+            document.getElementById('editNameInput').value = currentName;
+            document.getElementById('editNameModal').classList.add('active');
+        }
+
+        // Save name edit
+        async function saveNameEdit() {
+            const newName = document.getElementById('editNameInput').value;
+            if (!newName) {
+                alert('Name cannot be empty');
+                return;
+            }
+
+            if (currentEditTarget.type === 'output') {
+                // Update output name
+                const result = await postForm('/lights/name_output', {
+                    relay_id: currentEditTarget.relayId,
+                    output_id: currentEditTarget.outputId,
+                    output_name: newName
+                });
+
+                if (result !== null) {
+                    relays[currentEditTarget.relayId].outputs[currentEditTarget.outputId] = newName;
+                    const outputElement = document.querySelector(`#relay-${currentEditTarget.relayId}-output-${currentEditTarget.outputId} .output-name`);
+                    if (outputElement) outputElement.textContent = newName;
+                }
+            } else {
+                // Update device name
+                const id = currentEditTarget.id;
+                if (currentEditTarget.type === 'switch') {
+                    switches[id].name = newName;
+                } else {
+                    relays[id].name = newName;
+                }
+
+                const nameElement = document.querySelector(`#${currentEditTarget.type}-${id} .device-name`);
+                if (nameElement) nameElement.textContent = newName;
+            }
+
+            closeModal('editNameModal');
+        }
+
+        // Clear all connections (also sends to API)
+        async function clearAllConnections() {
+            if (!confirm('Are you sure you want to clear all connections?')) return;
+
+            showLoading();
+
+            // Get all connections and remove them via API
+            const removePromises = [];
+
+            for (let [switchId, buttons] of Object.entries(connections)) {
+                for (let [buttonId, connList] of Object.entries(buttons)) {
+                    for (let conn of connList) {
+                        console.log('Removing connection:', { switchId, buttonId, relayId: conn.relayId, outputId: conn.outputId });
+
+                        removePromises.push(
+                            postForm('/lights/remove_connection', {
+                                switch_id: switchId,
+                                button_id: buttonId,
+                                relay_id: conn.relayId,
+                                output_id: conn.outputId
+                            })
+                        );
+                    }
+                }
+            }
+
+            // Wait for all removals to complete
+            await Promise.all(removePromises);
+
+            // Clear visual connections
+            jsPlumbInstance.deleteEveryConnection();
+            connections = {};
+
+            hideLoading();
+            console.log('All connections cleared');
+        }
+
+        // Initialize on load
+        window.addEventListener('load', initJsPlumb);
+    </script>
+</body>
+
+</html>

@@ -20,6 +20,7 @@ from starlette.responses import HTMLResponse, RedirectResponse
 from starlette.types import ASGIApp
 
 from turbacz import auth
+from turbacz import connection_manager
 from turbacz.broker import mqtt
 from turbacz.settings import config
 from turbacz.state import relay_state
@@ -60,6 +61,7 @@ app.add_middleware(SessionMiddleware, secret_key="!secret")
 app.add_middleware(MetricsMiddleware)
 app.add_route("/metrics", metrics)
 app.include_router(auth.router)
+app.include_router(connection_manager.router)
 mqtt.init_app(app)
 
 background_task_started = False
@@ -177,7 +179,7 @@ async def rcm_page(request: Request, access_token: Optional[str] = Cookie(None))
     if not user:
         return RedirectResponse(url="/")
 
-    with open(os.path.join("static", "relay_connection_manager.html")) as fh:
+    with open(os.path.join("static", "rcm.html")) as fh:
         data = fh.read()
 
     return Response(content=data, media_type="text/html")

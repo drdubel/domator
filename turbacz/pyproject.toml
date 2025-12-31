@@ -24,6 +24,7 @@ dependencies = [
     "python-jose[cryptography]>=3.5.0",
     "sentry-sdk[fastapi]>=2.48.0",
     "pydantic-settings>=2.12.0",
+    "psycopg>=3.3.2",
 ]
 
 [project.scripts]

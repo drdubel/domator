@@ -566,7 +566,7 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
     let buttonsHTML = ''
     for (let i = 1; i <= buttonCount; i++) {
         buttonsHTML += `
-                    <div class="button-item" id="switch-${switchId}-btn-${i}">
+                    <div class="button-item" id="switch-${switchId}-btn-${String.fromCharCode(96 + i)}">
                         <span class="button-name">Button ${i}</span>
                         <span class="item-icon">🔘</span>
                     </div>
@@ -593,7 +593,8 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
     })
 
     for (let i = 1; i <= buttonCount; i++) {
-        const btnElement = document.getElementById(`switch-${switchId}-btn-${i}`)
+        const btnElement = document.getElementById(`switch-${switchId}-btn-${String.fromCharCode(96 + i)}`)
+
         jsPlumbInstance.makeSource(btnElement, {
             anchor: "Right",
             endpoint: ["Dot", { radius: 8 }],
@@ -615,11 +616,11 @@ function createRelay(relayId, relayName, outputs, x, y) {
 
     let outputsHTML = ''
     for (let i = 1; i <= 8; i++) {
-        const outputName = outputs[i] || outputs[i.toString()] || `Output ${i}`
+        const outputName = outputs[String.fromCharCode(96 + i)] || `Output ${i}`
         outputsHTML += `
-                    <div class="output-item" id="relay-${relayId}-output-${i}">
+                    <div class="output-item" id="relay-${relayId}-output-${String.fromCharCode(96 + i)}">
                         <span class="item-icon">💡</span>
-                        <span class="output-name" onclick="event.stopPropagation(); editOutputName(${relayId}, '${i}')">${outputName}</span>
+                        <span class="output-name" onclick="event.stopPropagation(); editOutputName(${relayId}, '${String.fromCharCode(96 + i)}')">${outputName}</span>
                     </div>
                 `
     }
@@ -644,7 +645,7 @@ function createRelay(relayId, relayName, outputs, x, y) {
     })
 
     for (let i = 1; i <= 8; i++) {
-        const outputElement = document.getElementById(`relay-${relayId}-output-${i}`)
+        const outputElement = document.getElementById(`relay-${relayId}-output-${String.fromCharCode(96 + i)}`)
         jsPlumbInstance.makeTarget(outputElement, {
             anchor: "Left",
             endpoint: ["Dot", { radius: 8 }],

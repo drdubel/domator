@@ -365,6 +365,12 @@ async def websocket_rcm(websocket: WebSocket):
             print(cmd)
 
             if cmd["type"] == "update":
+                print(connection_manager.connection_manager.get_all_connections())
+                connections = (
+                    connection_manager.connection_manager.get_all_connections()
+                )
+
+                mqtt.client.publish("/switch/cmd/root", json.dumps(connections))
                 await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
 
     await receive_command(websocket)

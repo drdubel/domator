@@ -148,6 +148,10 @@ class ConnectionManager:
     def get_relays(self) -> dict[int, str] | None:
         return self._relays
 
+    def rename_relay(self, relay_id: int, relay_name: str):
+        if relay_id in self._relays:
+            self._relays[relay_id] = relay_name
+
     def remove_relay(self, relay_id: int):
         if relay_id in self._relays:
             del self._relays[relay_id]
@@ -172,6 +176,11 @@ class ConnectionManager:
 
     def get_switches(self) -> dict[int, tuple[str, int]] | None:
         return self._switches
+
+    def rename_switch(self, switch_id: int, switch_name: str):
+        if switch_id in self._switches:
+            buttons = self._switches[switch_id][1]
+            self._switches[switch_id] = (switch_name, buttons)
 
     def remove_switch(self, switch_id: int):
         if switch_id in self._switches:
@@ -257,6 +266,42 @@ def add_output(
     connection_manager.save_to_db()
 
     return {"status": "Output added"}
+
+
+@router.post("/rename_relay")
+def rename_relay(
+    request: Request,
+    relay_id: int = Form(...),
+    relay_name: str = Form(...),
+    access_token: Optional[str] = Cookie(None),
+):
+    user = auth.get_current_user(access_token)
+
+    if not user:
+        return {"error": "Unauthorized"}
+
+    connection_manager.rename_relay(relay_id, relay_name)
+    connection_manager.save_to_db()
+
+    return {"status": "Relay renamed"}
+
+
+@router.post("/rename_switch")
+def rename_switch(
+    request: Request,
+    switch_id: int = Form(...),
+    switch_name: str = Form(...),
+    access_token: Optional[str] = Cookie(None),
+):
+    user = auth.get_current_user(access_token)
+
+    if not user:
+        return {"error": "Unauthorized"}
+
+    connection_manager.rename_switch(switch_id, switch_name)
+    connection_manager.save_to_db()
+
+    return {"status": "Switch renamed"}
 
 
 @router.post("/add_switch")

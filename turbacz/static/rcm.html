@@ -4,13 +4,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IoT Control Manager</title>
+    <title>RCM</title>
     <script src="https://cdn.jsdelivr.net/npm/jsplumb@2.15.6/dist/js/jsplumb.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://browser.sentry-cdn.com/10.31.0/bundle.min.js"></script>
     <script src="/static/scripts/sentry.js"></script>
     <link rel="stylesheet" href="/static/styles/rcm.css">
-    <script src="/static/scripts/rcm.js" defer></script>
 </head>
 
 <body>
@@ -18,7 +17,7 @@
         <div class="header-title">
             <div class="logo">⚡</div>
             <div>
-                <h1>IoT Control Manager</h1>
+                <h1>Relay Connection Manager</h1>
                 <span class="status-badge">
                     <span class="status-dot"></span>
                     Connected
@@ -109,6 +108,7 @@
             <div class="form-group">
                 <label>New Name</label>
                 <input type="text" id="editNameInput" placeholder="Enter new name">
+                <input style="display:none;" type="number" id="editButtonNumber" placeholder="Enter new button number">
             </div>
             <div class="modal-buttons">
                 <button class="modal-btn save" onclick="saveNameEdit()">Save</button>
@@ -121,6 +121,8 @@
         <div class="spinner"></div>
         <span>Loading...</span>
     </div>
+
+    <script src="/static/scripts/rcm.js" defer></script>
 </body>
 
 </html>

@@ -171,16 +171,18 @@ class ConnectionManager:
             if not self._connections[switch_id]:
                 del self._connections[switch_id]
 
-    def add_switch(self, switch_id: int, switch_name: str, buttons: int):
+    def add_switch(self, switch_id: int, switch_name: str, buttons: int = 3):
         self._switches[switch_id] = (switch_name, buttons)
 
     def get_switches(self) -> dict[int, tuple[str, int]] | None:
         return self._switches
 
-    def rename_switch(self, switch_id: int, switch_name: str):
+    def rename_switch(self, switch_id: int, switch_name: str, buttons: int):
         if switch_id in self._switches:
-            buttons = self._switches[switch_id][1]
-            self._switches[switch_id] = (switch_name, buttons)
+            self._switches[switch_id] = (
+                switch_name,
+                buttons,
+            )
 
     def remove_switch(self, switch_id: int):
         if switch_id in self._switches:
@@ -291,6 +293,7 @@ def rename_switch(
     request: Request,
     switch_id: int = Form(...),
     switch_name: str = Form(...),
+    buttons: int = Form(...),
     access_token: Optional[str] = Cookie(None),
 ):
     user = auth.get_current_user(access_token)
@@ -298,7 +301,9 @@ def rename_switch(
     if not user:
         return {"error": "Unauthorized"}
 
-    connection_manager.rename_switch(switch_id, switch_name)
+    connection_manager.rename_switch(switch_id, switch_name, buttons)
+    print("Renamed switch:", switch_id, switch_name, buttons)  # Debug log
+    print("Current switches:", connection_manager.get_switches())  # Debug log
     connection_manager.save_to_db()
 
     return {"status": "Switch renamed"}

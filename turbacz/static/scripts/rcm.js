@@ -811,12 +811,17 @@ function editDeviceName(type, id) {
     const currentName = type === 'switch' ? switches[id].name : relays[id].name
     document.getElementById('editNameInput').value = currentName
     document.getElementById('editNameModal').classList.add('active')
+
+    if (type === 'switch') {
+        document.getElementById('editButtonNumber').style.display = 'block'
+        document.getElementById('editButtonNumber').value = switches[id].buttonCount
+    }
 }
 
 function editOutputName(relayId, outputId) {
     currentEditTarget = { type: 'output', relayId, outputId }
     const outputs = relays[relayId].outputs
-    const currentName = outputs[outputId] || outputs[outputId.toString()] || `Output ${outputId}`
+    const currentName = outputs[outputId] || outputs[outputId] || `Output ${outputId}`
     document.getElementById('editNameInput').value = currentName
     document.getElementById('editNameModal').classList.add('active')
 }
@@ -842,9 +847,11 @@ async function saveNameEdit() {
         }
     } else if (currentEditTarget.type === 'switch') {
         // Rename switch
+        const buttonCount = parseInt(document.getElementById('editButtonNumber').value)
         const result = await postForm('/lights/rename_switch', {
             switch_id: currentEditTarget.id,
-            switch_name: newName
+            switch_name: newName,
+            buttons: buttonCount
         })
 
         if (result !== null) {
@@ -852,6 +859,8 @@ async function saveNameEdit() {
             const nameElement = document.querySelector(`#switch-${currentEditTarget.id} .device-name`)
             if (nameElement) nameElement.textContent = newName
         }
+
+        document.getElementById('editButtonNumber').style.display = 'none'
     } else if (currentEditTarget.type === 'relay') {
         // Rename relay
         const result = await postForm('/lights/rename_relay', {

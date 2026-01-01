@@ -9,6 +9,7 @@ import namer
 from fastapi_mqtt import FastMQTT, MQTTConfig
 
 from turbacz import metrics
+from turbacz import connection_manager
 from turbacz.settings import config
 from turbacz.state import relay_state
 from turbacz.websocket import ws_manager
@@ -26,25 +27,6 @@ mqtt_config = MQTTConfig(
 
 mqtt = FastMQTT(config=mqtt_config)
 task: asyncio.Task | None = None
-
-
-def process_connections(connections):
-    """
-    Process connections from configuration file.
-    """
-    processed = {}
-    for switch_id in connections:
-        processed[switch_id[:10]] = {}
-        for button_id in connections[switch_id]:
-            processed[switch_id[:10]][button_id] = []
-            outputs = connections[switch_id][button_id]
-            for i in range(len(outputs)):
-                relay_id, output_id = outputs[i]
-                outputs[i] = (str(relay_id), str(output_id))
-                processed[switch_id[:10]][button_id] = outputs
-
-    logger.debug("Processed connections: %s", processed)  # Debug log
-    return processed
 
 
 @mqtt.on_connect()
@@ -219,22 +201,14 @@ async def handle_root_state(payload_str):
     Process root switch state payload.
     """
 
-    try:
-        with open("turbacz/data/connections.json", "r", encoding="utf-8") as f:
-            conf = json.load(f)
-            connections = conf["connections"]
-            names = conf["deviceNames"]
-
-    except KeyError as e:
-        logger.error("Error processing connections: %s", e)
-
-        return
+    connections = connection_manager.connection_manager.get_all_connections()
+    relays = connection_manager.connection_manager.get_relays()
+    switches = connection_manager.connection_manager.get_switches()
 
     if payload_str == "connected":
         logger.debug("Connections: %s", connections)  # Debug log
-        processed_connections = process_connections(connections)
 
-        mqtt.client.publish("/switch/cmd/root", processed_connections)
+        mqtt.client.publish("/switch/cmd/root", connections)
 
         return
 
@@ -245,20 +219,35 @@ async def handle_root_state(payload_str):
         logger.error("Invalid JSON payload for root state: %s", payload_str)
         return
 
-    if not config.use_prometheus:
-        return
-
     url = f"{config.prometheus}/api/v2/write"
 
-    for switch_id, status in data.items():
-        if switch_id in names:
-            status["name"] = names[switch_id]
+    for dev_id, status in data.items():
+        dev_id = int(dev_id)
+
+        if status["type"] == "switch":
+            if dev_id in switches:
+                status["name"] = switches[dev_id][0]
+            else:
+                name = namer.generate(category="astronomy")
+                status["name"] = name
+                connection_manager.connection_manager.add_switch(dev_id, name, 3)
+                connection_manager.connection_manager.save_to_db()
+                await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
+
+        elif status["type"] == "relay":
+            if dev_id in relays:
+                status["name"] = relays[dev_id][0]
+            else:
+                name = namer.generate(category="animals")
+                status["name"] = name
+                connection_manager.connection_manager.add_relay(dev_id, name)
+                connection_manager.connection_manager.save_to_db()
+                await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
+
         elif status["type"] == "root":
             status["name"] = "root"
-        else:
-            status["name"] = namer.generate(category="astronomy")
 
-    for switch_id, status in data.items():
+    for dev_id, status in data.items():
         status["name"] = status["name"].replace(" ", "\\ ")
 
         if status["parent"] != "0":
@@ -269,8 +258,11 @@ async def handle_root_state(payload_str):
         else:
             status["parent_name"] = "unknown"
 
-        metric_node = f"node_info,id={switch_id},name={status['name']} uptime={status['uptime']},clicks={status['clicks']},disconnects={status['disconnects']},last_seen={status['last_seen']}"
-        metric_mesh = f"mesh_node,id={switch_id},name={status['name']},parent={status['parent']},parent_name={status['parent_name']},firmware={status['firmware']},status={status['status']},type={status['type']} rssi={status['rssi']}"
+        if not config.use_prometheus:
+            continue
+
+        metric_node = f"node_info,id={dev_id},name={status['name']} uptime={status['uptime']},clicks={status['clicks']},disconnects={status['disconnects']},last_seen={status['last_seen']}"
+        metric_mesh = f"mesh_node,id={dev_id},name={status['name']},parent={status['parent']},parent_name={status['parent_name']},firmware={status['firmware']},status={status['status']},type={status['type']} rssi={status['rssi']}"
 
         if "free_heap" in status:
             metric_node += f",free_heap={status['free_heap']}"
@@ -281,33 +273,11 @@ async def handle_root_state(payload_str):
         async with httpx.AsyncClient() as client:
             response = await client.post(url, content=metric_node)
             if response.status_code != 204:
-                logger.error(
-                    "Failed to write metric for %s: %s", switch_id, response.text
-                )
+                logger.error("Failed to write metric for %s: %s", dev_id, response.text)
 
             response = await client.post(url, content=metric_mesh)
             if response.status_code != 204:
-                logger.error(
-                    "Failed to write metric for %s: %s", switch_id, response.text
-                )
-
-    with open("turbacz/data/connections.json", "r", encoding="utf-8") as f:
-        try:
-            conf = json.load(f)
-
-        except json.JSONDecodeError:
-            logger.error("Invalid JSON in connections file.")
-            return
-
-        connections = conf["connections"]
-        names = conf["deviceNames"]
-        names.update(
-            {switch_id: data[switch_id]["name"].replace("\\", "") for switch_id in data}
-        )
-        conf["deviceNames"] = names
-
-    with open("turbacz/data/connections.json", "w", encoding="utf-8") as f:
-        json.dump(conf, f, ensure_ascii=False, indent=4)
+                logger.error("Failed to write metric for %s: %s", dev_id, response.text)
 
 
 async def get_delays():

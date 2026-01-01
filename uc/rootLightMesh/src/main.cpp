@@ -328,7 +328,12 @@ void parseConnections(JsonObject root) {
 
             for (JsonArray item : arr) {
                 if (item.size() >= 2) {
-                    String first = item[0].as<const char*>();
+                    String first;
+                    if (item[0].is<const char*>()) {
+                        first = item[0].as<const char*>();
+                    } else if (item[0].is<long long>()) {
+                        first = String(item[0].as<long long>());
+                    }
                     String second = item[1].as<const char*>();
                     vec.emplace_back(first, second);
                 }

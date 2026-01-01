@@ -359,25 +359,13 @@ async def websocket_rcm(websocket: WebSocket):
 
     await ws_manager.connect(websocket)
 
-    with open("turbacz/data/connections.json", "r", encoding="utf-8") as f:
-        rcm_config = json.load(f)
-        logger.debug("RCM Config: %s", rcm_config)
-
-        await ws_manager.send_personal_message(rcm_config, websocket)
-
     async def receive_command(websocket: WebSocket):
         async for cmd in websocket.iter_json():
             logger.debug("putting %s in command queue", cmd)
+            print(cmd)
 
-            with open("turbacz/data/connections.json", "w", encoding="utf-8") as f:
-                json.dump(cmd, f, ensure_ascii=False, indent=2)
-
-            for connection in list(cmd["connections"].keys()):
-                cmd["connections"][connection[:10]] = cmd["connections"].pop(connection)
-
-            logger.debug("Updated connections: %s", cmd["connections"])  # Debug log
-
-            mqtt.client.publish("/switch/cmd/root", cmd["connections"])
+            if cmd["type"] == "update":
+                await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
 
     await receive_command(websocket)
 

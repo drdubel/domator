@@ -476,7 +476,7 @@ async function loadConfiguration() {
         for (let [switchId, switchData] of Object.entries(switches_config)) {
             const [switchName, buttonCount] = switchData
             createSwitch(parseInt(switchId), switchName, buttonCount, switchX, switchY)
-            switchY += buttonCount * 100 + 100
+            switchY += buttonCount * 65 + 185
             if (switchY > 4000) { switchY = 1500; switchX += 350; }
         }
 

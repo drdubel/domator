@@ -821,7 +821,7 @@ function editDeviceName(type, id) {
 function editOutputName(relayId, outputId) {
     currentEditTarget = { type: 'output', relayId, outputId }
     const outputs = relays[relayId].outputs
-    const currentName = outputs[outputId] || outputs[outputId] || `Output ${outputId}`
+    const currentName = outputs[outputId] || outputs[outputId] || `Output ${outputId.charCodeAt(0) - 96}`
     document.getElementById('editNameInput').value = currentName
     document.getElementById('editNameModal').classList.add('active')
 }

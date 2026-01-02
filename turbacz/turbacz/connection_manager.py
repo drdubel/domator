@@ -15,10 +15,16 @@ class ConnectionManager:
         self._connections: dict[int, dict[str, list[tuple[int, str]]]] = {}
         self._relays: dict[int, str] = {}
         self._switches: dict[int, tuple[str, int]] = {}
-        self._outputs: dict[int, dict[int, str]] = {}
+        self._outputs: dict[int, dict[str, tuple[str, int]]] = {}
+        self._sections: dict[int, str] = {}
+        self._removed: bool = False
+
         self._init_db()
         self.create_tables()
         self.load_from_db()
+
+        if not self._sections:
+            self.add_section("Default")
 
     def _init_db(self):
         print(config.psql.user)
@@ -38,10 +44,20 @@ class ConnectionManager:
         )
         self.cur.execute(
             """
+            CREATE TABLE IF NOT EXISTS sections (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL
+            );
+            """
+        )
+        self.cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS outputs (
                 relay_id BIGINT REFERENCES relays(id),
                 output_id TEXT NOT NULL,
-                name TEXT NOT NULL
+                name TEXT NOT NULL,
+                section_id INTEGER,
+                PRIMARY KEY (relay_id, output_id)
             );
             """
         )
@@ -60,59 +76,11 @@ class ConnectionManager:
                 switch_id BIGINT REFERENCES switches(id),
                 button_id TEXT,
                 relay_id BIGINT REFERENCES relays(id),
-                output_id TEXT
+                output_id TEXT,
+                PRIMARY KEY (switch_id, button_id, relay_id, output_id)
             );
             """
         )
-        self.conn.commit()
-
-    def save_to_db(self):
-        self.cur.execute("DELETE FROM outputs;")
-        self.cur.execute("DELETE FROM connections;")
-        self.cur.execute("DELETE FROM relays;")
-        self.cur.execute("DELETE FROM switches;")
-
-        for relay_id, relay_name in self._relays.items():
-            self.cur.execute(
-                """
-                INSERT INTO relays (id, name)
-                VALUES (%s, %s)
-                ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name;
-                """,
-                (relay_id, relay_name),
-            )
-
-        for relay_id, outputs in self._outputs.items():
-            for output_id, output_name in outputs.items():
-                self.cur.execute(
-                    """
-                    INSERT INTO outputs (relay_id, output_id, name)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT DO NOTHING;
-                    """,
-                    (relay_id, output_id, output_name),
-                )
-
-        for switch_id, switch in self._switches.items():
-            self.cur.execute(
-                """
-                INSERT INTO switches (id, name, buttons)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name;
-                """,
-                (switch_id, switch[0], switch[1]),
-            )
-
-        for switch_id, buttons in self._connections.items():
-            for button_id, connections in buttons.items():
-                for relay_id, output_id in connections:
-                    self.cur.execute(
-                        """
-                        INSERT INTO connections (switch_id, button_id, relay_id, output_id)
-                        VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING;
-                        """,
-                        (switch_id, button_id, relay_id, output_id),
-                    )
         self.conn.commit()
 
     def load_from_db(self):
@@ -124,11 +92,11 @@ class ConnectionManager:
         for switch_id, switch_name, buttons in self.cur.fetchall():
             self._switches[switch_id] = (switch_name, buttons)
 
-        self.cur.execute("SELECT relay_id, output_id, name FROM outputs;")
-        for relay_id, output_id, output_name in self.cur.fetchall():
+        self.cur.execute("SELECT relay_id, output_id, section_id, name FROM outputs;")
+        for relay_id, output_id, section_id, output_name in self.cur.fetchall():
             if relay_id not in self._outputs:
                 self._outputs[relay_id] = {}
-            self._outputs[relay_id][output_id] = output_name
+            self._outputs[relay_id][output_id] = (output_name, section_id)
 
         self.cur.execute(
             "SELECT switch_id, button_id, relay_id, output_id FROM connections;"
@@ -142,8 +110,36 @@ class ConnectionManager:
 
             self._connections[switch_id][button_id].append((relay_id, output_id))
 
+        self.cur.execute(
+            "SELECT id, name, section_id, relay_id, output_id FROM virtual_buttons;"
+        )
+        for vb_id, name, section_id, relay_id, output_id in self.cur.fetchall():
+            if vb_id not in self._virtual_buttons:
+                self._virtual_buttons[vb_id] = (name, section_id, [])
+            self._virtual_buttons[vb_id][2].append((relay_id, output_id))
+
+        self.cur.execute("SELECT id, name FROM sections;")
+        for section_id, section_name in self.cur.fetchall():
+            if section_id not in self._sections:
+                self._sections[section_id] = []
+            self._sections[section_id].append(section_name)
+
     def add_relay(self, relay_id: int, relay_name: str):
         self._relays[relay_id] = relay_name
+
+        self.cur.execute(
+            """
+            INSERT INTO relays (id, name)
+            VALUES (%s, %s)
+            ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name;
+            """,
+            (relay_id, relay_name),
+        )
+
+        for i in range(8):
+            self.add_output(relay_id, chr(97 + i), f"Output {i + 1}", 0)
+
+        self.conn.commit()
 
     def get_relays(self) -> dict[int, str] | None:
         return self._relays
@@ -151,6 +147,16 @@ class ConnectionManager:
     def rename_relay(self, relay_id: int, relay_name: str):
         if relay_id in self._relays:
             self._relays[relay_id] = relay_name
+
+        self.cur.execute(
+            """
+            UPDATE relays
+            SET name = %s
+            WHERE id = %s;
+            """,
+            (relay_name, relay_id),
+        )
+        self.conn.commit()
 
     def remove_relay(self, relay_id: int):
         if relay_id in self._relays:
@@ -171,8 +177,27 @@ class ConnectionManager:
             if not self._connections[switch_id]:
                 del self._connections[switch_id]
 
+        self.cur.execute(
+            """
+            DELETE FROM relays
+            WHERE id = %s;
+            """,
+            (relay_id,),
+        )
+        self.conn.commit()
+
     def add_switch(self, switch_id: int, switch_name: str, buttons: int = 3):
         self._switches[switch_id] = (switch_name, buttons)
+
+        self.cur.execute(
+            """
+            INSERT INTO switches (id, name, buttons)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, buttons = EXCLUDED.buttons;
+            """,
+            (switch_id, switch_name, buttons),
+        )
+        self.conn.commit()
 
     def get_switches(self) -> dict[int, tuple[str, int]] | None:
         return self._switches
@@ -184,21 +209,121 @@ class ConnectionManager:
                 buttons,
             )
 
+            self.cur.execute(
+                """
+                UPDATE switches
+                SET name = %s, buttons = %s
+                WHERE id = %s;
+                """,
+                (switch_name, buttons, switch_id),
+            )
+            self.conn.commit()
+
     def remove_switch(self, switch_id: int):
         if switch_id in self._switches:
             del self._switches[switch_id]
+            self.cur.execute(
+                """
+                DELETE FROM switches
+                WHERE id = %s;
+                """,
+                (switch_id,),
+            )
+            self.conn.commit()
 
         if switch_id in self._connections:
             del self._connections[switch_id]
 
-    def add_output(self, relay_id: int, output_id: str, output_name: str):
-        self._outputs.setdefault(relay_id, {})[output_id] = output_name
+    def add_output(
+        self, relay_id: int, output_id: str, output_name: str, section_id: int = 0
+    ):
+        self._outputs.setdefault(relay_id, {})[output_id] = (output_name, section_id)
+
+        self.cur.execute(
+            """
+            INSERT INTO outputs (relay_id, output_id, name, section_id)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (relay_id, output_id) DO NOTHING;
+            """,
+            (relay_id, output_id, output_name, section_id),
+        )
 
     def name_output(self, relay_id: int, output_id: str, output_name: str):
-        self._outputs.setdefault(relay_id, {})[output_id] = output_name
+        section_id = self._outputs.get(relay_id, {}).get(output_id, ("", 0))[1]
+        self._outputs.setdefault(relay_id, {})[output_id] = (output_name, section_id)
 
-    def get_outputs(self) -> dict[int, dict[str, str]] | None:
+        self.cur.execute(
+            """
+            UPDATE outputs
+            SET name = %s
+            WHERE relay_id = %s AND output_id = %s;
+            """,
+            (output_name, relay_id, output_id),
+        )
+        self.conn.commit()
+
+    def change_output_section(self, relay_id: int, output_id: str, section_id: int):
+        if relay_id in self._outputs and output_id in self._outputs[relay_id]:
+            output_name, _ = self._outputs[relay_id][output_id]
+            self._outputs[relay_id][output_id] = (output_name, section_id)
+
+            self.cur.execute(
+                """
+                UPDATE outputs
+                SET section_id = %s
+                WHERE relay_id = %s AND output_id = %s;
+                """,
+                (section_id, relay_id, output_id),
+            )
+            self.conn.commit()
+
+    def get_outputs(self) -> dict[int, dict[str, tuple[str, int]]] | None:
         return self._outputs
+
+    def get_named_outputs(self) -> dict[int, dict[str, tuple[str, int]]] | None:
+        named_outputs = {}
+
+        for relay_id, outputs in self._outputs.items():
+            named_outputs[relay_id] = {
+                output_id: (output[0], output[1])
+                for output_id, output in outputs.items()
+                if not output[0].startswith("Output ")
+            }
+
+        return named_outputs
+
+    def add_section(self, section_name: str):
+        if section_name not in self._sections.values():
+            self._sections[len(self._sections)] = section_name
+
+            self.cur.execute(
+                """
+                INSERT INTO sections (id, name)
+                VALUES (%s, %s)
+                ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name;
+                """,
+                (len(self._sections) - 1, section_name),
+            )
+            self.conn.commit()
+
+    def remove_section(self, section_name: str):
+        if section_name in self._sections.values():
+            section_id = [
+                key for key, value in self._sections.items() if value == section_name
+            ][0]
+            del self._sections[section_id]
+
+            self.cur.execute(
+                """
+                DELETE FROM sections
+                WHERE id = %s;
+                """,
+                (section_id,),
+            )
+            self.conn.commit()
+
+    def get_sections(self) -> dict[int, str] | None:
+        return self._sections
 
     def add_connection(
         self, switch_id: int, button_id: str, relay_id: int, output_id: str
@@ -211,6 +336,16 @@ class ConnectionManager:
 
         self._connections[switch_id][button_id].append((relay_id, output_id))
 
+        self.cur.execute(
+            """
+            INSERT INTO connections (switch_id, button_id, relay_id, output_id)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (switch_id, button_id, relay_id, output_id) DO NOTHING;
+            """,
+            (switch_id, button_id, relay_id, output_id),
+        )
+        self.conn.commit()
+
     def remove_connection(
         self, switch_id: int, button_id: str, relay_id: int, output_id: str
     ):
@@ -222,6 +357,15 @@ class ConnectionManager:
                     del self._connections[switch_id][button_id]
                 if not self._connections[switch_id]:
                     del self._connections[switch_id]
+
+            self.cur.execute(
+                """
+                DELETE FROM connections
+                WHERE switch_id = %s AND button_id = %s AND relay_id = %s AND output_id = %s;
+                """,
+                (switch_id, button_id, relay_id, output_id),
+            )
+            self.conn.commit()
 
     def get_connection(self, switch_id: int, button_id: str) -> tuple[int, str] | None:
         return self._connections.get(switch_id, {}).get(button_id, None)
@@ -243,10 +387,6 @@ def add_relay(
         return {"error": "Unauthorized"}
 
     connection_manager.add_relay(relay_id, relay_name)
-    for i in range(8):
-        connection_manager.add_output(relay_id, chr(97 + i), f"Output {i + 1}")
-
-    connection_manager.save_to_db()
 
     return {"status": "Relay added"}
 
@@ -265,7 +405,6 @@ def add_output(
         return {"error": "Unauthorized"}
 
     connection_manager.name_output(relay_id, output_id, output_name)
-    connection_manager.save_to_db()
 
     return {"status": "Output added"}
 
@@ -283,7 +422,6 @@ def rename_relay(
         return {"error": "Unauthorized"}
 
     connection_manager.rename_relay(relay_id, relay_name)
-    connection_manager.save_to_db()
 
     return {"status": "Relay renamed"}
 
@@ -302,9 +440,6 @@ def rename_switch(
         return {"error": "Unauthorized"}
 
     connection_manager.rename_switch(switch_id, switch_name, buttons)
-    print("Renamed switch:", switch_id, switch_name, buttons)  # Debug log
-    print("Current switches:", connection_manager.get_switches())  # Debug log
-    connection_manager.save_to_db()
 
     return {"status": "Switch renamed"}
 
@@ -323,7 +458,6 @@ def add_switch(
         return {"error": "Unauthorized"}
 
     connection_manager.add_switch(switch_id, switch_name, buttons)
-    connection_manager.save_to_db()
 
     return {"status": "Switch added"}
 
@@ -343,7 +477,6 @@ def add_connection(
         return {"error": "Unauthorized"}
 
     connection_manager.add_connection(switch_id, button_id, relay_id, output_id)
-    connection_manager.save_to_db()
 
     return {"status": "Connection added"}
 
@@ -419,7 +552,6 @@ def remove_connection(
         return {"error": "Unauthorized"}
 
     connection_manager.remove_connection(switch_id, button_id, relay_id, output_id)
-    connection_manager.save_to_db()
     return {"status": "Connection removed"}
 
 
@@ -435,7 +567,6 @@ def remove_relay(
         return {"error": "Unauthorized"}
 
     connection_manager.remove_relay(relay_id)
-    connection_manager.save_to_db()
     return {"status": "Relay removed"}
 
 
@@ -451,7 +582,6 @@ def remove_switch(
         return {"error": "Unauthorized"}
 
     connection_manager.remove_switch(switch_id)
-    connection_manager.save_to_db()
     return {"status": "Switch removed"}
 
 

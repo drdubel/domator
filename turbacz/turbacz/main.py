@@ -19,7 +19,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
 from starlette.types import ASGIApp
 
-from turbacz import auth
+from turbacz import auth, connection_manager
 from turbacz.broker import mqtt
 from turbacz.settings import config
 from turbacz.state import relay_state
@@ -46,9 +46,9 @@ class CustomRequestSizeMiddleware(BaseHTTPMiddleware):
 
 MAX_REQUEST_SIZE = 10_000_000
 
-if config.sentry_dsn is not None:
+if config.monitoring.sentry_dsn is not None:
     sentry_sdk.init(
-        dsn=config.sentry_dsn,
+        dsn=config.monitoring.sentry_dsn,
         send_default_pii=True,
         traces_sample_rate=1.0,
     )
@@ -60,6 +60,7 @@ app.add_middleware(SessionMiddleware, secret_key="!secret")
 app.add_middleware(MetricsMiddleware)
 app.add_route("/metrics", metrics)
 app.include_router(auth.router)
+app.include_router(connection_manager.router)
 mqtt.init_app(app)
 
 background_task_started = False
@@ -104,7 +105,7 @@ async def heating(request: Request, access_token: Optional[str] = Cookie(None)):
 async def get_temperatures(request: Request, start: int, end: int, step: int):
     async with httpx.AsyncClient() as client:
         response1 = await client.get(
-            f"{config.prometheus}/api/v1/query_range",
+            f"{config.monitoring.metrics}/api/v1/query_range",
             params={
                 "start": start,
                 "end": end,
@@ -114,7 +115,7 @@ async def get_temperatures(request: Request, start: int, end: int, step: int):
         )
 
         response2 = await client.get(
-            f"{config.prometheus}/api/v1/query_range",
+            f"{config.monitoring.metrics}/api/v1/query_range",
             params={
                 "start": start,
                 "end": end,
@@ -177,7 +178,7 @@ async def rcm_page(request: Request, access_token: Optional[str] = Cookie(None))
     if not user:
         return RedirectResponse(url="/")
 
-    with open(os.path.join("static", "relay_connection_manager.html")) as fh:
+    with open(os.path.join("static", "rcm.html")) as fh:
         data = fh.read()
 
     return Response(content=data, media_type="text/html")
@@ -305,43 +306,64 @@ async def websocket_lights(websocket: WebSocket):
 
     await ws_manager.connect(websocket)
 
-    mqtt.client.publish("/switch/1/cmd", "S")
-    mqtt.client.publish("/relay/cmd/1074130365", "S")
-    mqtt.client.publish("/relay/cmd/1074122133", "S")
+    await ws_manager.send_personal_message(
+        {
+            "type": "configuration",
+            "sections": connection_manager.connection_manager.get_sections(),
+            "named_outputs": connection_manager.connection_manager.get_named_outputs(),
+        },
+        websocket,
+    )
+
+    for relay_id in connection_manager.connection_manager.get_relays():
+        mqtt.client.publish(f"/relay/cmd/{relay_id}", "S")
 
     current_states = relay_state.get_all()
-    for light_id, state in current_states.items():
-        await ws_manager.send_personal_message(
-            {"id": light_id, "state": state}, websocket
-        )
+    for relay_id, outputs in current_states.items():
+        for output_id, state in outputs.items():
+            await ws_manager.send_personal_message(
+                {
+                    "type": "light_state",
+                    "relay_id": relay_id,
+                    "output_id": output_id,
+                    "state": state,
+                },
+                websocket,
+            )
 
     async def receive_command(websocket: WebSocket):
         async for cmd in websocket.iter_json():
-            try:
-                chg = SwitchChange.model_validate(cmd)
-            except ValidationError as err:
-                logger.error("Cannot parse %s %s", cmd, err)
+            if cmd.get("type") == "add_section":
+                connection_manager.connection_manager.add_section(cmd["name"])
+                await ws_manager.broadcast(
+                    {
+                        "type": "configuration",
+                        "sections": connection_manager.connection_manager.get_sections(),
+                        "named_outputs": connection_manager.connection_manager.get_named_outputs(),
+                    },
+                    "/lights/ws/",
+                )
                 continue
-            logger.debug("putting %s in command queue", cmd)
-            chg.id = int(chg.id[1:])
 
-            match chg.id // 8:
-                case 0:
-                    topic = "/switch/1/cmd"
+            if cmd.get("type") == "change_section":
+                connection_manager.connection_manager.change_output_section(
+                    int(cmd["relay_id"]), cmd["output"], int(cmd["section"])
+                )
+                await ws_manager.broadcast(
+                    {
+                        "type": "configuration",
+                        "sections": connection_manager.connection_manager.get_sections(),
+                        "named_outputs": connection_manager.connection_manager.get_named_outputs(),
+                    },
+                    "/lights/ws/",
+                )
+                continue
 
-                case 1:
-                    topic = "/relay/cmd/1074130365"
-
-                case 2:
-                    topic = "/relay/cmd/1074122133"
-
-                case _:
-                    raise ValueError("Invalid light id")
-
-            chg.id = chr(chg.id % 8 + 97)
-
-            logger.debug("%s %s", topic, f"{chg.id}{chg.state}")  # Debug log
-            mqtt.client.publish(topic, f"{chg.id}{chg.state}")
+            try:
+                topic = f"/switch/cmd/{cmd['relay_id']}"
+                mqtt.client.publish(topic, f"{cmd['output']}{cmd['state']}")
+            except Exception as e:
+                logger.error("Cannot process command %s: %s", cmd, e)
 
     await receive_command(websocket)
 
@@ -357,25 +379,19 @@ async def websocket_rcm(websocket: WebSocket):
 
     await ws_manager.connect(websocket)
 
-    with open("turbacz/data/connections.json", "r", encoding="utf-8") as f:
-        rcm_config = json.load(f)
-        logger.debug("RCM Config: %s", rcm_config)
-
-        await ws_manager.send_personal_message(rcm_config, websocket)
-
     async def receive_command(websocket: WebSocket):
         async for cmd in websocket.iter_json():
             logger.debug("putting %s in command queue", cmd)
+            print(cmd)
 
-            with open("turbacz/data/connections.json", "w", encoding="utf-8") as f:
-                json.dump(cmd, f, ensure_ascii=False, indent=2)
+            if cmd["type"] == "update":
+                print(connection_manager.connection_manager.get_all_connections())
+                connections = (
+                    connection_manager.connection_manager.get_all_connections()
+                )
 
-            for connection in list(cmd["connections"].keys()):
-                cmd["connections"][connection[:10]] = cmd["connections"].pop(connection)
-
-            logger.debug("Updated connections: %s", cmd["connections"])  # Debug log
-
-            mqtt.client.publish("/switch/cmd/root", cmd["connections"])
+                mqtt.client.publish("/switch/cmd/root", json.dumps(connections))
+                await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
 
     await receive_command(websocket)
 

@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RCM</title>
+    <script src="https://cdn.jsdelivr.net/npm/jsplumb@2.15.6/dist/js/jsplumb.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://browser.sentry-cdn.com/10.31.0/bundle.min.js"></script>
+    <script src="/static/scripts/sentry.js"></script>
+    <link rel="stylesheet" href="/static/styles/rcm.css">
+</head>
+
+<body>
+    <div class="header">
+        <div class="header-title">
+            <div class="logo">⚡</div>
+            <div>
+                <h1>Relay Connection Manager</h1>
+                <span class="status-badge">
+                    <span class="status-dot"></span>
+                    Connected
+                </span>
+            </div>
+        </div>
+        <div id="toolbar">
+            <button class="toolbar-btn btn-primary" onclick="showAddSwitchModal()">
+                <span>➕</span> Add Switch
+            </button>
+            <button class="toolbar-btn btn-secondary" onclick="showAddRelayModal()">
+                <span>➕</span> Add Relay
+            </button>
+            <button class="toolbar-btn btn-refresh" onclick="loadConfiguration()">
+                <span>🔄</span> Refresh
+            </button>
+            <button class="toolbar-btn btn-danger" onclick="clearAllConnections()">
+                <span>🗑️</span> Clear All
+            </button>
+            <div class="zoom-controls">
+                <button class="zoom-btn" onclick="zoomOut()">−</button>
+                <span class="zoom-level" id="zoomLevel">100%</span>
+                <button class="zoom-btn" onclick="zoomIn()">+</button>
+                <button class="zoom-btn" onclick="resetZoom()" title="Reset">⟲</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="main-container">
+        <div id="canvas-wrapper">
+            <div id="canvas"></div>
+        </div>
+    </div>
+
+    <!-- Modals remain the same -->
+    <div id="addSwitchModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Add New Switch</div>
+            <div class="form-group">
+                <label>Switch ID</label>
+                <input type="number" id="switchId" placeholder="Enter unique ID">
+            </div>
+            <div class="form-group">
+                <label>Switch Name</label>
+                <input type="text" id="switchName" placeholder="Enter switch name">
+            </div>
+            <div class="form-group">
+                <label>Number of Buttons</label>
+                <select id="switchButtons">
+                    <option value="1">1 Button</option>
+                    <option value="2">2 Buttons</option>
+                    <option value="3" selected>3 Buttons</option>
+                    <option value="4">4 Buttons</option>
+                    <option value="5">5 Buttons</option>
+                    <option value="6">6 Buttons</option>
+                    <option value="7">7 Buttons</option>
+                    <option value="8">8 Buttons</option>
+                </select>
+            </div>
+            <div class="modal-buttons">
+                <button class="modal-btn save" onclick="addSwitch()">Save</button>
+                <button class="modal-btn cancel" onclick="closeModal('addSwitchModal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="addRelayModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Add New Relay</div>
+            <div class="form-group">
+                <label>Relay ID</label>
+                <input type="number" id="relayId" placeholder="Enter unique ID">
+            </div>
+            <div class="form-group">
+                <label>Relay Name</label>
+                <input type="text" id="relayName" placeholder="Enter relay name">
+            </div>
+            <div class="modal-buttons">
+                <button class="modal-btn save" onclick="addRelay()">Save</button>
+                <button class="modal-btn cancel" onclick="closeModal('addRelayModal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="editNameModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Edit Name</div>
+            <div class="form-group">
+                <label>New Name</label>
+                <input type="text" id="editNameInput" placeholder="Enter new name">
+                <input style="display:none;" type="number" id="editButtonNumber" placeholder="Enter new button number">
+            </div>
+            <div class="modal-buttons">
+                <button class="modal-btn save" onclick="saveNameEdit()">Save</button>
+                <button class="modal-btn cancel" onclick="closeModal('editNameModal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="loading">
+        <div class="spinner"></div>
+        <span>Loading...</span>
+    </div>
+
+    <script src="/static/scripts/rcm.js" defer></script>
+</body>
+
+</html>

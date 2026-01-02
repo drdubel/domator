@@ -1,6 +1,7 @@
 from typing import Optional
 
 from pydantic import BaseModel
+from pydantic.functional_validators import ModelAfterValidator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -30,14 +31,30 @@ class ServerSettings(BaseModel):
     port: int = 8000
 
 
+class PSQLSettings(BaseModel):
+    dbname: str = "turbacz"
+    user: str = "turbacz"
+    password: str = "turbacz"
+    host: str = "127.0.0.1"
+    port: int = 5432
+
+
+class Monitoring(BaseModel):
+    send_metrics: bool = True
+    metrics: str = "http://127.0.0.1:8248"
+    labels: dict[str, str] = {}
+    sentry_dsn: Optional[str] = None
+
+
 class TurbaczSettings(BaseSettings):
     authorized: set[str]
     jwt_secret: str
     mqtt: MQTTServerSettings
     oidc: OIDCSettings
-    prometheus: str = "http://127.0.0.1:8248"
-    sentry_dsn: Optional[str] = None
+    monitoring: Monitoring
     server: ServerSettings
+    psql: PSQLSettings
+    use_mqtt: bool = True
 
     model_config = SettingsConfigDict(toml_file="turbacz.toml")
 

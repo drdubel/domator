@@ -179,7 +179,7 @@ async def handle_root_state(payload_str):
     url = f"{config.monitoring.metrics}/api/v2/write"
     if config.monitoring.labels:
         labels = "," + ",".join(
-            f"{key}={value}" for key, value in config.monitoring.labels
+            f"{key}={value}" for key, value in config.monitoring.labels.items()
         )
     else:
         labels = ""

@@ -19,8 +19,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
 from starlette.types import ASGIApp
 
-from turbacz import auth
-from turbacz import connection_manager
+from turbacz import auth, connection_manager
 from turbacz.broker import mqtt
 from turbacz.settings import config
 from turbacz.state import relay_state
@@ -47,9 +46,9 @@ class CustomRequestSizeMiddleware(BaseHTTPMiddleware):
 
 MAX_REQUEST_SIZE = 10_000_000
 
-if config.sentry_dsn is not None:
+if config.monitoring.sentry_dsn is not None:
     sentry_sdk.init(
-        dsn=config.sentry_dsn,
+        dsn=config.monitoring.sentry_dsn,
         send_default_pii=True,
         traces_sample_rate=1.0,
     )

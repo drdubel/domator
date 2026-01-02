@@ -2,14 +2,12 @@ import asyncio
 import json
 import logging
 from string import ascii_lowercase
-from time import perf_counter_ns
 
 import httpx
 import namer
 from fastapi_mqtt import FastMQTT, MQTTConfig
 
-from turbacz import metrics
-from turbacz import connection_manager
+from turbacz import connection_manager, metrics
 from turbacz.settings import config
 from turbacz.state import relay_state
 from turbacz.websocket import ws_manager
@@ -26,7 +24,6 @@ mqtt_config = MQTTConfig(
 )
 
 mqtt = FastMQTT(config=mqtt_config)
-task: asyncio.Task | None = None
 
 
 @mqtt.on_connect()
@@ -35,23 +32,10 @@ def connect(client, flags, rc, properties):
 
     mqtt.client.subscribe("/blind/pos")
     mqtt.client.subscribe("/heating/metrics")
-    mqtt.client.subscribe("/switch/1/state")
     mqtt.client.subscribe("/relay/state/+")
     mqtt.client.subscribe("/switch/state/+")
 
-    # if task is None:
-    #     task = asyncio.create_task(get_delays())
-
     logger.info("Connected: %s %s %s %s", client, flags, rc, properties)
-
-
-@mqtt.on_disconnect()
-async def on_disconnect(client, packet, exc=None):
-    global task
-
-    if task:
-        task.cancel()
-        task = None
 
 
 @mqtt.on_message()
@@ -66,9 +50,6 @@ async def message(client, topic, payload, qos, properties):
 
     elif topic == "/blind/pos":
         await handle_blind_position(payload_str)
-
-    elif topic == "/switch/1/state":
-        await handle_old_switch_state(payload_str)
 
     elif topic.startswith("/relay/state/"):
         await handle_relay_state(payload_str, topic)
@@ -116,51 +97,27 @@ async def handle_blind_position(payload_str):
         logger.warning("Invalid blind position payload: %s", payload_str)
 
 
-async def handle_old_switch_state(payload_str):
-    """
-    Process old switch state payload.
-    """
-    try:
-        if len(payload_str) >= 2:
-            switch_id = "s" + str(ascii_lowercase.index(payload_str[0]))
-            state = int(payload_str[1])
-            data = {"id": switch_id, "state": state}
-
-            relay_state.update_state(switch_id, state)
-
-            asyncio.create_task(ws_manager.broadcast(data, "lights"))
-        else:
-            logger.warning("Invalid switch state payload: %s", payload_str)
-
-    except (ValueError, IndexError) as e:
-        logger.error("Error processing switch state: %s", e)
-
-
 async def handle_relay_state(payload_str, topic):
     """
     Process switch state payload from /relay/state/+ topic.
     """
     try:
-        relay_id = topic.split("/")[-1]
-
-        if payload_str == "P":
-            # Handle ping message
-            relay_state.update_ping_time(relay_id, perf_counter_ns())
-            logger.debug(
-                "Ping from relay: %s %s %s",
-                relay_id,
-                relay_state.get_ping_time(relay_id=relay_id),
-            )  # Debug log
-            return
+        relay_id = int(topic.split("/")[-1])
 
         state = int(payload_str[1])
-        idx = ord(payload_str[0]) - ord("A")
-        light_id = relay_state.route_lights(relay_id, idx)
+        output_id = chr(ord(payload_str[0]) - ord("A") + 97)
 
-        relay_state.update_state(light_id, state)
+        relay_state.update_state(relay_id, output_id, state)
+        print(f"Relay ID: {relay_id}, Output: {output_id}, State: {state}")
 
-        data = {"id": light_id, "state": state}
-        asyncio.create_task(ws_manager.broadcast(data, "lights"))
+        data = {
+            "type": "light_state",
+            "relay_id": relay_id,
+            "output_id": output_id,
+            "state": state,
+        }
+        asyncio.create_task(ws_manager.broadcast(data, "/lights/ws/"))
+        print(f"Published light state: {data}")
 
     except ValueError as e:
         logger.error("Error processing relay state: %s", e)
@@ -231,7 +188,6 @@ async def handle_root_state(payload_str):
                 name = namer.generate(category="astronomy")
                 status["name"] = name
                 connection_manager.connection_manager.add_switch(dev_id, name, 3)
-                connection_manager.connection_manager.save_to_db()
                 await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
 
         elif status["type"] == "relay":
@@ -241,7 +197,6 @@ async def handle_root_state(payload_str):
                 name = namer.generate(category="animals")
                 status["name"] = name
                 connection_manager.connection_manager.add_relay(dev_id, name)
-                connection_manager.connection_manager.save_to_db()
                 await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
 
         elif status["type"] == "root":
@@ -278,15 +233,3 @@ async def handle_root_state(payload_str):
             response = await client.post(url, content=metric_mesh)
             if response.status_code != 204:
                 logger.error("Failed to write metric for %s: %s", dev_id, response.text)
-
-
-async def get_delays():
-    while True:
-        for relay in relay_state.relays:
-            logger.debug("Pinging relay: %s", relay)  # Debug log
-            mqtt.publish(f"/relay/cmd/{relay}", "P", qos=1)
-            relay_state.update_send_ping_time(relay, perf_counter_ns())
-
-            await asyncio.sleep(0.2)  # seconds
-
-        await asyncio.sleep(3)  # seconds

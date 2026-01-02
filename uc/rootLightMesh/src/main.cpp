@@ -887,7 +887,7 @@ void setup() {
                             &statusTaskHandle, 1);
 
     // Periodic node status report
-    xTaskCreatePinnedToCore(sendNodeStatusReport, "NodeStatusReportTask", 16384,
+    xTaskCreatePinnedToCore(sendNodeStatusReport, "NodeStatusReportTask", 32768,
                             NULL, 1, &nodeStatusTaskHandle, 1);
 
     // Mesh checker task

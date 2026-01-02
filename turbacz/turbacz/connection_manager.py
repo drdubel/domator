@@ -110,14 +110,6 @@ class ConnectionManager:
 
             self._connections[switch_id][button_id].append((relay_id, output_id))
 
-        self.cur.execute(
-            "SELECT id, name, section_id, relay_id, output_id FROM virtual_buttons;"
-        )
-        for vb_id, name, section_id, relay_id, output_id in self.cur.fetchall():
-            if vb_id not in self._virtual_buttons:
-                self._virtual_buttons[vb_id] = (name, section_id, [])
-            self._virtual_buttons[vb_id][2].append((relay_id, output_id))
-
         self.cur.execute("SELECT id, name FROM sections;")
         for section_id, section_name in self.cur.fetchall():
             if section_id not in self._sections:

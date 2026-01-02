@@ -616,7 +616,10 @@ function createRelay(relayId, relayName, outputs, x, y) {
 
     let outputsHTML = ''
     for (let i = 1; i <= 8; i++) {
-        const outputName = outputs[String.fromCharCode(96 + i)] || `Output ${i}`
+        let outputName = outputs[String.fromCharCode(96 + i)] || `Output ${i}`
+        if (Array.isArray(outputName)) {
+            outputName = outputName[0]
+        }
         outputsHTML += `
                     <div class="output-item" id="relay-${relayId}-output-${String.fromCharCode(96 + i)}">
                         <span class="item-icon">💡</span>
@@ -821,7 +824,10 @@ function editDeviceName(type, id) {
 function editOutputName(relayId, outputId) {
     currentEditTarget = { type: 'output', relayId, outputId }
     const outputs = relays[relayId].outputs
-    const currentName = outputs[outputId] || outputs[outputId] || `Output ${outputId.charCodeAt(0) - 96}`
+    let currentName = outputs[outputId] || outputs[outputId] || `Output ${outputId.charCodeAt(0) - 96}`
+    if (Array.isArray(currentName)) {
+        currentName = currentName[0]
+    }
     document.getElementById('editNameInput').value = currentName
     document.getElementById('editNameModal').classList.add('active')
 }

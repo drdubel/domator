@@ -105,7 +105,7 @@ async def heating(request: Request, access_token: Optional[str] = Cookie(None)):
 async def get_temperatures(request: Request, start: int, end: int, step: int):
     async with httpx.AsyncClient() as client:
         response1 = await client.get(
-            f"{config.prometheus}/api/v1/query_range",
+            f"{config.monitoring.metrics}/api/v1/query_range",
             params={
                 "start": start,
                 "end": end,
@@ -115,7 +115,7 @@ async def get_temperatures(request: Request, start: int, end: int, step: int):
         )
 
         response2 = await client.get(
-            f"{config.prometheus}/api/v1/query_range",
+            f"{config.monitoring.metrics}/api/v1/query_range",
             params={
                 "start": start,
                 "end": end,

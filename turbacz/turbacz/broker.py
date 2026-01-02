@@ -176,7 +176,13 @@ async def handle_root_state(payload_str):
         logger.error("Invalid JSON payload for root state: %s", payload_str)
         return
 
-    url = f"{config.prometheus}/api/v2/write"
+    url = f"{config.monitoring.metrics}/api/v2/write"
+    if config.monitoring.labels:
+        labels = "," + ",".join(
+            f"{key}={value}" for key, value in config.monitoring.labels
+        )
+    else:
+        labels = ""
 
     for dev_id, status in data.items():
         dev_id = int(dev_id)
@@ -213,11 +219,11 @@ async def handle_root_state(payload_str):
         else:
             status["parent_name"] = "unknown"
 
-        if not config.use_prometheus:
+        if not config.monitoring.send_metrics:
             continue
 
-        metric_node = f"node_info,id={dev_id},name={status['name']} uptime={status['uptime']},clicks={status['clicks']},disconnects={status['disconnects']},last_seen={status['last_seen']}"
-        metric_mesh = f"mesh_node,id={dev_id},name={status['name']},parent={status['parent']},parent_name={status['parent_name']},firmware={status['firmware']},status={status['status']},type={status['type']} rssi={status['rssi']}"
+        metric_node = f"node_info,id={dev_id},name={status['name']}{labels} uptime={status['uptime']},clicks={status['clicks']},disconnects={status['disconnects']},last_seen={status['last_seen']}"
+        metric_mesh = f"mesh_node,id={dev_id},name={status['name']},parent={status['parent']},parent_name={status['parent_name']},firmware={status['firmware']},status={status['status']},type={status['type']}{labels} rssi={status['rssi']}"
 
         if "free_heap" in status:
             metric_node += f",free_heap={status['free_heap']}"

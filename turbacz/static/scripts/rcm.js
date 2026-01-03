@@ -3,6 +3,8 @@ let jsPlumbInstance
 let switches = {}
 let relays = {}
 let connections = {}
+var lights = {}
+var pendingClicks = new Set()
 let currentEditTarget = null
 let highlightedDevice = null
 let isLoadingConnections = false
@@ -61,6 +63,12 @@ function connectWebSocket() {
 
         if (msg.type == "update") {
             loadConfiguration()
+        }
+
+        if (msg.type == "light_state") {
+            pendingClicks.delete(`${msg.relay_id}-${msg.output_id}`)
+            lights[`${msg.relay_id}-${msg.output_id}`] = msg.state
+            updateLightUI(msg.relay_id, msg.output_id, msg.state)
         }
     }
 
@@ -494,6 +502,8 @@ async function loadConfiguration() {
             isLoadingConnections = false
             hideLoading()
         }, 100); // slightly smaller delay may work
+
+        ws.send('{"type": "get_states"}')
     } catch (error) {
         console.error('Error loading configuration:', error)
         isLoadingConnections = false
@@ -622,7 +632,7 @@ function createRelay(relayId, relayName, outputs, x, y) {
         }
         outputsHTML += `
                     <div class="output-item" id="relay-${relayId}-output-${String.fromCharCode(96 + i)}">
-                        <span class="item-icon">💡</span>
+                        <span><img class="item-icon" src="/static/data/img/off.png" alt="switch" onclick="changeSwitchState(${relayId}, '${String.fromCharCode(96 + i)}')"></span>
                         <span class="output-name" onclick="event.stopPropagation(); editOutputName(${relayId}, '${String.fromCharCode(96 + i)}')">${outputName}</span>
                     </div>
                 `
@@ -681,6 +691,51 @@ function createConnection(switchId, buttonId, relayId, outputId) {
         if (!connections[switchId]) connections[switchId] = {}
         if (!connections[switchId][buttonId]) connections[switchId][buttonId] = []
         connections[switchId][buttonId].push({ relayId, outputId, connection: conn })
+    }
+}
+
+function changeSwitchState(relay_id, output_id) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+        console.log('WebSocket not connected, trying to reconnect...')
+        connectWebSocket()
+        return
+    }
+
+    if (pendingClicks.has(`${relay_id}-${output_id}`)) {
+        return
+    }
+
+    pendingClicks.add(`${relay_id}-${output_id}`)
+    var newState = lights[`${relay_id}-${output_id}`] === 1 ? 0 : 1
+
+    console.log('Changing state of', `${relay_id}-${output_id}`, 'to', newState)
+    var msg = JSON.stringify({ "relay_id": relay_id, "output_id": output_id, "state": newState })
+    console.log(msg)
+
+    try {
+        ws.send(msg)
+    } catch (e) {
+        console.error('Failed to send:', e)
+        pendingClicks.delete(`${relay_id}-${output_id}`)
+        connectWebSocket()
+    }
+
+    setTimeout(function () {
+        pendingClicks.delete(`${relay_id}-${output_id}`)
+    }, 2000)
+}
+
+function updateLightUI(relay_id, output_id, state) {
+    console.log('Updating UI for', `relay-${relay_id}-output-${output_id}`, 'to', state)
+    var element = document.getElementById(`relay-${relay_id}-output-${output_id}`).querySelector('img')
+    if (!element) return
+
+    if (state === 1) {
+        element.src = "/static/data/img/on.png"
+        element.parentElement.classList.add('active')
+    } else {
+        element.src = "/static/data/img/off.png"
+        element.parentElement.classList.remove('active')
     }
 }
 
@@ -839,6 +894,17 @@ function editDeviceName(type, id) {
         document.getElementById('editButtonNumber').style.display = 'block'
         document.getElementById('editButtonNumber').value = switches[id].buttonCount
     }
+
+    document.addEventListener('keydown', function handler(e) {
+        if (e.key === 'Enter') {
+            saveNameEdit()
+            document.removeEventListener('keydown', handler)
+        }
+        if (e.key === 'Escape') {
+            closeModal('editNameModal')
+            document.removeEventListener('keydown', handler)
+        }
+    })
 }
 
 function editOutputName(relayId, outputId) {
@@ -850,6 +916,17 @@ function editOutputName(relayId, outputId) {
     }
     document.getElementById('editNameInput').value = currentName
     document.getElementById('editNameModal').classList.add('active')
+
+    document.addEventListener('keydown', function handler(e) {
+        if (e.key === 'Enter') {
+            saveNameEdit()
+            document.removeEventListener('keydown', handler)
+        }
+        if (e.key === 'Escape') {
+            closeModal('editNameModal')
+            document.removeEventListener('keydown', handler)
+        }
+    })
 }
 
 async function saveNameEdit() {

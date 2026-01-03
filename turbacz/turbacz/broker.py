@@ -107,17 +107,7 @@ async def handle_relay_state(payload_str, topic):
         state = int(payload_str[1])
         output_id = chr(ord(payload_str[0]) - ord("A") + 97)
 
-        relay_state.update_state(relay_id, output_id, state)
-        print(f"Relay ID: {relay_id}, Output: {output_id}, State: {state}")
-
-        data = {
-            "type": "light_state",
-            "relay_id": relay_id,
-            "output_id": output_id,
-            "state": state,
-        }
-        asyncio.create_task(ws_manager.broadcast(data, "/lights/ws/"))
-        print(f"Published light state: {data}")
+        await relay_state.update_state(relay_id, output_id, state)
 
     except ValueError as e:
         logger.error("Error processing relay state: %s", e)

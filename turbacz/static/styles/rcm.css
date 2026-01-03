@@ -235,15 +235,17 @@ body {
 .device-box.highlighted {
     box-shadow: 0 0 0 3px var(--danger-color), 0 25px 50px -12px rgb(0 0 0 / 0.4);
     transform: scale(1.02);
-    z-index: 1000;
+    z-index: 10000;
 }
 
 .switch-box {
     border-left: 4px solid var(--primary-color);
+    z-index: 10010;
 }
 
 .switch-box.highlighted {
     border-left-color: var(--danger-color);
+    z-index: 10020;
 }
 
 .relay-box {
@@ -559,12 +561,11 @@ body {
 ._jsPlumb_endpoint,
 .jtk-connector,
 .jtk-endpoint {
-    z-index: 10000 !important;
-    pointer-events: auto !important;
+    z-index: 10005 !important;
 }
 
 ._jsPlumb_overlay {
-    z-index: 10001 !important;
+    z-index: 10006 !important;
 }
 
 ._jsPlumb_endpoint:hover {

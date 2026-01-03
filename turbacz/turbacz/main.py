@@ -397,7 +397,6 @@ async def websocket_rcm(websocket: WebSocket):
                 continue
 
             if cmd.get("type") == "get_states":
-                print("Getting current states")
                 current_states = relay_state.get_all()
 
                 for relay_id, outputs in current_states.items():

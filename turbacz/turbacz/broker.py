@@ -208,7 +208,13 @@ async def handle_root_state(payload_str):
         elif status["type"] == "root":
             status["name"] = "root"
 
+        else:
+            logger.warning(f"Unknown device type for ID {dev_id}: {status['type']}")
+
     for dev_id, status in data.items():
+        if "name" not in status:
+            continue
+
         status["name"] = status["name"].replace(" ", "\\ ")
 
         if status["parent"] != "0":

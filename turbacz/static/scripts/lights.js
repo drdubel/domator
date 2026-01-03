@@ -204,7 +204,8 @@ function changeSwitchState(id) {
 
 	var newState = lights[id] === 1 ? 0 : 1
 
-	var msg = JSON.stringify({ "relay_id": id.slice(0, -2), "output": id.slice(-1), "state": newState })
+	console.log('Changing state of', id, 'to', newState)
+	var msg = JSON.stringify({ "relay_id": id.slice(0, -1), "output_id": id.slice(-1), "state": newState })
 	console.log(msg)
 
 	try {
@@ -273,7 +274,7 @@ function submitChangeSectionForm() {
 		return
 	}
 
-	ws.send(JSON.stringify({ "type": "change_section", "relay_id": buttonOutput.slice(0, -2), "output": buttonOutput.slice(-1), "section": buttonSection }))
+	ws.send(JSON.stringify({ "type": "change_section", "relay_id": buttonOutput.slice(0, -2), "output_id": buttonOutput.slice(-1), "section": buttonSection }))
 	closeModal('changeSectionModal')
 }
 

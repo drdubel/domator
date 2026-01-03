@@ -347,7 +347,7 @@ async def websocket_lights(websocket: WebSocket):
 
             if cmd.get("type") == "change_section":
                 connection_manager.connection_manager.change_output_section(
-                    int(cmd["relay_id"]), cmd["output"], int(cmd["section"])
+                    int(cmd["relay_id"]), cmd["output_id"], int(cmd["section"])
                 )
                 await ws_manager.broadcast(
                     {
@@ -361,7 +361,8 @@ async def websocket_lights(websocket: WebSocket):
 
             try:
                 topic = f"/switch/cmd/{cmd['relay_id']}"
-                mqtt.client.publish(topic, f"{cmd['output']}{cmd['state']}")
+                mqtt.client.publish(topic, f"{cmd['output_id']}{cmd['state']}")
+
             except Exception as e:
                 logger.error("Cannot process command %s: %s", cmd, e)
 
@@ -382,10 +383,8 @@ async def websocket_rcm(websocket: WebSocket):
     async def receive_command(websocket: WebSocket):
         async for cmd in websocket.iter_json():
             logger.debug("putting %s in command queue", cmd)
-            print(cmd)
 
             if cmd["type"] == "update":
-                print(connection_manager.connection_manager.get_all_connections())
                 connections = (
                     connection_manager.connection_manager.get_all_connections()
                 )

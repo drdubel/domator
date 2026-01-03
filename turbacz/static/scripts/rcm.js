@@ -689,12 +689,32 @@ function showAddSwitchModal() {
     document.getElementById('switchId').value = ''
     document.getElementById('switchName').value = ''
     document.getElementById('switchButtons').value = '3'
+    document.addEventListener('keydown', function handler(e) {
+        if (e.key === 'Enter') {
+            addSwitch()
+            document.removeEventListener('keydown', handler)
+        }
+        if (e.key === 'Escape') {
+            closeModal('addSwitchModal')
+            document.removeEventListener('keydown', handler)
+        }
+    })
 }
 
 function showAddRelayModal() {
     document.getElementById('addRelayModal').classList.add('active')
     document.getElementById('relayId').value = ''
     document.getElementById('relayName').value = ''
+    document.addEventListener('keydown', function handler(e) {
+        if (e.key === 'Enter') {
+            addRelay()
+            document.removeEventListener('keydown', handler)
+        }
+        if (e.key === 'Escape') {
+            closeModal('addRelayModal')
+            document.removeEventListener('keydown', handler)
+        }
+    })
 }
 
 function closeModal(modalId) {

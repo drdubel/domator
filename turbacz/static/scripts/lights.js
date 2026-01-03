@@ -253,11 +253,30 @@ function showChangeSectionModal() {
 	document.getElementById('changeSectionModal').classList.add('active')
 	document.getElementById('buttons').value = ''
 	document.getElementById('sections').value = ''
+	document.getElementById('buttons').focus()
+	document.addEventListener('keydown', function handleModalKeys(e) {
+		if (e.key === 'Escape') {
+			closeModal('changeSectionModal')
+			document.removeEventListener('keydown', handleModalKeys)
+		} else if (e.key === 'Enter') {
+			submitChangeSectionForm()
+			document.removeEventListener('keydown', handleModalKeys)
+		}
+	})
 }
 
 function showAddSectionModal() {
 	document.getElementById('addSectionModal').classList.add('active')
 	document.getElementById('sectionName').value = ''
+	document.addEventListener('keydown', function handleModalKeys(e) {
+		if (e.key === 'Escape') {
+			closeModal('addSectionModal')
+			document.removeEventListener('keydown', handleModalKeys)
+		} else if (e.key === 'Enter') {
+			submitAddSectionForm()
+			document.removeEventListener('keydown', handleModalKeys)
+		}
+	})
 }
 
 function closeModal(modalId) {

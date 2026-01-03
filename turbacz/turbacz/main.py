@@ -380,17 +380,45 @@ async def websocket_rcm(websocket: WebSocket):
 
     await ws_manager.connect(websocket)
 
+    for relay_id in connection_manager.connection_manager.get_relays():
+        mqtt.client.publish(f"/relay/cmd/{relay_id}", "S")
+
     async def receive_command(websocket: WebSocket):
         async for cmd in websocket.iter_json():
             logger.debug("putting %s in command queue", cmd)
 
-            if cmd["type"] == "update":
+            if cmd.get("type") == "update":
                 connections = (
                     connection_manager.connection_manager.get_all_connections()
                 )
 
                 mqtt.client.publish("/switch/cmd/root", json.dumps(connections))
                 await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
+                continue
+
+            if cmd.get("type") == "get_states":
+                print("Getting current states")
+                current_states = relay_state.get_all()
+
+                for relay_id, outputs in current_states.items():
+                    for output_id, state in outputs.items():
+                        await ws_manager.send_personal_message(
+                            {
+                                "type": "light_state",
+                                "relay_id": relay_id,
+                                "output_id": output_id,
+                                "state": state,
+                            },
+                            websocket,
+                        )
+                continue
+
+            try:
+                topic = f"/switch/cmd/{cmd['relay_id']}"
+                mqtt.client.publish(topic, f"{cmd['output_id']}{cmd['state']}")
+
+            except Exception as e:
+                logger.error("Cannot process command %s: %s", cmd, e)
 
     await receive_command(websocket)
 

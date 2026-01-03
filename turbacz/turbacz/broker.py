@@ -79,7 +79,7 @@ async def handle_heating_metrics(payload_str):
         for multiplier in ("kp", "ki", "kd"):
             metrics.pid_multiplier.set({"multiplier": multiplier}, data[multiplier])
 
-        await ws_manager.broadcast(data, "heating")
+        await ws_manager.broadcast(data, "/heating/ws/")
 
     except (json.JSONDecodeError, KeyError) as e:
         logger.error("Error processing heating metrics: %s", e)
@@ -92,7 +92,7 @@ async def handle_blind_position(payload_str):
     parts = payload_str.split()
     if len(parts) >= 2:
         data = {"blind": parts[0], "current_position": parts[1]}
-        await ws_manager.broadcast(data, "blinds")
+        await ws_manager.broadcast(data, "/blinds/ws/")
     else:
         logger.warning("Invalid blind position payload: %s", payload_str)
 

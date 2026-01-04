@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "esp_task_wdt.h"
+#include "esp_wifi.h"
 
 #define HOSTNAME "mesh_root"
 #define NLIGHTS 8
@@ -32,7 +33,7 @@
 #define MQTT_CONNECT_TIMEOUT 5
 
 // Minimal debug - only errors and critical events
-#define DEBUG_LEVEL 1  // 0=none, 1=errors only, 2=info, 3=verbose
+#define DEBUG_LEVEL 3  // 0=none, 1=errors only, 2=info, 3=verbose
 
 #if DEBUG_LEVEL >= 1
 #define DEBUG_ERROR(x) Serial.println(x)
@@ -56,6 +57,9 @@ const int mqtt_port = 1883;
 uint32_t device_id;
 
 std::queue<std::pair<String, String>> mqttMessageQueue;
+std::queue<std::pair<String, String>> mqttCallbackQueue;
+std::queue<std::pair<uint32_t, String>> meshMessageQueue;
+std::queue<std::pair<uint32_t, String>> meshCallbackQueue;
 std::map<uint32_t, String> nodes;
 std::map<String, std::map<char, std::vector<std::pair<String, String>>>>
     connections;
@@ -91,9 +95,12 @@ bool toUint64(const String& s, uint64_t& out) {
 
 void otaTask(void* pv) {
     otaInProgress = true;
+
     esp_task_wdt_deinit();
+
     mqttClient.disconnect();
     mesh.stop();
+
     vTaskDelay(pdMS_TO_TICKS(1000));
     performFirmwareUpdate();
 }
@@ -214,6 +221,18 @@ void parseConnections(JsonObject root) {
             connections[id][letter] = std::move(vec);
         }
     }
+
+    DEBUG_VERBOSE("Connections parsed:");
+    for (const auto& idPair : connections) {
+        DEBUG_VERBOSE("  ID: " + idPair.first);
+        for (const auto& letterPair : idPair.second) {
+            DEBUG_VERBOSE("    Letter: " + String(letterPair.first));
+            for (const auto& target : letterPair.second) {
+                DEBUG_VERBOSE("      -> " + target.first + ": " +
+                              target.second);
+            }
+        }
+    }
 }
 
 void mqttConnect() {
@@ -232,7 +251,8 @@ void mqttConnect() {
             mqttClient.subscribe("/switch/cmd");
             mqttClient.subscribe("/relay/cmd/+");
             mqttClient.subscribe("/relay/cmd");
-            mqttClient.publish("/switch/state/root", "connected", true);
+
+            mqttCallbackQueue.push({"/switch/state/root", "connected"});
             return;
         }
         retries++;
@@ -243,6 +263,8 @@ void mqttConnect() {
 void meshInit() {
     mesh.setDebugMsgTypes(ERROR | STARTUP);
     mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA);
+
+    esp_wifi_set_ps(WIFI_PS_NONE);
 
     mesh.stationManual(WIFI_SSID, WIFI_PASSWORD);
     mesh.setRoot(true);
@@ -256,6 +278,34 @@ void meshInit() {
     device_id = mesh.getNodeId();
 }
 
+void handleUpdateMessage(const String& topic) {
+    if (topic == "/switch/cmd/root") {
+        otaInProgress = true;
+        return;
+    }
+
+    String path = topic;
+    int lastSlash = path.lastIndexOf('/');
+    String last = path.substring(lastSlash + 1);
+    uint64_t nodeId;
+
+    if (toUint64(last, nodeId)) {
+        meshMessageQueue.push({(uint32_t)nodeId, "U"});
+        return;
+    }
+
+    for (const auto& pair : nodes) {
+        uint32_t nodeId = pair.first;
+        String nodeType = pair.second;
+
+        if ((nodeType == "relay" && topic == "/switch/cmd") ||
+            (nodeType == "switch" && topic == "/relay/cmd")) {
+            continue;
+        }
+        meshMessageQueue.push({nodeId, "U"});
+    }
+}
+
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
     String msg;
     msg.reserve(length + 1);
@@ -263,59 +313,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         msg += (char)payload[i];
     }
 
-    if (msg == "P") return;
-
-    if (strcmp(topic, "/switch/cmd/root") == 0) {
-        if (msg == "U") {
-            otaInProgress = true;
-            return;
-        }
-
-        if (isValidJson(msg)) {
-            JsonDocument doc;
-            deserializeJson(doc, msg);
-
-            parseConnections(doc.as<JsonObject>());
-
-            return;
-        }
-    }
-
-    if (msg == "U") {
-        String path = String(topic);
-        int lastSlash = path.lastIndexOf('/');
-        String last = path.substring(lastSlash + 1);
-        uint64_t nodeId;
-
-        if (toUint64(last, nodeId)) {
-            mesh.sendSingle(nodeId, "U");
-            return;
-        }
-
-        for (const auto& pair : nodes) {
-            uint32_t nodeId = pair.first;
-            String nodeType = pair.second;
-
-            if ((nodeType == "relay" && strcmp(topic, "/switch/cmd") == 0) ||
-                (nodeType == "switch" && strcmp(topic, "/relay/cmd") == 0)) {
-                continue;
-            }
-            mesh.sendSingle(nodeId, "U");
-        }
-        return;
-    }
-
-    size_t lastSlash = String(topic).lastIndexOf('/');
-    if (lastSlash != -1 && lastSlash < strlen(topic) - 1) {
-        String idStr = String(topic).substring(lastSlash + 1);
-        uint32_t nodeId = idStr.toInt();
-
-        if (nodeId != 0 || idStr == "0") {
-            if (nodes.count(nodeId)) {
-                mesh.sendSingle(nodeId, msg);
-            }
-        }
-    }
+    mqttCallbackQueue.push({String(topic), msg});
 }
 
 void droppedConnectionCallback(uint32_t nodeId) { nodes.erase(nodeId); }
@@ -327,6 +325,9 @@ void handleSwitchMessage(const uint32_t& from, const char output,
     std::vector<std::pair<String, String>> targets =
         connections[String(from)][output];
 
+    Serial.printf("SWITCH: Handling message from %u for output %c\n", from,
+                  output);
+
     for (const auto& target : targets) {
         String relayIdStr = target.first;
         String command = target.second;
@@ -334,7 +335,7 @@ void handleSwitchMessage(const uint32_t& from, const char output,
 
         if (state != -1) {
             command += String(state);
-            mesh.sendSingle(relayId, command);
+            meshMessageQueue.push({relayId, command});
         }
     }
 }
@@ -347,57 +348,15 @@ void handleRelayMessage(const uint32_t& from, const String& msg) {
 }
 
 void receivedCallback(const uint32_t& from, const String& msg) {
-    if (msg == "R") {
-        nodes[from] = "relay";
-        mesh.sendSingle(from, "A");
-        return;
-    }
-
-    if (msg == "S") {
-        nodes[from] = "switch";
-        mesh.sendSingle(from, "A");
-        return;
-    }
-
-    if (msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
-        if (msg.length() == 1) {
-            handleSwitchMessage(from, msg[0]);
-        } else {
-            handleSwitchMessage(from, msg[0], msg[1] - '0');
-        }
-        return;
-    }
-
-    if (msg.length() == 2 && msg[0] >= 'A' && msg[0] < 'A' + NLIGHTS) {
-        handleRelayMessage(from, msg);
-        return;
-    }
-
-    if (msg == "P") {
-        mqttClient.publish(("/relay/state/" + String(from)).c_str(), "P");
-        return;
-    }
-
-    if (isValidJson(msg)) {
-        JsonDocument doc;
-        deserializeJson(doc, msg.c_str());
-
-        doc["parentId"] = nodeParentMap[from];
-
-        String newMsg;
-        serializeJson(doc, newMsg);
-
-        if (WiFi.status() == WL_CONNECTED && mqttClient.connected())
-            mqttMessageQueue.push({"/switch/state/root", newMsg});
-
-        return;
-    }
+    meshCallbackQueue.push({from, msg});
 }
 
 void checkWiFi() {
     IPAddress currentIP = getlocalIP();
     if (myIP != currentIP && currentIP != IPAddress(0, 0, 0, 0)) {
         myIP = currentIP;
+        DEBUG_INFO("Connected to WiFi.");
+        DEBUG_INFO("New IP: " + myIP.toString());
     }
 }
 
@@ -411,11 +370,13 @@ void checkWiFiAndMQTT(void* pvParameters) {
         checkWiFi();
 
         while (!WiFi.isConnected()) {
-            vTaskDelay(5000 / portTICK_PERIOD_MS);
+            vTaskDelay(pdMS_TO_TICKS(2000));
+            continue;
         }
 
         if (!mqttClient.connected()) {
             unsigned long now = millis();
+
             if (now - lastMqttReconnect > MQTT_RECONNECT_INTERVAL) {
                 lastMqttReconnect = now;
                 mqttConnect();
@@ -423,6 +384,7 @@ void checkWiFiAndMQTT(void* pvParameters) {
         } else {
             mqttClient.loop();
         }
+
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
@@ -449,12 +411,12 @@ void checkMesh(void* pvParameters) {
         // Query new nodes
         for (auto nodeId : nowNodes) {
             if (nodes.find(nodeId) == nodes.end()) {
-                mesh.sendSingle(nodeId, "Q");
-                vTaskDelay(25 / portTICK_PERIOD_MS);
+                meshMessageQueue.push({nodeId, "Q"});
+                vTaskDelay(pdMS_TO_TICKS(25));
             }
         }
 
-        vTaskDelay(5000 / portTICK_PERIOD_MS);
+        vTaskDelay(pdMS_TO_TICKS(2000));
     }
 }
 
@@ -519,13 +481,154 @@ void sendMQTTMessages(void* pvParameters) {
 
         if (mqttClient.connected() && !mqttMessageQueue.empty()) {
             std::pair<String, String> message = mqttMessageQueue.front();
+            String topic = message.first;
+            String msg = message.second;
             mqttMessageQueue.pop();
 
-            mqttClient.publish(message.first.c_str(), message.second.c_str(),
-                               message.second.length());
+            mqttClient.publish(topic.c_str(), msg.c_str(), msg.length());
+
             vTaskDelay(pdMS_TO_TICKS(10));
         } else {
             vTaskDelay(pdMS_TO_TICKS(50));
+        }
+    }
+}
+
+void sendMeshMessages(void* pvParameters) {
+    while (true) {
+        if (otaInProgress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        if (!meshMessageQueue.empty()) {
+            auto message = meshMessageQueue.front();
+            meshMessageQueue.pop();
+
+            uint32_t to = message.first;
+            String msg = message.second;
+
+            mesh.sendSingle(to, msg);
+
+            vTaskDelay(pdMS_TO_TICKS(10));
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
+    }
+}
+
+void mqttCallbackTask(void* pvParameters) {
+    while (true) {
+        if (otaInProgress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        if (!mqttClient.connected()) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+
+        if (!mqttCallbackQueue.empty()) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+
+            std::pair<String, String> message = mqttCallbackQueue.front();
+            mqttCallbackQueue.pop();
+
+            String topic = message.first;
+            String msg = message.second;
+
+            if (msg == "U") {
+                handleUpdateMessage(topic);
+                continue;
+            }
+            if (topic == "/switch/cmd/root" && isValidJson(msg)) {
+                JsonDocument doc;
+                deserializeJson(doc, msg);
+
+                parseConnections(doc.as<JsonObject>());
+
+                continue;
+            }
+            size_t lastSlash = topic.lastIndexOf('/');
+            if (lastSlash != -1 && lastSlash < topic.length() - 1) {
+                String idStr = topic.substring(lastSlash + 1);
+                uint32_t nodeId = idStr.toInt();
+
+                if (nodeId != 0 || idStr == "0") {
+                    if (nodes.count(nodeId)) {
+                        mesh.sendSingle(nodeId, msg);
+                    }
+                }
+            }
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
+    }
+}
+
+void meshCallbackTask(void* pvParameters) {
+    while (true) {
+        if (otaInProgress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        if (meshCallbackQueue.empty()) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+
+        std::pair<uint32_t, String> message = meshCallbackQueue.front();
+        uint32_t from = message.first;
+        String msg = message.second;
+        meshCallbackQueue.pop();
+
+        if (msg == "R") {
+            nodes[from] = "relay";
+            meshMessageQueue.push({from, "A"});
+
+            continue;
+        }
+
+        if (msg == "S") {
+            nodes[from] = "switch";
+            meshMessageQueue.push({from, "A"});
+
+            continue;
+        }
+
+        if (msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
+            if (msg.length() == 1) {
+                handleSwitchMessage(from, msg[0]);
+            } else {
+                handleSwitchMessage(from, msg[0], msg[1] - '0');
+            }
+
+            continue;
+        }
+
+        if (msg.length() == 2 && msg[0] >= 'A' && msg[0] < 'A' + NLIGHTS) {
+            handleRelayMessage(from, msg);
+
+            continue;
+        }
+
+        if (isValidJson(msg)) {
+            JsonDocument doc;
+            deserializeJson(doc, msg.c_str());
+
+            doc["parentId"] = nodeParentMap[from];
+
+            String newMsg;
+            serializeJson(doc, newMsg);
+
+            if (WiFi.status() == WL_CONNECTED && mqttClient.connected())
+                mqttMessageQueue.push({"/switch/state/root", newMsg});
+
+            continue;
         }
     }
 }
@@ -548,6 +651,12 @@ void setup() {
     xTaskCreatePinnedToCore(checkMesh, "MeshCheck", 8192, NULL, 1, NULL, 1);
     xTaskCreatePinnedToCore(meshUpdateTask, "MeshUpdate", 8192, NULL, 5, NULL,
                             0);
+    xTaskCreatePinnedToCore(sendMeshMessages, "sendMesh", 4096, NULL, 2, NULL,
+                            0);
+    xTaskCreatePinnedToCore(mqttCallbackTask, "MQTTCallback", 8192, NULL, 2,
+                            NULL, 1);
+    xTaskCreatePinnedToCore(meshCallbackTask, "MeshCallback", 8192, NULL, 2,
+                            NULL, 0);
 }
 
 void loop() {

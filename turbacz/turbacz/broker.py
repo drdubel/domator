@@ -23,6 +23,8 @@ mqtt_config = MQTTConfig(
 
 mqtt = FastMQTT(config=mqtt_config)
 
+rootId = None
+
 
 @mqtt.on_connect()
 def connect(client, flags, rc, properties):
@@ -146,6 +148,7 @@ async def handle_root_state(payload_str):
     """
     Process root switch state payload.
     """
+    global rootId
 
     connections = connection_manager.connection_manager.get_all_connections()
     relays = connection_manager.connection_manager.get_relays()
@@ -195,6 +198,8 @@ async def handle_root_state(payload_str):
     elif data["type"] == "root":
         data["name"] = "root"
 
+        rootId = data["deviceId"]
+
     else:
         logger.warning(f"Unknown device type for ID {data['deviceId']}: {data['type']}")
 
@@ -209,7 +214,7 @@ async def handle_root_state(payload_str):
     elif data["parentId"] in switches:
         parent_name = switches[data["parentId"]][0]
 
-    elif data["parentId"] == data["deviceId"]:
+    elif data["parentId"] == data["deviceId"] or data["parentId"] == rootId:
         parent_name = "root"
 
     else:

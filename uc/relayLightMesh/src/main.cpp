@@ -405,6 +405,8 @@ void buttonPressTask(void* pvParameters) {
 
 void registerTask(void* pvParameters) {
     while (true) {
+        vTaskDelay(pdMS_TO_TICKS(REGISTRATION_RETRY_INTERVAL));
+
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
@@ -412,6 +414,7 @@ void registerTask(void* pvParameters) {
 
         if (!registeredWithRoot) {
             Serial.println("MESH: Attempting registration with root...");
+            digitalWrite(23, LOW);  // Indicate registration attempt
 
             if (rootId == 0) {
                 Serial.println("MESH: Root ID unknown, cannot register");
@@ -420,9 +423,8 @@ void registerTask(void* pvParameters) {
 
             mesh.sendSingle(rootId, "R");
             Serial.printf("MESH: Sent registration 'R' to root %u\n", rootId);
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(REGISTRATION_RETRY_INTERVAL));
+        } else
+            digitalWrite(23, HIGH);
     }
 }
 

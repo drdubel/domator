@@ -31,11 +31,6 @@
 #define WIFI_CONNECT_TIMEOUT 20000
 #define MQTT_CONNECT_TIMEOUT 5
 
-// Telnet server on port 23
-#define MAX_TELNET_CLIENTS 3
-WiFiServer telnetServer(23);
-WiFiClient telnetClients[MAX_TELNET_CLIENTS];
-
 const int mqtt_port = 1883;
 uint32_t device_id;
 
@@ -53,8 +48,6 @@ void mqttConnect();
 void meshInit();
 void performFirmwareUpdate();
 IPAddress getlocalIP();
-void telnetPrint(const String& msg);
-void telnetPrintln(const String& msg);
 
 IPAddress myIP(0, 0, 0, 0);
 painlessMesh mesh;
@@ -64,13 +57,6 @@ PubSubClient mqttClient(mqtt_broker, mqtt_port, wifiClient);
 // Timing variables
 static unsigned long lastMqttReconnect = 0;
 static unsigned long lastNodeStatusReport = 0;
-
-// Task handles
-TaskHandle_t telnetTaskHandle = NULL;
-TaskHandle_t wifiMqttTaskHandle = NULL;
-TaskHandle_t statusTaskHandle = NULL;
-TaskHandle_t nodeStatusTaskHandle = NULL;
-TaskHandle_t meshCheckTaskHandle = NULL;
 
 // Node-parent mapping
 std::map<uint32_t, uint32_t> nodeParentMap;
@@ -89,95 +75,21 @@ bool toUint64(const String& s, uint64_t& out) {
     return (*end == '\0');
 }
 
-// Telnet helper functions
-void telnetPrint(const String& msg) {
-    for (int i = 0; i < MAX_TELNET_CLIENTS; i++) {
-        if (telnetClients[i] && telnetClients[i].connected()) {
-            telnetClients[i].print(msg);
-        }
-    }
-}
-
-void telnetPrintln(const String& msg) { telnetPrint(msg + "\n"); }
-
-// Override Serial.print functions to also send to Telnet
-#define DEBUG_PRINT(x)          \
-    do {                        \
-        Serial.print(x);        \
-        telnetPrint(String(x)); \
+// Override Serial.print functions
+#define DEBUG_PRINT(x)   \
+    do {                 \
+        Serial.print(x); \
     } while (0)
-#define DEBUG_PRINTLN(x)          \
-    do {                          \
-        Serial.println(x);        \
-        telnetPrintln(String(x)); \
+#define DEBUG_PRINTLN(x)   \
+    do {                   \
+        Serial.println(x); \
     } while (0)
 #define DEBUG_PRINTF(fmt, ...)                          \
     do {                                                \
         char buf[1024];                                 \
         snprintf(buf, sizeof(buf), fmt, ##__VA_ARGS__); \
         Serial.print(buf);                              \
-        telnetPrint(String(buf));                       \
     } while (0)
-
-void handleTelnet(void* pvParameters) {
-    while (true) {
-        if (otaInProgress) {
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            continue;
-        }
-
-        if (!WiFi.isConnected()) {
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            continue;
-        }
-
-        // Check for new clients
-        if (telnetServer.hasClient()) {
-            bool clientConnected = false;
-
-            // Find free slot
-            for (int i = 0; i < MAX_TELNET_CLIENTS; i++) {
-                if (!telnetClients[i] || !telnetClients[i].connected()) {
-                    if (telnetClients[i]) {
-                        telnetClients[i].stop();
-                    }
-                    telnetClients[i] = telnetServer.available();
-                    telnetClients[i].println(
-                        "\n=== ESP32 Mesh Root - Telnet Monitor ===");
-                    telnetClients[i].printf("Device ID: %u\n", device_id);
-                    telnetClients[i].printf("IP: %s\n",
-                                            WiFi.localIP().toString().c_str());
-                    telnetClients[i].println(
-                        "=====================================\n");
-                    clientConnected = true;
-                    DEBUG_PRINTF("Telnet: Client %d connected\n", i);
-                    break;
-                }
-            }
-
-            if (!clientConnected) {
-                WiFiClient rejectClient = telnetServer.available();
-                rejectClient.println(
-                    "Max clients reached. Connection rejected.");
-                rejectClient.stop();
-            }
-        }
-
-        // Handle client input
-        for (int i = 0; i < MAX_TELNET_CLIENTS; i++) {
-            if (telnetClients[i] && telnetClients[i].connected()) {
-                while (telnetClients[i].available()) {
-                    char c = telnetClients[i].read();
-                    // Echo back to client
-                    telnetClients[i].write(c);
-                    // Also write to Serial
-                    Serial.write(c);
-                }
-            }
-        }
-        vTaskDelay(pdMS_TO_TICKS(10));  // Small delay to avoid busy loop
-    }
-}
 
 void otaTask(void* pv) {
     otaInProgress = true;
@@ -657,17 +569,6 @@ void checkWiFi() {
         myIP = currentIP;
         DEBUG_PRINTLN("WiFi: Connected to external network");
         DEBUG_PRINTF("WiFi: IP address: %s\n", myIP.toString().c_str());
-
-        // Start Telnet server
-        if (!telnetServer) {
-            DEBUG_PRINTLN("Telnet: Starting server...");
-
-            telnetServer.begin();
-            telnetServer.setNoDelay(true);
-            DEBUG_PRINTLN("Telnet: Server started on port 23");
-            DEBUG_PRINTF("Telnet: Connect using: telnet %s\n",
-                         myIP.toString().c_str());
-        }
     }
 }
 
@@ -856,6 +757,18 @@ void statusReport(void* pvParameters) {
     }
 }
 
+void meshUpdateTask(void* pvParameters) {
+    while (true) {
+        if (otaInProgress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        mesh.update();
+        vTaskDelay(pdMS_TO_TICKS(5));  // Small delay to avoid busy loop
+    }
+}
+
 void setup() {
     Serial.begin(115200);
     vTaskDelay(1000 / portTICK_PERIOD_MS);
@@ -874,25 +787,25 @@ void setup() {
 
     meshInit();
 
-    // Start Telnet handler task
-    xTaskCreatePinnedToCore(handleTelnet, "TelnetTask", 16384, NULL, 1,
-                            &telnetTaskHandle, 1);
-
     // Check WiFi and MQTT
     xTaskCreatePinnedToCore(checkWiFiAndMQTT, "WiFiMQTTTask", 16384, NULL, 2,
-                            &wifiMqttTaskHandle, 1);
+                            NULL, 1);
 
     // Periodic status report
     xTaskCreatePinnedToCore(statusReport, "StatusReportTask", 16384, NULL, 1,
-                            &statusTaskHandle, 1);
+                            NULL, 1);
 
     // Periodic node status report
     xTaskCreatePinnedToCore(sendNodeStatusReport, "NodeStatusReportTask", 32768,
-                            NULL, 1, &nodeStatusTaskHandle, 1);
+                            NULL, 1, NULL, 1);
 
     // Mesh checker task
-    xTaskCreatePinnedToCore(checkMesh, "MeshCheckTask", 16384, NULL, 1,
-                            &meshCheckTaskHandle, 1);
+    xTaskCreatePinnedToCore(checkMesh, "MeshCheckTask", 16384, NULL, 1, NULL,
+                            1);
+
+    // Mesh update task
+    xTaskCreatePinnedToCore(meshUpdateTask, "MeshUpdateTask", 16384, NULL, 5,
+                            NULL, 0);
 }
 
 void loop() {
@@ -906,9 +819,5 @@ void loop() {
         );
     }
 
-    if (!otaInProgress) {
-        mesh.update();
-    } else {
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
+    vTaskDelay(pdMS_TO_TICKS(1000));
 }

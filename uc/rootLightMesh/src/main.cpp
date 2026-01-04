@@ -282,7 +282,9 @@ void meshInit() {
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
     if (strcmp(topic, "/switch/cmd/root") == 0) {
         if (isValidCBOR(String((char*)payload, length))) {
+            Serial.println("MESH: Parsing connections from CBOR");
             parseConnectionsCBOR(payload, length);
+            Serial.println("MESH: Connections updated from CBOR");
             return;
         }
     }
@@ -401,6 +403,13 @@ void receivedCallback(const uint32_t& from, const String& msg) {
     }
 
     if (msg.length() == sizeof(StatusReport)) {
+        Serial.printf("MESH: Status report received from %u\n", from);
+        Serial.printf("MESH: Report message: %s\n", msg.c_str());
+        Serial.printf("MESH: First byte: 0x%02X\n", (uint8_t)msg[0]);
+        if ((uint8_t)msg[0] == 0x5B) {
+            Serial.println("MESH: Invalid status report format");
+            return;
+        }
         StatusReport status;
 
         memcpy(&status, msg.c_str(), sizeof(StatusReport));
@@ -408,6 +417,7 @@ void receivedCallback(const uint32_t& from, const String& msg) {
 
         mqttMessageQueue.push({"/switch/status/root",
                                String((char*)&status, sizeof(StatusReport))});
+        return;
     }
 }
 

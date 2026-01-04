@@ -32,18 +32,6 @@ void setLedColor(uint8_t r, uint8_t g, uint8_t b);
 void updateLedStatus();
 void printNodes();
 
-struct StatusReport {
-    int8_t rssi;
-    uint32_t uptime;
-    uint32_t clicks;
-    uint16_t disconnects;
-    uint32_t parent;
-    uint32_t deviceId;
-    uint32_t freeHeap;
-    char type;
-    char firmware[33];
-} __attribute__((packed));
-
 Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 painlessMesh mesh;
@@ -53,7 +41,7 @@ uint32_t deviceId = 0;
 uint32_t disconnects = 0;
 uint32_t clicks = 0;
 
-char fw_md5[33];  // MD5 of the firmware as flashed
+String fw_md5;  // MD5 of the firmware as flashed
 
 const int buttonPins[NLIGHTS] = {A0, A1, A3, A4, A5, 6, 7};
 unsigned long lastTimeClick[NLIGHTS] = {0};
@@ -235,20 +223,22 @@ void sendStatusReport(void* pvParameters) {
 
         Serial.println("MESH: Sending status report to root");
 
-        StatusReport status;
-        status.rssi = WiFi.RSSI();
-        status.uptime = millis() / 1000;
-        status.clicks = clicks;
-        status.disconnects = disconnects;
-        status.parent = 0;
-        status.deviceId = deviceId;
-        status.freeHeap = ESP.getFreeHeap();
-        status.type = 'S';
-        strncpy(status.firmware, fw_md5, sizeof(status.firmware));
-        status.firmware[sizeof(status.firmware) - 1] = '\0';
+        JsonDocument doc;
+        doc["rssi"] = WiFi.RSSI();
+        doc["uptime"] = millis() / 1000;
+        doc["clicks"] = clicks;
+        doc["disconnects"] = disconnects;
+        doc["parentId"] = 0;
+        doc["deviceId"] = deviceId;
+        doc["freeHeap"] = ESP.getFreeHeap();
+        doc["type"] = "switch";
+        doc["firmware"] = fw_md5;
 
-        if (mesh.sendSingle(rootId,
-                            String((char*)&status, sizeof(StatusReport)))) {
+        String msg;
+        serializeJson(doc, msg);
+
+        // Send via mesh
+        if (mesh.sendSingle(rootId, msg)) {
             Serial.println("MESH: Status report sent successfully");
         } else {
             Serial.println("MESH: Failed to send status report");
@@ -440,8 +430,7 @@ void setup() {
     Serial.begin(115200);
     vTaskDelay(pdMS_TO_TICKS(1000));
 
-    strncpy(fw_md5, ESP.getSketchMD5().c_str(), sizeof(fw_md5));
-    fw_md5[sizeof(fw_md5) - 1] = '\0';
+    fw_md5 = ESP.getSketchMD5();
 
     Serial.println("\n\n========================================");
     Serial.println("ESP32-C3 Mesh Switch Node Starting...");

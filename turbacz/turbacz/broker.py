@@ -1,7 +1,5 @@
-import asyncio
 import json
 import logging
-from string import ascii_lowercase
 
 import httpx
 import namer
@@ -43,6 +41,7 @@ async def message(client, topic, payload, qos, properties):
     """
     Handle incoming MQTT messages based on topic.
     """
+
     payload_str = payload.decode()
 
     if topic == "/heating/metrics":
@@ -161,9 +160,10 @@ async def handle_root_state(payload_str):
 
     try:
         data = json.loads(payload_str)
+        print("Parsed data:", data)  # Debug print
 
     except json.JSONDecodeError:
-        logger.error("Invalid JSON payload for root state: %s", payload_str)
+        logger.error("Error processing root state JSON payload: %s", payload_str)
         return
 
     url = f"{config.monitoring.metrics}/api/v2/write"
@@ -174,64 +174,70 @@ async def handle_root_state(payload_str):
     else:
         labels = ""
 
-    for dev_id, status in data.items():
-        dev_id = int(dev_id)
-
-        if status["type"] == "switch":
-            if dev_id in switches:
-                status["name"] = switches[dev_id][0]
-            else:
-                name = namer.generate(category="astronomy")
-                status["name"] = name
-                connection_manager.connection_manager.add_switch(dev_id, name, 3)
-                await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
-
-        elif status["type"] == "relay":
-            if dev_id in relays:
-                status["name"] = relays[dev_id][0]
-            else:
-                name = namer.generate(category="animals")
-                status["name"] = name
-                connection_manager.connection_manager.add_relay(dev_id, name)
-                await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
-
-        elif status["type"] == "root":
-            status["name"] = "root"
-
+    if data["type"] == "switch":
+        if data["deviceId"] in switches:
+            data["name"] = switches[data["deviceId"]][0]
         else:
-            logger.warning(f"Unknown device type for ID {dev_id}: {status['type']}")
+            name = namer.generate(category="astronomy")
+            data["name"] = name
+            connection_manager.connection_manager.add_switch(data["deviceId"], name, 3)
+            await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
 
-    for dev_id, status in data.items():
-        if "name" not in status:
-            continue
-
-        status["name"] = status["name"].replace(" ", "\\ ")
-
-        if status["parent"] != "0":
-            try:
-                status["parent_name"] = data[status["parent"]]["name"]
-            except KeyError:
-                status["parent_name"] = status["parent"]
+    elif data["type"] == "relay":
+        if data["deviceId"] in relays:
+            data["name"] = relays[data["deviceId"]][0]
         else:
-            status["parent_name"] = "unknown"
+            name = namer.generate(category="animals")
+            data["name"] = name
+            connection_manager.connection_manager.add_relay(data["deviceId"], name)
+            await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
 
-        if not config.monitoring.send_metrics:
-            continue
+    elif data["type"] == "root":
+        data["name"] = "root"
 
-        metric_node = f"node_info,id={dev_id},name={status['name']}{labels} uptime={status['uptime']},clicks={status['clicks']},disconnects={status['disconnects']},last_seen={status['last_seen']}"
-        metric_mesh = f"mesh_node,id={dev_id},name={status['name']},parent={status['parent']},parent_name={status['parent_name']},firmware={status['firmware']},status={status['status']},type={status['type']}{labels} rssi={status['rssi']}"
+    else:
+        logger.warning(f"Unknown device type for ID {data['deviceId']}: {data['type']}")
 
-        if "free_heap" in status:
-            metric_node += f",free_heap={status['free_heap']}"
+    if "name" not in data:
+        return
 
-        logger.debug(metric_node)  # Debug log
-        logger.debug(metric_mesh)  # Debug log
+    data["name"] = data["name"].replace(" ", "\\ ")
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(url, content=metric_node)
-            if response.status_code != 204:
-                logger.error("Failed to write metric for %s: %s", dev_id, response.text)
+    if data["parentId"] in relays:
+        parent_name = relays[data["parentId"]][0]
 
-            response = await client.post(url, content=metric_mesh)
-            if response.status_code != 204:
-                logger.error("Failed to write metric for %s: %s", dev_id, response.text)
+    elif data["parentId"] in switches:
+        parent_name = switches[data["parentId"]][0]
+
+    elif data["parentId"] == data["deviceId"]:
+        parent_name = "root"
+
+    else:
+        parent_name = "unknown"
+
+    data["parent_name"] = parent_name.replace(" ", "\\ ")
+
+    if not config.monitoring.send_metrics:
+        return
+
+    metric_node = f"node_info,id={data['deviceId']},name={data['name']}{labels} uptime={data['uptime']},clicks={data['clicks']},disconnects={data['disconnects']}"
+    metric_mesh = f"mesh_node,id={data['deviceId']},name={data['name']},parent={data['parentId']},parent_name={data['parent_name']},firmware={data['firmware']},type={data['type']}{labels} rssi={data['rssi']}"
+
+    if "free_heap" in data:
+        metric_node += f",free_heap={data['free_heap']}"
+
+    logger.debug(metric_node)  # Debug log
+    logger.debug(metric_mesh)  # Debug log
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, content=metric_node)
+        if response.status_code != 204:
+            logger.error(
+                "Failed to write metric for %s: %s", data["deviceId"], response.text
+            )
+
+        response = await client.post(url, content=metric_mesh)
+        if response.status_code != 204:
+            logger.error(
+                "Failed to write metric for %s: %s", data["deviceId"], response.text
+            )

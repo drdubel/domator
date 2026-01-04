@@ -26,7 +26,7 @@
 #define NLIGHTS 8
 
 // Timing constants
-#define NODE_STATUS_REPORT_INTERVAL 15000
+#define STATUS_REPORT_INTERVAL 15000
 #define MQTT_RECONNECT_INTERVAL 30000
 #define WIFI_CONNECT_TIMEOUT 20000
 #define MQTT_CONNECT_TIMEOUT 5
@@ -494,7 +494,24 @@ void statusReport(void* pvParameters) {
         nodeParentMap.clear();
         buildParentMap(layout);
 
-        vTaskDelay(pdMS_TO_TICKS(30000));  // Increased to 30s
+        StatusReport rootStatus;
+        rootStatus.rssi = WiFi.RSSI();
+        rootStatus.uptime = millis() / 1000;
+        rootStatus.clicks = -1;
+        rootStatus.disconnects = -1;
+        rootStatus.parent = device_id;
+        rootStatus.deviceId = device_id;
+        rootStatus.freeHeap = ESP.getFreeHeap();
+        rootStatus.type = 'T';
+        strncpy(rootStatus.firmware, fw_md5.c_str(),
+                sizeof(rootStatus.firmware));
+        rootStatus.firmware[sizeof(rootStatus.firmware) - 1] = '\0';
+
+        mqttMessageQueue.push(
+            {"/switch/state/root",
+             String((char*)&rootStatus, sizeof(StatusReport))});
+
+        vTaskDelay(pdMS_TO_TICKS(STATUS_REPORT_INTERVAL));
     }
 }
 

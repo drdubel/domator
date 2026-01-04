@@ -60,18 +60,6 @@ std::map<uint32_t, String> nodes;
 std::map<String, std::map<char, std::vector<std::pair<String, String>>>>
     connections;
 
-struct StatusReport {
-    int8_t rssi;
-    uint32_t uptime;
-    uint32_t clicks;
-    uint16_t disconnects;
-    uint32_t parent;
-    uint32_t deviceId;
-    uint32_t freeHeap;
-    char type;
-    char firmware[33];
-} __attribute__((packed));
-
 // Function declarations
 void receivedCallback(const uint32_t& from, const String& msg);
 void droppedConnectionCallback(uint32_t nodeId);
@@ -402,21 +390,25 @@ void receivedCallback(const uint32_t& from, const String& msg) {
         return;
     }
 
-    if (msg.length() == sizeof(StatusReport)) {
+    if ((uint8_t)msg[0] == 0x5B) {
         Serial.printf("MESH: Status report received from %u\n", from);
         Serial.printf("MESH: Report message: %s\n", msg.c_str());
-        Serial.printf("MESH: First byte: 0x%02X\n", (uint8_t)msg[0]);
-        if ((uint8_t)msg[0] == 0x5B) {
-            Serial.println("MESH: Invalid status report format");
+
+        JsonDocument doc;
+        DeserializationError err =
+            deserializeMsgPack(doc, (const uint8_t*)msg.c_str(), msg.length());
+
+        if (err) {
+            Serial.println("MESH: Failed to parse status report");
             return;
         }
-        StatusReport status;
 
-        memcpy(&status, msg.c_str(), sizeof(StatusReport));
-        status.parent = nodeParentMap[from];
+        doc["parentId"] = nodeParentMap[from];
 
-        mqttMessageQueue.push({"/switch/status/root",
-                               String((char*)&status, sizeof(StatusReport))});
+        String newMsg;
+        serializeJson(doc, newMsg);
+
+        mqttMessageQueue.push({"/switch/status/root", newMsg});
         return;
     }
 }
@@ -504,23 +496,21 @@ void statusReport(void* pvParameters) {
         nodeParentMap.clear();
         buildParentMap(layout);
 
-        StatusReport rootStatus;
-        rootStatus.rssi = WiFi.RSSI();
-        rootStatus.uptime = millis() / 1000;
-        rootStatus.clicks = 0;
-        rootStatus.disconnects = 0;
-        rootStatus.parent = device_id;
-        rootStatus.deviceId = device_id;
-        rootStatus.freeHeap = ESP.getFreeHeap();
-        rootStatus.type = 'T';
-        strncpy(rootStatus.firmware, fw_md5.c_str(),
-                sizeof(rootStatus.firmware));
-        rootStatus.firmware[sizeof(rootStatus.firmware) - 1] = '\0';
+        JsonDocument doc;
+        doc["rssi"] = WiFi.RSSI();
+        doc["uptime"] = millis() / 1000;
+        doc["freeHeap"] = ESP.getFreeHeap();
+        doc["deviceId"] = device_id;
+        doc["parentId"] = device_id;
+        doc["type"] = "root";
+        doc["firmware"] = fw_md5;
+        doc["clicks"] = 0;
+        doc["disconnects"] = 0;
 
-        mqttMessageQueue.push(
-            {"/switch/state/root",
-             String((char*)&rootStatus, sizeof(StatusReport))});
+        String msg;
+        serializeJson(doc, msg);
 
+        mqttMessageQueue.push({"/switch/state/root", msg});
         vTaskDelay(pdMS_TO_TICKS(STATUS_REPORT_INTERVAL));
     }
 }

@@ -387,18 +387,6 @@ void registerTask(void* pvParameters) {
     }
 }
 
-void meshUpdateTask(void* pvParameters) {
-    while (true) {
-        if (otaInProgress) {
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            continue;
-        }
-
-        mesh.update();
-        vTaskDelay(pdMS_TO_TICKS(1));  // Reduced delay for faster processing
-    }
-}
-
 void meshCallbackTask(void* pvParameters) {
     while (true) {
         if (otaInProgress) {
@@ -422,7 +410,7 @@ void meshCallbackTask(void* pvParameters) {
             otaTimer = millis();
             setLedColor(0, 0, 255);
             otaInProgress = true;
-            return;
+            continue;
         }
 
         if (msg == "Q") {
@@ -430,13 +418,13 @@ void meshCallbackTask(void* pvParameters) {
             rootId = from;
             meshMessageQueue.push({rootId, "S"});
             Serial.printf("MESH: Sent registration 'S' to root %u\n", rootId);
-            return;
+            continue;
         }
 
         if (msg == "A") {
             Serial.println("MESH: Registration accepted by root");
             registeredWithRoot = true;
-            return;
+            continue;
         }
 
         Serial.printf("MESH: Unknown message from %u: %s\n", from, msg.c_str());
@@ -456,13 +444,14 @@ void sendMeshMessages(void* pvParameters) {
         }
         vTaskDelay(pdMS_TO_TICKS(10));
 
-        auto message = meshMessageQueue.front();
+        std::pair<uint32_t, String> message = meshMessageQueue.front();
         meshMessageQueue.pop();
 
         uint32_t to = message.first;
         String msg = message.second;
 
         mesh.sendSingle(to, msg);
+        Serial.printf("MESH: Sent message to %u: %s\n", to, msg.c_str());
     }
 }
 
@@ -508,7 +497,7 @@ void setup() {
             return;
         }
 
-        mesh.sendSingle(rootId, "S");
+        meshMessageQueue.push({rootId, "S"});
         Serial.printf("MESH: Sent registration 'S' to root %u\n", rootId);
 
         printNodes();
@@ -534,11 +523,9 @@ void setup() {
                             NULL, 1, NULL, 0);
     xTaskCreatePinnedToCore(registerTask, "RegisterTask", 4096, NULL, 1, NULL,
                             0);
-    xTaskCreatePinnedToCore(meshUpdateTask, "MeshUpdateTask", 8192, NULL, 5,
-                            NULL, 0);
     xTaskCreatePinnedToCore(meshCallbackTask, "MeshCallbackTask", 8192, NULL, 4,
                             NULL, 0);
-    xTaskCreatePinnedToCore(sendMeshMessages, "SendMeshMessages", 8192, NULL, 3,
+    xTaskCreatePinnedToCore(sendMeshMessages, "SendMeshMessages", 8192, NULL, 2,
                             NULL, 0);
 
     Serial.println("SWITCH: Setup complete, waiting for mesh connections...");
@@ -557,5 +544,10 @@ void loop() {
         );
     }
 
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    if (otaInProgress) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    } else {
+        mesh.update();
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
 }

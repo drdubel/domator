@@ -178,25 +178,13 @@ void performFirmwareUpdate() {
 
 IPAddress getlocalIP() { return IPAddress(mesh.getStationIP()); }
 
-bool isValidCBOR(const String& s) {
-    if (s.length() == 0) return false;
-    byte firstByte = (byte)s[0];
-    // CBOR major types: map (0xA0-0xBF or 0x80-0x9F), array (0x80-0x9F), etc.
-    return (firstByte >= 0x80 && firstByte <= 0xBF) ||
-           (firstByte >= 0xA0 && firstByte <= 0xBF) || (firstByte == 0x9F) ||
-           (firstByte == 0xBF);
+bool isValidJson(const String& s) {
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, s);
+    return !err;
 }
 
-void parseConnectionsCBOR(const byte* payload, unsigned int length) {
-    JsonDocument doc;
-    DeserializationError err = deserializeMsgPack(doc, payload, length);
-
-    if (err) {
-        DEBUG_ERROR("[CBOR] Deserialize failed");
-        return;
-    }
-
-    JsonObject root = doc.as<JsonObject>();
+void parseConnections(JsonObject root) {
     if (root.isNull()) return;
 
     for (JsonPair idPair : root) {
@@ -222,6 +210,7 @@ void parseConnectionsCBOR(const byte* payload, unsigned int length) {
                     vec.emplace_back(first, second);
                 }
             }
+
             connections[id][letter] = std::move(vec);
         }
     }
@@ -268,16 +257,6 @@ void meshInit() {
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-    if (strcmp(topic, "/switch/cmd/root") == 0) {
-        if (isValidCBOR(String((char*)payload, length))) {
-            Serial.println("MESH: Parsing connections from CBOR");
-            parseConnectionsCBOR(payload, length);
-            Serial.println("MESH: Connections updated from CBOR");
-            return;
-        }
-    }
-
-    // Convert to String for text-based commands
     String msg;
     msg.reserve(length + 1);
     for (unsigned int i = 0; i < length; i++) {
@@ -289,6 +268,15 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     if (strcmp(topic, "/switch/cmd/root") == 0) {
         if (msg == "U") {
             otaInProgress = true;
+            return;
+        }
+
+        if (isValidJson(msg)) {
+            JsonDocument doc;
+            deserializeJson(doc, msg);
+
+            parseConnections(doc.as<JsonObject>());
+
             return;
         }
     }
@@ -390,25 +378,18 @@ void receivedCallback(const uint32_t& from, const String& msg) {
         return;
     }
 
-    if ((uint8_t)msg[0] == 0x5B) {
-        Serial.printf("MESH: Status report received from %u\n", from);
-        Serial.printf("MESH: Report message: %s\n", msg.c_str());
-
+    if (isValidJson(msg)) {
         JsonDocument doc;
-        DeserializationError err =
-            deserializeMsgPack(doc, (const uint8_t*)msg.c_str(), msg.length());
-
-        if (err) {
-            Serial.println("MESH: Failed to parse status report");
-            return;
-        }
+        deserializeJson(doc, msg.c_str());
 
         doc["parentId"] = nodeParentMap[from];
 
         String newMsg;
         serializeJson(doc, newMsg);
 
-        mqttMessageQueue.push({"/switch/status/root", newMsg});
+        if (WiFi.status() == WL_CONNECTED && mqttClient.connected())
+            mqttMessageQueue.push({"/switch/state/root", newMsg});
+
         return;
     }
 }
@@ -510,7 +491,9 @@ void statusReport(void* pvParameters) {
         String msg;
         serializeJson(doc, msg);
 
-        mqttMessageQueue.push({"/switch/state/root", msg});
+        if (WiFi.status() == WL_CONNECTED && mqttClient.connected())
+            mqttMessageQueue.push({"/switch/state/root", msg});
+
         vTaskDelay(pdMS_TO_TICKS(STATUS_REPORT_INTERVAL));
     }
 }
@@ -538,8 +521,7 @@ void sendMQTTMessages(void* pvParameters) {
             std::pair<String, String> message = mqttMessageQueue.front();
             mqttMessageQueue.pop();
 
-            mqttClient.publish(message.first.c_str(),
-                               (const uint8_t*)message.second.c_str(),
+            mqttClient.publish(message.first.c_str(), message.second.c_str(),
                                message.second.length());
             vTaskDelay(pdMS_TO_TICKS(10));
         } else {

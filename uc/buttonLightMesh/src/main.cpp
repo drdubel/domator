@@ -10,6 +10,8 @@
 #include <credentials.h>
 #include <painlessMesh.h>
 
+#include <queue>
+
 #include "esp_task_wdt.h"
 
 // Pin and hardware definitions
@@ -41,6 +43,9 @@ uint32_t disconnects = 0;
 uint32_t clicks = 0;
 
 String fw_md5;  // MD5 of the firmware as flashed
+
+std::queue<std::pair<uint32_t, String>> meshCallbackQueue;
+std::queue<std::pair<uint32_t, String>> meshMessageQueue;
 
 const int buttonPins[NLIGHTS] = {A0, A1, A3, A4, A5, 6, 7};
 unsigned long lastTimeClick[NLIGHTS] = {0};
@@ -222,6 +227,11 @@ void sendStatusReport(void* pvParameters) {
             continue;
         }
 
+        if (rootId == 0) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
         Serial.println("MESH: Sending status report to root");
 
         JsonDocument doc;
@@ -238,13 +248,7 @@ void sendStatusReport(void* pvParameters) {
         String msg;
         serializeJson(doc, msg);
 
-        // Send via mesh
-        if (mesh.sendSingle(rootId, msg)) {
-            Serial.printf("MESH: Status report: %s\n", msg.c_str());
-            Serial.println("MESH: Status report sent successfully");
-        } else {
-            Serial.println("MESH: Failed to send status report");
-        }
+        meshMessageQueue.push({rootId, msg});
 
         vTaskDelay(pdMS_TO_TICKS(STATUS_REPORT_INTERVAL));
     }
@@ -252,31 +256,7 @@ void sendStatusReport(void* pvParameters) {
 
 void receivedCallback(const uint32_t& from, const String& msg) {
     Serial.printf("MESH: [%u] %s\n", from, msg.c_str());
-
-    if (msg == "U") {
-        Serial.println("MESH: Firmware update command received");
-        otaTimer = millis();
-        setLedColor(0, 0, 255);
-        otaInProgress = true;
-        return;
-    }
-
-    if (msg == "Q") {
-        Serial.println("MESH: Registration query received from root");
-        rootId = from;
-        mesh.sendSingle(rootId, "S");
-        Serial.printf("MESH: Sent registration 'S' to root %u\n", rootId);
-        return;
-    }
-
-    if (msg == "A") {
-        Serial.println("MESH: Registration accepted by root");
-        registeredWithRoot = true;
-        return;
-    }
-
-    // Handle other messages if needed
-    Serial.printf("MESH: Unknown message from %u: %s\n", from, msg.c_str());
+    meshCallbackQueue.push({from, msg});
 }
 
 void printNodes() {
@@ -304,7 +284,7 @@ void statusPrint(void* pvParameters) {
         Serial.printf("Uptime: %lu seconds\n", millis() / 1000);
         Serial.printf("WiFi RSSI: %d dBm\n", WiFi.RSSI());
         Serial.printf("Time to reset: %d\n",
-                      90 - ((micros() - resetTimer) / 1000000));
+                      90 - ((millis() - resetTimer) / 1000));
 
         printNodes();
         Serial.println("-------------------\n");
@@ -323,10 +303,10 @@ void resetTask(void* pvParameters) {
         if (mesh.getNodeList().empty()) {
             registeredWithRoot = false;
         } else if (registeredWithRoot) {
-            resetTimer = micros();
+            resetTimer = millis();
         }
 
-        if ((micros() - resetTimer) / 1000000 > 90) restartMesh();
+        if ((millis() - resetTimer) / 1000 > 90) restartMesh();
 
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
@@ -369,20 +349,14 @@ void handleButtonsTask(void* pvParameters) {
                     continue;
                 }
 
-                String message =
-                    String(msg);  // Format: just the letter (e.g., 'a')
-                if (mesh.sendSingle(rootId, message)) {
-                    Serial.printf("BUTTON: Sent '%s' to root %u\n",
-                                  message.c_str(), rootId);
+                String message = String(msg);
+                meshMessageQueue.push({rootId, message});
+                Serial.printf("BUTTON: Sent '%s' to root %u\n", message.c_str(),
+                              rootId);
 
-                    // Flash LED to confirm
-                    setLedColor(0, 255, 255);  // Cyan flash
-                    vTaskDelay(50 / portTICK_PERIOD_MS);
-                } else {
-                    Serial.println("BUTTON: Failed to send message");
-                    setLedColor(255, 128, 0);  // Orange flash
-                    vTaskDelay(100 / portTICK_PERIOD_MS);
-                }
+                // Flash LED to confirm
+                setLedColor(0, 255, 255);  // Cyan flash
+                vTaskDelay(50 / portTICK_PERIOD_MS);
             }
 
             lastButtonState[i] = currentState;
@@ -400,14 +374,14 @@ void registerTask(void* pvParameters) {
         }
 
         if (!registeredWithRoot) {
-            Serial.println("MESH: Attempting registration with root...");
-
             if (rootId == 0) {
                 Serial.println("MESH: Root ID unknown, cannot register");
                 continue;
             }
 
-            mesh.sendSingle(rootId, "S");
+            Serial.println("MESH: Attempting registration with root...");
+
+            meshMessageQueue.push({rootId, "S"});
             Serial.printf("MESH: Sent registration 'S' to root %u\n", rootId);
         }
     }
@@ -422,6 +396,73 @@ void meshUpdateTask(void* pvParameters) {
 
         mesh.update();
         vTaskDelay(pdMS_TO_TICKS(1));  // Reduced delay for faster processing
+    }
+}
+
+void meshCallbackTask(void* pvParameters) {
+    while (true) {
+        if (otaInProgress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        if (meshCallbackQueue.empty()) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+
+        std::pair<uint32_t, String> message = meshCallbackQueue.front();
+        uint32_t from = message.first;
+        String msg = message.second;
+        meshCallbackQueue.pop();
+
+        if (msg == "U") {
+            Serial.println("MESH: Firmware update command received");
+            otaTimer = millis();
+            setLedColor(0, 0, 255);
+            otaInProgress = true;
+            return;
+        }
+
+        if (msg == "Q") {
+            Serial.println("MESH: Registration query received from root");
+            rootId = from;
+            meshMessageQueue.push({rootId, "S"});
+            Serial.printf("MESH: Sent registration 'S' to root %u\n", rootId);
+            return;
+        }
+
+        if (msg == "A") {
+            Serial.println("MESH: Registration accepted by root");
+            registeredWithRoot = true;
+            return;
+        }
+
+        Serial.printf("MESH: Unknown message from %u: %s\n", from, msg.c_str());
+    }
+}
+
+void sendMeshMessages(void* pvParameters) {
+    while (true) {
+        if (otaInProgress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        if (meshMessageQueue.empty()) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+
+        auto message = meshMessageQueue.front();
+        meshMessageQueue.pop();
+
+        uint32_t to = message.first;
+        String msg = message.second;
+
+        mesh.sendSingle(to, msg);
     }
 }
 
@@ -485,27 +526,19 @@ void setup() {
     // Start button handler task
     xTaskCreatePinnedToCore(handleButtonsTask, "ButtonTask", 4096, NULL, 2,
                             NULL, 0);
-
-    // Start LED status update task
     xTaskCreatePinnedToCore(updateLedStatus, "LedTask", 4096, NULL, 1, NULL, 0);
-
-    // Start status print task
     xTaskCreatePinnedToCore(statusPrint, "StatusPrintTask", 4096, NULL, 1, NULL,
                             0);
-
-    // Start reset watchdog task
     xTaskCreatePinnedToCore(resetTask, "ResetTask", 4096, NULL, 1, NULL, 0);
-
-    // Start status report task
     xTaskCreatePinnedToCore(sendStatusReport, "SendStatusReportTask", 4096,
                             NULL, 1, NULL, 0);
-
-    // Start registration task
     xTaskCreatePinnedToCore(registerTask, "RegisterTask", 4096, NULL, 1, NULL,
                             0);
-
-    // Start mesh update task
     xTaskCreatePinnedToCore(meshUpdateTask, "MeshUpdateTask", 8192, NULL, 5,
+                            NULL, 0);
+    xTaskCreatePinnedToCore(meshCallbackTask, "MeshCallbackTask", 8192, NULL, 4,
+                            NULL, 0);
+    xTaskCreatePinnedToCore(sendMeshMessages, "SendMeshMessages", 8192, NULL, 3,
                             NULL, 0);
 
     Serial.println("SWITCH: Setup complete, waiting for mesh connections...");

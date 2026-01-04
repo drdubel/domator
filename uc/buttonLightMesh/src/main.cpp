@@ -29,7 +29,6 @@ void receivedCallback(const uint32_t& from, const String& msg);
 void meshInit();
 void performFirmwareUpdate();
 void setLedColor(uint8_t r, uint8_t g, uint8_t b);
-void updateLedStatus();
 void printNodes();
 
 Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
@@ -47,14 +46,10 @@ const int buttonPins[NLIGHTS] = {A0, A1, A3, A4, A5, 6, 7};
 unsigned long lastTimeClick[NLIGHTS] = {0};
 int lastButtonState[NLIGHTS] = {HIGH};
 bool registeredWithRoot = false;
-unsigned long lastRegistrationAttempt = 0;
-unsigned long lastStatusPrint = 0;
 unsigned long long resetTimer = 0;
 uint32_t otaTimer = 0;
 volatile uint32_t isrTime[NLIGHTS];
 volatile bool buttonEvent[NLIGHTS];
-
-portMUX_TYPE isrMux = portMUX_INITIALIZER_UNLOCKED;
 
 // OTA update flag
 volatile bool otaInProgress = false;
@@ -89,17 +84,14 @@ void updateLedStatus(void* pvParameters) {
 void otaTask(void* pv) {
     otaInProgress = true;
 
-    for (int i = 0; i < NLIGHTS; i++) {
-        detachInterrupt(buttonPins[i]);
-    }
-
+    Serial.println("[OTA] Stopping mesh...");
     mesh.stop();
 
-    esp_task_wdt_deinit();  // REQUIRED
+    esp_task_wdt_deinit();
 
     vTaskDelay(pdMS_TO_TICKS(2000));
 
-    performFirmwareUpdate();  // now safe
+    performFirmwareUpdate();
 }
 
 void performFirmwareUpdate() {
@@ -297,8 +289,6 @@ void statusPrint(void* pvParameters) {
             continue;
         }
 
-        lastStatusPrint = millis();
-
         Serial.println("\n--- Status Report ---");
         Serial.printf("Device ID: %u\n", deviceId);
         Serial.printf("Firmware MD5: %s\n", fw_md5.c_str());
@@ -401,9 +391,7 @@ void registerTask(void* pvParameters) {
             continue;
         }
 
-        if (!registeredWithRoot &&
-            millis() - lastRegistrationAttempt >= REGISTRATION_RETRY_INTERVAL) {
-            lastRegistrationAttempt = millis();
+        if (!registeredWithRoot) {
             Serial.println("MESH: Attempting registration with root...");
 
             if (rootId == 0) {
@@ -415,7 +403,7 @@ void registerTask(void* pvParameters) {
             Serial.printf("MESH: Sent registration 'S' to root %u\n", rootId);
         }
 
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(REGISTRATION_RETRY_INTERVAL));
     }
 }
 

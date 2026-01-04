@@ -507,8 +507,8 @@ void statusReport(void* pvParameters) {
         StatusReport rootStatus;
         rootStatus.rssi = WiFi.RSSI();
         rootStatus.uptime = millis() / 1000;
-        rootStatus.clicks = -1;
-        rootStatus.disconnects = -1;
+        rootStatus.clicks = 0;
+        rootStatus.disconnects = 0;
         rootStatus.parent = device_id;
         rootStatus.deviceId = device_id;
         rootStatus.freeHeap = ESP.getFreeHeap();

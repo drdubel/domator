@@ -50,6 +50,7 @@ bool registeredWithRoot = false;
 unsigned long lastRegistrationAttempt = 0;
 unsigned long lastStatusPrint = 0;
 unsigned long long resetTimer = 0;
+uint32_t otaTimer = 0;
 volatile uint32_t isrTime[NLIGHTS];
 volatile bool buttonEvent[NLIGHTS];
 
@@ -91,6 +92,8 @@ void otaTask(void* pv) {
     for (int i = 0; i < NLIGHTS; i++) {
         detachInterrupt(buttonPins[i]);
     }
+
+    mesh.stop();
 
     esp_task_wdt_deinit();  // REQUIRED
 
@@ -204,7 +207,7 @@ void performFirmwareUpdate() {
 }
 
 void meshInit() {
-    mesh.setDebugMsgTypes(ERROR | STARTUP | CONNECTION);
+    mesh.setDebugMsgTypes(ERROR | STARTUP);
 
     mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA);
     mesh.onReceive(&receivedCallback);
@@ -239,6 +242,7 @@ void sendStatusReport(void* pvParameters) {
 
         // Send via mesh
         if (mesh.sendSingle(rootId, msg)) {
+            Serial.printf("MESH: Status report: %s\n", msg.c_str());
             Serial.println("MESH: Status report sent successfully");
         } else {
             Serial.println("MESH: Failed to send status report");
@@ -253,6 +257,7 @@ void receivedCallback(const uint32_t& from, const String& msg) {
 
     if (msg == "U") {
         Serial.println("MESH: Firmware update command received");
+        otaTimer = millis();
         setLedColor(0, 0, 255);
         otaInProgress = true;
         return;
@@ -296,7 +301,7 @@ void statusPrint(void* pvParameters) {
 
         Serial.println("\n--- Status Report ---");
         Serial.printf("Device ID: %u\n", deviceId);
-        Serial.printf("Firmware MD5: %s\n", fw_md5);
+        Serial.printf("Firmware MD5: %s\n", fw_md5.c_str());
         Serial.printf("Root ID: %u\n", rootId);
         Serial.printf("Registered: %s\n", registeredWithRoot ? "Yes" : "No");
         Serial.printf("Free Heap: %d bytes\n", ESP.getFreeHeap());
@@ -435,7 +440,7 @@ void setup() {
     Serial.println("\n\n========================================");
     Serial.println("ESP32-C3 Mesh Switch Node Starting...");
     Serial.printf("Chip Model: %s\n", ESP.getChipModel());
-    Serial.printf("Sketch MD5: %s\n", fw_md5);
+    Serial.printf("Sketch MD5: %s\n", fw_md5.c_str());
     Serial.printf("Chip Revision: %d\n", ESP.getChipRevision());
     Serial.printf("CPU Frequency: %d MHz\n", ESP.getCpuFreqMHz());
     Serial.printf("Free Heap: %d bytes\n", ESP.getFreeHeap());
@@ -507,7 +512,7 @@ void setup() {
 
     // Start mesh update task
     xTaskCreatePinnedToCore(meshUpdateTask, "MeshUpdateTask", 8192, NULL, 5,
-                            NULL, 1);
+                            NULL, 0);
 
     Serial.println("SWITCH: Setup complete, waiting for mesh connections...");
 }
@@ -515,13 +520,10 @@ void setup() {
 void loop() {
     static bool otaTaskStarted = false;
 
-    if (otaInProgress && !otaTaskStarted) {
+    if (otaInProgress && !otaTaskStarted && millis() - otaTimer > 3000) {
         otaTaskStarted = true;
 
         Serial.println("[OTA] Disconnecting mesh...");
-
-        mesh.stop();
-        vTaskDelay(pdMS_TO_TICKS(2000));
 
         xTaskCreatePinnedToCore(otaTask, "OTA", 4096, NULL, 5, NULL,
                                 0  // Core 0

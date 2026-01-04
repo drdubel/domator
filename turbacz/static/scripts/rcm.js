@@ -475,8 +475,8 @@ async function loadConfiguration() {
         let relayX = 2500, relayY = 1500
         for (let [relayId, relayName] of Object.entries(relays_config)) {
             createRelay(parseInt(relayId), relayName, outputs_config[relayId] || {}, relayX, relayY)
-            relayY += 750
-            if (relayY > 4000) { relayY = 1500; relayX += 350; }
+            relayY += 770
+            if (relayY > 6000) { relayY = 1500; relayX += 350; }
         }
 
         // create switches
@@ -484,8 +484,8 @@ async function loadConfiguration() {
         for (let [switchId, switchData] of Object.entries(switches_config)) {
             const [switchName, buttonCount] = switchData
             createSwitch(parseInt(switchId), switchName, buttonCount, switchX, switchY)
-            switchY += buttonCount * 65 + 185
-            if (switchY > 4000) { switchY = 1500; switchX += 350; }
+            switchY += buttonCount * 72 + 185
+            if (switchY > 6000) { switchY = 1500; switchX += 350; }
         }
 
         // Create connections after elements exist

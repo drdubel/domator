@@ -29,7 +29,6 @@ void receivedCallback(const uint32_t& from, const String& msg);
 void meshInit();
 void performFirmwareUpdate();
 void setLedColor(uint8_t r, uint8_t g, uint8_t b);
-void updateLedStatus();
 void printNodes();
 
 Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
@@ -47,21 +46,10 @@ const int buttonPins[NLIGHTS] = {A0, A1, A3, A4, A5, 6, 7};
 unsigned long lastTimeClick[NLIGHTS] = {0};
 int lastButtonState[NLIGHTS] = {HIGH};
 bool registeredWithRoot = false;
-unsigned long lastRegistrationAttempt = 0;
-unsigned long lastStatusPrint = 0;
-unsigned long lastStatusReport = 0;
 unsigned long long resetTimer = 0;
+uint32_t otaTimer = 0;
 volatile uint32_t isrTime[NLIGHTS];
 volatile bool buttonEvent[NLIGHTS];
-
-portMUX_TYPE isrMux = portMUX_INITIALIZER_UNLOCKED;
-
-// Task handles
-TaskHandle_t buttonTaskHandle = NULL;
-TaskHandle_t ledTaskHandle = NULL;
-TaskHandle_t statusTaskHandle = NULL;
-TaskHandle_t resetTaskHandle = NULL;
-TaskHandle_t statusReportTaskHandle = NULL;
 
 // OTA update flag
 volatile bool otaInProgress = false;
@@ -96,15 +84,14 @@ void updateLedStatus(void* pvParameters) {
 void otaTask(void* pv) {
     otaInProgress = true;
 
-    for (int i = 0; i < NLIGHTS; i++) {
-        detachInterrupt(buttonPins[i]);
-    }
+    Serial.println("[OTA] Stopping mesh...");
+    mesh.stop();
 
-    esp_task_wdt_deinit();  // REQUIRED
+    esp_task_wdt_deinit();
 
     vTaskDelay(pdMS_TO_TICKS(2000));
 
-    performFirmwareUpdate();  // now safe
+    performFirmwareUpdate();
 }
 
 void performFirmwareUpdate() {
@@ -212,7 +199,7 @@ void performFirmwareUpdate() {
 }
 
 void meshInit() {
-    mesh.setDebugMsgTypes(ERROR | STARTUP | CONNECTION);
+    mesh.setDebugMsgTypes(ERROR | STARTUP);
 
     mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA);
     mesh.onReceive(&receivedCallback);
@@ -229,22 +216,25 @@ void sendStatusReport(void* pvParameters) {
             continue;
         }
 
-        lastStatusReport = millis();
         Serial.println("MESH: Sending status report to root");
 
         JsonDocument doc;
-        JsonArray statusArray = doc.to<JsonArray>();
+        doc["rssi"] = WiFi.RSSI();
+        doc["uptime"] = millis() / 1000;
+        doc["clicks"] = clicks;
+        doc["disconnects"] = disconnects;
+        doc["parentId"] = 0;
+        doc["deviceId"] = deviceId;
+        doc["freeHeap"] = ESP.getFreeHeap();
+        doc["type"] = "switch";
+        doc["firmware"] = fw_md5;
 
-        statusArray.add(String(WiFi.RSSI()));
-        statusArray.add(String(millis() / 1000));
-        statusArray.add(String(clicks));
-        statusArray.add(fw_md5);
-        statusArray.add(String(disconnects));
+        String msg;
+        serializeJson(doc, msg);
 
-        String message;
-        serializeJson(statusArray, message);
-
-        if (mesh.sendSingle(rootId, message)) {
+        // Send via mesh
+        if (mesh.sendSingle(rootId, msg)) {
+            Serial.printf("MESH: Status report: %s\n", msg.c_str());
             Serial.println("MESH: Status report sent successfully");
         } else {
             Serial.println("MESH: Failed to send status report");
@@ -259,6 +249,7 @@ void receivedCallback(const uint32_t& from, const String& msg) {
 
     if (msg == "U") {
         Serial.println("MESH: Firmware update command received");
+        otaTimer = millis();
         setLedColor(0, 0, 255);
         otaInProgress = true;
         return;
@@ -297,8 +288,6 @@ void statusPrint(void* pvParameters) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
-
-        lastStatusPrint = millis();
 
         Serial.println("\n--- Status Report ---");
         Serial.printf("Device ID: %u\n", deviceId);
@@ -402,9 +391,7 @@ void registerTask(void* pvParameters) {
             continue;
         }
 
-        if (!registeredWithRoot &&
-            millis() - lastRegistrationAttempt >= REGISTRATION_RETRY_INTERVAL) {
-            lastRegistrationAttempt = millis();
+        if (!registeredWithRoot) {
             Serial.println("MESH: Attempting registration with root...");
 
             if (rootId == 0) {
@@ -416,7 +403,19 @@ void registerTask(void* pvParameters) {
             Serial.printf("MESH: Sent registration 'S' to root %u\n", rootId);
         }
 
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(REGISTRATION_RETRY_INTERVAL));
+    }
+}
+
+void meshUpdateTask(void* pvParameters) {
+    while (true) {
+        if (otaInProgress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        mesh.update();
+        vTaskDelay(pdMS_TO_TICKS(1));  // Reduced delay for faster processing
     }
 }
 
@@ -479,27 +478,29 @@ void setup() {
 
     // Start button handler task
     xTaskCreatePinnedToCore(handleButtonsTask, "ButtonTask", 4096, NULL, 2,
-                            &buttonTaskHandle, 0);
+                            NULL, 0);
 
     // Start LED status update task
-    xTaskCreatePinnedToCore(updateLedStatus, "LedTask", 4096, NULL, 1,
-                            &ledTaskHandle, 0);
+    xTaskCreatePinnedToCore(updateLedStatus, "LedTask", 4096, NULL, 1, NULL, 0);
 
     // Start status print task
-    xTaskCreatePinnedToCore(statusPrint, "StatusPrintTask", 4096, NULL, 1,
-                            &statusTaskHandle, 0);
+    xTaskCreatePinnedToCore(statusPrint, "StatusPrintTask", 4096, NULL, 1, NULL,
+                            0);
 
     // Start reset watchdog task
-    xTaskCreatePinnedToCore(resetTask, "ResetTask", 4096, NULL, 1,
-                            &resetTaskHandle, 0);
+    xTaskCreatePinnedToCore(resetTask, "ResetTask", 4096, NULL, 1, NULL, 0);
 
     // Start status report task
     xTaskCreatePinnedToCore(sendStatusReport, "SendStatusReportTask", 4096,
-                            NULL, 1, &statusReportTaskHandle, 0);
+                            NULL, 1, NULL, 0);
 
     // Start registration task
     xTaskCreatePinnedToCore(registerTask, "RegisterTask", 4096, NULL, 1, NULL,
                             0);
+
+    // Start mesh update task
+    xTaskCreatePinnedToCore(meshUpdateTask, "MeshUpdateTask", 8192, NULL, 5,
+                            NULL, 0);
 
     Serial.println("SWITCH: Setup complete, waiting for mesh connections...");
 }
@@ -507,22 +508,15 @@ void setup() {
 void loop() {
     static bool otaTaskStarted = false;
 
-    if (otaInProgress && !otaTaskStarted) {
+    if (otaInProgress && !otaTaskStarted && millis() - otaTimer > 3000) {
         otaTaskStarted = true;
 
         Serial.println("[OTA] Disconnecting mesh...");
-
-        mesh.stop();
-        vTaskDelay(pdMS_TO_TICKS(2000));
 
         xTaskCreatePinnedToCore(otaTask, "OTA", 4096, NULL, 5, NULL,
                                 0  // Core 0
         );
     }
 
-    if (!otaInProgress) {
-        mesh.update();
-    } else {
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
+    vTaskDelay(pdMS_TO_TICKS(1000));
 }

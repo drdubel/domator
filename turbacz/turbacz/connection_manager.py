@@ -176,6 +176,23 @@ class ConnectionManager:
             """,
             (relay_id,),
         )
+
+        self.cur.execute(
+            """
+            DELETE FROM outputs
+            WHERE relay_id = %s;
+            """,
+            (relay_id,),
+        )
+
+        self.cur.execute(
+            """
+            DELETE FROM connections
+            WHERE relay_id = %s;
+            """,
+            (relay_id,),
+        )
+
         self.conn.commit()
 
     def add_switch(self, switch_id: int, switch_name: str, buttons: int = 3):
@@ -212,6 +229,17 @@ class ConnectionManager:
             self.conn.commit()
 
     def remove_switch(self, switch_id: int):
+        if switch_id in self._connections:
+            del self._connections[switch_id]
+            self.cur.execute(
+                """
+                DELETE FROM connections
+                WHERE switch_id = %s;
+                """,
+                (switch_id,),
+            )
+            self.conn.commit()
+
         if switch_id in self._switches:
             del self._switches[switch_id]
             self.cur.execute(
@@ -222,9 +250,6 @@ class ConnectionManager:
                 (switch_id,),
             )
             self.conn.commit()
-
-        if switch_id in self._connections:
-            del self._connections[switch_id]
 
     def add_output(
         self, relay_id: int, output_id: str, output_name: str, section_id: int = 0
@@ -312,6 +337,20 @@ class ConnectionManager:
                 """,
                 (section_id,),
             )
+
+            for relay_id in self._outputs:
+                for output_id in self._outputs[relay_id]:
+                    output_name, output_section_id = self._outputs[relay_id][output_id]
+                    if output_section_id == section_id:
+                        self._outputs[relay_id][output_id] = (output_name, 0)
+                        self.cur.execute(
+                            """
+                            UPDATE outputs
+                            SET section_id = %s
+                            WHERE relay_id = %s AND output_id = %s;
+                            """,
+                            (0, relay_id, output_id),
+                        )
             self.conn.commit()
 
     def get_sections(self) -> dict[int, str] | None:

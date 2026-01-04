@@ -261,7 +261,7 @@ void mqttConnect() {
 }
 
 void meshInit() {
-    mesh.setDebugMsgTypes(ERROR | STARTUP);
+    mesh.setDebugMsgTypes(ERROR | STARTUP | CONNECTION);
     mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA);
 
     esp_wifi_set_ps(WIFI_PS_NONE);
@@ -278,33 +278,9 @@ void meshInit() {
     device_id = mesh.getNodeId();
 }
 
-void handleUpdateMessage(const String& topic) {
-    if (topic == "/switch/cmd/root") {
-        otaInProgress = true;
-        return;
-    }
+void droppedConnectionCallback(uint32_t nodeId) { nodes.erase(nodeId); }
 
-    String path = topic;
-    int lastSlash = path.lastIndexOf('/');
-    String last = path.substring(lastSlash + 1);
-    uint64_t nodeId;
-
-    if (toUint64(last, nodeId)) {
-        meshMessageQueue.push({(uint32_t)nodeId, "U"});
-        return;
-    }
-
-    for (const auto& pair : nodes) {
-        uint32_t nodeId = pair.first;
-        String nodeType = pair.second;
-
-        if ((nodeType == "relay" && topic == "/switch/cmd") ||
-            (nodeType == "switch" && topic == "/relay/cmd")) {
-            continue;
-        }
-        meshMessageQueue.push({nodeId, "U"});
-    }
-}
+void newConnectionCallback(uint32_t nodeId) { mesh.sendSingle(nodeId, "Q"); }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
     String msg;
@@ -313,12 +289,14 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         msg += (char)payload[i];
     }
 
+    DEBUG_VERBOSE("MQTT: [" + String(topic) + "] " + msg);
     mqttCallbackQueue.push({String(topic), msg});
 }
 
-void droppedConnectionCallback(uint32_t nodeId) { nodes.erase(nodeId); }
-
-void newConnectionCallback(uint32_t nodeId) { mesh.sendSingle(nodeId, "Q"); }
+void receivedCallback(const uint32_t& from, const String& msg) {
+    DEBUG_VERBOSE("MESH: [" + String(from) + "] " + msg);
+    meshCallbackQueue.push({from, msg});
+}
 
 void handleSwitchMessage(const uint32_t& from, const char output,
                          int state = -1) {
@@ -345,10 +323,6 @@ void handleRelayMessage(const uint32_t& from, const String& msg) {
 
     String topic = "/relay/state/" + String(from);
     mqttMessageQueue.push({topic, msg});
-}
-
-void receivedCallback(const uint32_t& from, const String& msg) {
-    meshCallbackQueue.push({from, msg});
 }
 
 void checkWiFi() {
@@ -472,6 +446,34 @@ void meshUpdateTask(void* pvParameters) {
     }
 }
 
+void handleUpdateMessage(const String& topic) {
+    if (topic == "/switch/cmd/root") {
+        otaInProgress = true;
+        return;
+    }
+
+    String path = topic;
+    int lastSlash = path.lastIndexOf('/');
+    String last = path.substring(lastSlash + 1);
+    uint64_t nodeId;
+
+    if (toUint64(last, nodeId)) {
+        meshMessageQueue.push({(uint32_t)nodeId, "U"});
+        return;
+    }
+
+    for (const auto& pair : nodes) {
+        uint32_t nodeId = pair.first;
+        String nodeType = pair.second;
+
+        if ((nodeType == "relay" && topic == "/switch/cmd") ||
+            (nodeType == "switch" && topic == "/relay/cmd")) {
+            continue;
+        }
+        meshMessageQueue.push({nodeId, "U"});
+    }
+}
+
 void sendMQTTMessages(void* pvParameters) {
     while (true) {
         if (otaInProgress) {
@@ -479,18 +481,18 @@ void sendMQTTMessages(void* pvParameters) {
             continue;
         }
 
-        if (mqttClient.connected() && !mqttMessageQueue.empty()) {
-            std::pair<String, String> message = mqttMessageQueue.front();
-            String topic = message.first;
-            String msg = message.second;
-            mqttMessageQueue.pop();
-
-            mqttClient.publish(topic.c_str(), msg.c_str(), msg.length());
-
-            vTaskDelay(pdMS_TO_TICKS(10));
-        } else {
+        if (!mqttClient.connected() || mqttMessageQueue.empty()) {
             vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
         }
+        vTaskDelay(pdMS_TO_TICKS(10));
+
+        std::pair<String, String> message = mqttMessageQueue.front();
+        String topic = message.first;
+        String msg = message.second;
+        mqttMessageQueue.pop();
+
+        mqttClient.publish(topic.c_str(), msg.c_str(), msg.length());
     }
 }
 
@@ -501,19 +503,19 @@ void sendMeshMessages(void* pvParameters) {
             continue;
         }
 
-        if (!meshMessageQueue.empty()) {
-            auto message = meshMessageQueue.front();
-            meshMessageQueue.pop();
-
-            uint32_t to = message.first;
-            String msg = message.second;
-
-            mesh.sendSingle(to, msg);
-
-            vTaskDelay(pdMS_TO_TICKS(10));
-        } else {
+        if (meshMessageQueue.empty()) {
             vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
         }
+        vTaskDelay(pdMS_TO_TICKS(10));
+
+        auto message = meshMessageQueue.front();
+        meshMessageQueue.pop();
+
+        uint32_t to = message.first;
+        String msg = message.second;
+
+        mesh.sendSingle(to, msg);
     }
 }
 
@@ -529,40 +531,41 @@ void mqttCallbackTask(void* pvParameters) {
             continue;
         }
 
-        if (!mqttCallbackQueue.empty()) {
-            vTaskDelay(pdMS_TO_TICKS(10));
+        if (mqttCallbackQueue.empty()) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+        }
 
-            std::pair<String, String> message = mqttCallbackQueue.front();
-            mqttCallbackQueue.pop();
+        vTaskDelay(pdMS_TO_TICKS(10));
 
-            String topic = message.first;
-            String msg = message.second;
+        std::pair<String, String> message = mqttCallbackQueue.front();
+        mqttCallbackQueue.pop();
 
-            if (msg == "U") {
-                handleUpdateMessage(topic);
-                continue;
-            }
-            if (topic == "/switch/cmd/root" && isValidJson(msg)) {
-                JsonDocument doc;
-                deserializeJson(doc, msg);
+        String topic = message.first;
+        String msg = message.second;
 
-                parseConnections(doc.as<JsonObject>());
+        if (msg == "U") {
+            handleUpdateMessage(topic);
+            continue;
+        }
+        if (topic == "/switch/cmd/root" && isValidJson(msg)) {
+            JsonDocument doc;
+            deserializeJson(doc, msg);
 
-                continue;
-            }
-            size_t lastSlash = topic.lastIndexOf('/');
-            if (lastSlash != -1 && lastSlash < topic.length() - 1) {
-                String idStr = topic.substring(lastSlash + 1);
-                uint32_t nodeId = idStr.toInt();
+            parseConnections(doc.as<JsonObject>());
 
-                if (nodeId != 0 || idStr == "0") {
-                    if (nodes.count(nodeId)) {
-                        mesh.sendSingle(nodeId, msg);
-                    }
+            continue;
+        }
+        size_t lastSlash = topic.lastIndexOf('/');
+        if (lastSlash != -1 && lastSlash < topic.length() - 1) {
+            String idStr = topic.substring(lastSlash + 1);
+            uint32_t nodeId = idStr.toInt();
+
+            if (nodeId != 0 || idStr == "0") {
+                if (nodes.count(nodeId)) {
+                    mesh.sendSingle(nodeId, msg);
                 }
             }
-        } else {
-            vTaskDelay(pdMS_TO_TICKS(50));
         }
     }
 }
@@ -577,9 +580,8 @@ void meshCallbackTask(void* pvParameters) {
         if (meshCallbackQueue.empty()) {
             vTaskDelay(pdMS_TO_TICKS(50));
             continue;
-        } else {
-            vTaskDelay(pdMS_TO_TICKS(10));
         }
+        vTaskDelay(pdMS_TO_TICKS(10));
 
         std::pair<uint32_t, String> message = meshCallbackQueue.front();
         uint32_t from = message.first;

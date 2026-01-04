@@ -18,6 +18,7 @@ class ConnectionManager:
         self._outputs: dict[int, dict[str, tuple[str, int]]] = {}
         self._sections: dict[int, str] = {}
         self._removed: bool = False
+        self.rootId: Optional[int] = None
 
         self._init_db()
         self.create_tables()

@@ -23,8 +23,6 @@ mqtt_config = MQTTConfig(
 
 mqtt = FastMQTT(config=mqtt_config)
 
-rootId = None
-
 
 @mqtt.on_connect()
 def connect(client, flags, rc, properties):
@@ -148,8 +146,6 @@ async def handle_root_state(payload_str):
     """
     Process root switch state payload.
     """
-    global rootId
-
     connections = connection_manager.connection_manager.get_all_connections()
     relays = connection_manager.connection_manager.get_relays()
     switches = connection_manager.connection_manager.get_switches()
@@ -163,7 +159,6 @@ async def handle_root_state(payload_str):
 
     try:
         data = json.loads(payload_str)
-        print("Parsed data:", data)  # Debug print
 
     except json.JSONDecodeError:
         logger.error("Error processing root state JSON payload: %s", payload_str)
@@ -198,7 +193,7 @@ async def handle_root_state(payload_str):
     elif data["type"] == "root":
         data["name"] = "root"
 
-        rootId = data["deviceId"]
+        connection_manager.connection_manager.rootId = data["deviceId"]
 
     else:
         logger.warning(f"Unknown device type for ID {data['deviceId']}: {data['type']}")
@@ -214,7 +209,10 @@ async def handle_root_state(payload_str):
     elif data["parentId"] in switches:
         parent_name = switches[data["parentId"]][0]
 
-    elif data["parentId"] == data["deviceId"] or data["parentId"] == rootId:
+    elif (
+        data["parentId"] == data["deviceId"]
+        or data["parentId"] == connection_manager.connection_manager.rootId
+    ):
         parent_name = "root"
 
     else:
@@ -225,7 +223,7 @@ async def handle_root_state(payload_str):
     if not config.monitoring.send_metrics:
         return
 
-    metric_node = f"node_info,id={data['deviceId']},name={data['name']}{labels} uptime={data['uptime']},clicks={data['clicks']},disconnects={data['disconnects']}"
+    metric_node = f"node_info,id={data['deviceId']},name={data['name']}{labels} uptime={data['uptime']},clicks={data['clicks']},free_heap={data['freeHeap']},disconnects={data['disconnects']}"
     metric_mesh = f"mesh_node,id={data['deviceId']},name={data['name']},parent={data['parentId']},parent_name={data['parent_name']},firmware={data['firmware']},type={data['type']}{labels} rssi={data['rssi']}"
 
     if "free_heap" in data:

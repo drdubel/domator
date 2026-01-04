@@ -8,6 +8,8 @@
 #include <credentials.h>
 #include <painlessMesh.h>
 
+#include "esp_task_wdt.h"
+
 // Hardware definitions
 #define USE_BOARD 75
 #define NO_PWMPIN
@@ -26,8 +28,6 @@ const byte wifiActivityPin = 255;
 void receivedCallback(const uint32_t& from, const String& msg);
 void meshInit();
 void performFirmwareUpdate();
-void printStatus();
-void syncLightStates(uint32_t targetNodeId);
 
 painlessMesh mesh;
 
@@ -44,18 +44,33 @@ volatile uint32_t lastPress[NLIGHTS] = {0, 0, 0, 0, 0, 0, 0, 0};
 volatile uint8_t pressed = 0;
 
 bool registeredWithRoot = false;
-unsigned long lastRegistrationAttempt = 0;
-unsigned long lastStatusPrint = 0;
-unsigned long lastStatusReport = 0;
-unsigned long long resetTimer = 0;
+uint32_t resetTimer = 0;
+uint32_t otaTimer = 0;
 String fw_md5;  // MD5 of the firmware as flashed
+
+// OTA update flag
+volatile bool otaInProgress = false;
+
+void otaTask(void* pv) {
+    otaInProgress = true;
+
+    for (int i = 0; i < NLIGHTS; i++) {
+        detachInterrupt(buttons[i]);
+    }
+
+    Serial.println("[OTA] Stopping mesh...");
+    mesh.stop();
+
+    esp_task_wdt_deinit();
+
+    vTaskDelay(pdMS_TO_TICKS(2000));
+
+    performFirmwareUpdate();
+}
 
 void performFirmwareUpdate() {
     vTaskDelay(1000 / portTICK_PERIOD_MS);  // Allow message to be sent
     Serial.println("[OTA] Starting firmware update...");
-
-    Serial.println("[OTA] Stopping mesh...");
-    mesh.stop();
 
     vTaskDelay(1000 / portTICK_PERIOD_MS);  // Give time for cleanup
 
@@ -165,61 +180,72 @@ void meshInit() {
     Serial.printf("RELAY: Free heap: %d bytes\n", ESP.getFreeHeap());
 }
 
-void sendStatusReport() {
-    lastStatusReport = millis();
-    Serial.println("MESH: Sending status report to root");
+void sendStatusReport(void* pvParameters) {
+    while (true) {
+        if (otaInProgress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
 
-    JsonDocument doc;
-    JsonArray statusArray = doc.to<JsonArray>();
+        Serial.println("MESH: Sending status report to root");
 
-    statusArray.add(String(WiFi.RSSI()));
-    statusArray.add(String(millis() / 1000));
-    statusArray.add(String(clicks));
-    statusArray.add(fw_md5);
-    statusArray.add(String(disconnects));
+        JsonDocument doc;
+        doc["rssi"] = WiFi.RSSI();
+        doc["uptime"] = millis() / 1000;
+        doc["clicks"] = clicks;
+        doc["disconnects"] = disconnects;
+        doc["parentId"] = 0;
+        doc["deviceId"] = deviceId;
+        doc["freeHeap"] = ESP.getFreeHeap();
+        doc["type"] = "relay";
+        doc["firmware"] = fw_md5;
 
-    String message;
-    serializeJson(statusArray, message);
+        String msg;
+        serializeJson(doc, msg);
 
-    if (mesh.sendSingle(rootId, message)) {
-        Serial.println("MESH: Status report sent successfully");
-    } else {
-        Serial.println("MESH: Failed to send status report");
+        // Send via mesh
+        if (mesh.sendSingle(rootId, msg)) {
+            Serial.printf("MESH: Status report: %s\n", msg.c_str());
+            Serial.println("MESH: Status report sent successfully");
+        } else {
+            Serial.println("MESH: Failed to send status report");
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(STATUS_REPORT_INTERVAL));
     }
 }
 
-void syncLightStates(uint32_t targetNodeId) {
-    Serial.printf("RELAY: Syncing all light states to node %u\n", targetNodeId);
+void syncLightStates() {
+    Serial.printf("RELAY: Syncing all light states to root\n");
 
     for (int i = 0; i < NLIGHTS; i++) {
         char message[2];
         message[0] = 'A' + i;
         message[1] = lights[i] ? '1' : '0';
 
-        if (mesh.sendSingle(targetNodeId, String(message))) {
-            Serial.printf("RELAY: Sent state %s to node %u\n", message,
-                          targetNodeId);
+        if (mesh.sendSingle(rootId, String(message))) {
+            Serial.printf("RELAY: Sent state %s to node %u\n", message, rootId);
         } else {
             Serial.printf("RELAY: Failed to send state %s to node %u\n",
-                          message, targetNodeId);
+                          message, rootId);
         }
 
-        vTaskDelay(50 / portTICK_PERIOD_MS);  // Small delay between messages to
-                                              // prevent flooding
+        vTaskDelay(5 / portTICK_PERIOD_MS);  // Small delay between messages to
+                                             // prevent flooding
     }
 }
 
 void receivedCallback(const uint32_t& from, const String& msg) {
     Serial.printf("MESH: [%u] %s\n", from, msg.c_str());
 
-    // Handle sync request from switch nodes
+    // Handle sync request from root
     if (msg == "S") {
-        Serial.printf("MESH: Switch node %u requesting state sync\n", from);
-        syncLightStates(from);
+        Serial.printf("MESH: Root %u requesting state sync\n", from);
+        syncLightStates();
         return;
     }
 
-    // Handle registration query from switch nodes
+    // Handle registration query from root
     if (msg == "Q") {
         Serial.println("MESH: Registration query received from root");
         rootId = from;
@@ -235,12 +261,6 @@ void receivedCallback(const uint32_t& from, const String& msg) {
         return;
     }
 
-    if (msg == "P") {
-        Serial.printf("MESH: Received ping from %u, sending pong\n", from);
-        mesh.sendSingle(from, "P");
-        return;
-    }
-
     // Handle light control messages (e.g., "a0", "b1", etc.)
     if (msg.length() == 2 && msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
         int lightIndex = msg[0] - 'a';
@@ -248,7 +268,7 @@ void receivedCallback(const uint32_t& from, const String& msg) {
 
         if (newState != 0 && newState != 1) {
             Serial.printf("MESH: Invalid state '%c' in message from %u\n",
-                          msg[1], from);
+                          msg[1], rootId);
             return;
         }
 
@@ -256,8 +276,8 @@ void receivedCallback(const uint32_t& from, const String& msg) {
         clicks++;
         digitalWrite(relays[lightIndex], newState ? HIGH : LOW);
 
-        Serial.printf("RELAY: Light %c set to %s by node %u\n",
-                      'a' + lightIndex, newState ? "ON" : "OFF", from);
+        Serial.printf("RELAY: Light %c set to %s by root %u\n",
+                      'a' + lightIndex, newState ? "ON" : "OFF", rootId);
 
         // Send confirmation back
         char response[3];
@@ -265,9 +285,9 @@ void receivedCallback(const uint32_t& from, const String& msg) {
         response[1] = newState ? '1' : '0';
         response[2] = '\0';
 
-        if (mesh.sendSingle(from, String(response))) {
+        if (mesh.sendSingle(rootId, String(response))) {
             Serial.printf("RELAY: Sent confirmation %s to node %u\n", response,
-                          from);
+                          rootId);
         }
         return;
     }
@@ -279,9 +299,9 @@ void receivedCallback(const uint32_t& from, const String& msg) {
         clicks++;
         digitalWrite(relays[lightIndex], lights[lightIndex] ? HIGH : LOW);
 
-        Serial.printf("RELAY: Light %c toggled to %s by node %u\n",
+        Serial.printf("RELAY: Light %c toggled to %s by root %u\n",
                       'a' + lightIndex, lights[lightIndex] ? "ON" : "OFF",
-                      from);
+                      rootId);
 
         // Send confirmation back
         char response[3];
@@ -289,9 +309,9 @@ void receivedCallback(const uint32_t& from, const String& msg) {
         response[1] = lights[lightIndex] ? '1' : '0';
         response[2] = '\0';
 
-        if (mesh.sendSingle(from, String(response))) {
+        if (mesh.sendSingle(rootId, String(response))) {
             Serial.printf("RELAY: Sent confirmation %s to node %u\n", response,
-                          from);
+                          rootId);
         }
         return;
     }
@@ -307,30 +327,115 @@ void receivedCallback(const uint32_t& from, const String& msg) {
                   from);
 }
 
-void statusPrint() {
-    lastStatusPrint = millis();
+void statusPrintTask(void* pvParameters) {
+    while (true) {
+        if (otaInProgress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
 
-    Serial.println("\n--- Status Report ---");
-    Serial.printf("Device ID: %u\n", deviceId);
-    Serial.printf("Root ID: %u\n", rootId);
-    Serial.printf("Registered: %s\n", registeredWithRoot ? "Yes" : "No");
-    Serial.printf("Free Heap: %d bytes\n", ESP.getFreeHeap());
-    Serial.printf("Uptime: %lu seconds\n", millis() / 1000);
-    Serial.printf("Sketch MD5: %s\n", fw_md5.c_str());
+        Serial.println("\n--- Status Report ---");
+        Serial.printf("Device ID: %u\n", deviceId);
+        Serial.printf("Root ID: %u\n", rootId);
+        Serial.printf("Registered: %s\n", registeredWithRoot ? "Yes" : "No");
+        Serial.printf("Free Heap: %d bytes\n", ESP.getFreeHeap());
+        Serial.printf("Uptime: %lu seconds\n", millis() / 1000);
+        Serial.printf("Sketch MD5: %s\n", fw_md5.c_str());
 
-    Serial.println("\nRelay States:");
-    for (int i = 0; i < NLIGHTS; i++) {
-        Serial.printf("  Light %c (Pin %d): %s\n", 'a' + i, relays[i],
-                      lights[i] ? "ON" : "OFF");
+        Serial.println("\nRelay States:");
+        for (int i = 0; i < NLIGHTS; i++) {
+            Serial.printf("  Light %c (Pin %d): %s\n", 'a' + i, relays[i],
+                          lights[i] ? "ON" : "OFF");
+        }
+
+        auto nodes = mesh.getNodeList();
+        Serial.printf("\nMesh Network: %u node(s)\n", nodes.size());
+        for (auto node : nodes) {
+            Serial.printf("  Node: %u%s\n", node,
+                          (node == rootId) ? " (ROOT)" : "");
+        }
+        Serial.println("-------------------\n");
+
+        vTaskDelay(pdMS_TO_TICKS(STATUS_PRINT_INTERVAL));
+    }
+}
+
+void resetTask(void* pvParameters) {
+    while ((micros() - resetTimer) / 1000000 < 90) {
+        if (otaInProgress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        if (mesh.getNodeList().empty()) {
+            registeredWithRoot = false;
+        } else if (registeredWithRoot) {
+            resetTimer = micros();
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 
-    auto nodes = mesh.getNodeList();
-    Serial.printf("\nMesh Network: %u node(s)\n", nodes.size());
-    for (auto node : nodes) {
-        Serial.printf("  Node: %u%s\n", node,
-                      (node == rootId) ? " (ROOT)" : "");
+    ESP.restart();
+}
+
+void buttonPressTask(void* pvParameters) {
+    while (true) {
+        if (otaInProgress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        if (pressed) {
+            for (int i = 0; i < NLIGHTS; i++) {
+                if (pressed & (1 << i)) {
+                    Serial.printf("RELAY: Button for light %d pressed\n", i);
+                    String msg = String(char('a' + i)) +
+                                 String(char(buttonState[i] + '0'));
+                    mesh.sendSingle(rootId, msg);
+
+                    pressed &= ~(1 << i);
+                }
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
-    Serial.println("-------------------\n");
+}
+
+void registerTask(void* pvParameters) {
+    while (true) {
+        if (otaInProgress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        if (!registeredWithRoot) {
+            Serial.println("MESH: Attempting registration with root...");
+
+            if (rootId == 0) {
+                Serial.println("MESH: Root ID unknown, cannot register");
+                continue;
+            }
+
+            mesh.sendSingle(rootId, "R");
+            Serial.printf("MESH: Sent registration 'R' to root %u\n", rootId);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(REGISTRATION_RETRY_INTERVAL));
+    }
+}
+
+void meshUpdateTask(void* pvParameters) {
+    while (true) {
+        if (otaInProgress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        mesh.update();
+        vTaskDelay(pdMS_TO_TICKS(1));  // Reduced delay for faster processing
+    }
 }
 
 void IRAM_ATTR buttonISR(void* arg) {
@@ -407,53 +512,36 @@ void setup() {
                            (void*)i, CHANGE);
     }
 
+    // Create tasks
+    xTaskCreatePinnedToCore(meshUpdateTask, "MeshUpdate", 4096, NULL, 5, NULL,
+                            0);  // Core 0
+    xTaskCreatePinnedToCore(statusPrintTask, "StatusPrint", 4096, NULL, 1, NULL,
+                            1);  // Core 1
+    xTaskCreatePinnedToCore(sendStatusReport, "StatusReport", 8192, NULL, 1,
+                            NULL,
+                            1);  // Core 1
+    xTaskCreatePinnedToCore(registerTask, "Register", 4096, NULL, 2, NULL,
+                            1);  // Core 1
+    xTaskCreatePinnedToCore(buttonPressTask, "ButtonPress", 4096, NULL, 2, NULL,
+                            0);  // Core 0
+    xTaskCreatePinnedToCore(resetTask, "Reset", 4096, NULL, 1, NULL,
+                            1);  // Core 1
+
     Serial.println("RELAY: Setup complete, waiting for mesh connections...");
 }
 
 void loop() {
-    mesh.update();
+    static bool otaTaskStarted = false;
 
-    // Handle button presses
-    if (pressed) {
-        for (int i = 0; i < NLIGHTS; i++) {
-            if (pressed & (1 << i)) {
-                Serial.printf("RELAY: Button for light %d pressed\n", i);
-                String msg =
-                    String(char('a' + i)) + String(char(buttonState[i] + '0'));
-                mesh.sendSingle(rootId, msg);
+    if (otaInProgress && !otaTaskStarted && millis() - otaTimer > 3000) {
+        otaTaskStarted = true;
 
-                pressed &= ~(1 << i);
-            }
-        }
+        Serial.println("[OTA] Disconnecting mesh...");
+
+        xTaskCreatePinnedToCore(otaTask, "OTA", 4096, NULL, 5, NULL,
+                                0  // Core 0
+        );
     }
 
-    // Periodic status print
-    if (millis() - lastStatusPrint >= STATUS_PRINT_INTERVAL) {
-        statusPrint();
-
-        if (mesh.getNodeList().empty()) {
-            registeredWithRoot = false;
-        } else {
-            resetTimer = millis();
-        }
-    }
-
-    if (!registeredWithRoot &&
-        millis() - lastRegistrationAttempt >= REGISTRATION_RETRY_INTERVAL) {
-        lastRegistrationAttempt = millis();
-        Serial.println("MESH: Attempting registration with root...");
-
-        if (rootId == 0) {
-            Serial.println("MESH: Root ID unknown, cannot register");
-            return;
-        }
-
-        mesh.sendSingle(rootId, "R");
-        Serial.printf("MESH: Sent registration 'R' to root %u\n", rootId);
-    }
-
-    if (millis() - lastStatusReport >= STATUS_REPORT_INTERVAL &&
-        registeredWithRoot) {
-        sendStatusReport();
-    }
+    vTaskDelay(pdMS_TO_TICKS(1000));
 }

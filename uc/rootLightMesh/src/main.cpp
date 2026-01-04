@@ -252,7 +252,7 @@ void mqttConnect() {
             mqttClient.subscribe("/relay/cmd/+");
             mqttClient.subscribe("/relay/cmd");
 
-            mqttCallbackQueue.push({"/switch/state/root", "connected"});
+            mqttMessageQueue.push({"/switch/state/root", "connected"});
             return;
         }
         retries++;
@@ -310,9 +310,13 @@ void handleSwitchMessage(const uint32_t& from, const char output,
         String relayIdStr = target.first;
         String command = target.second;
         uint32_t relayId = relayIdStr.toInt();
+        Serial.printf("SWITCH: Sending command to relay %s (%u)\n",
+                      relayIdStr.c_str(), relayId);
 
         if (state != -1) {
             command += String(state);
+            meshMessageQueue.push({relayId, command});
+        } else {
             meshMessageQueue.push({relayId, command});
         }
     }
@@ -431,18 +435,6 @@ void statusReport(void* pvParameters) {
             mqttMessageQueue.push({"/switch/state/root", msg});
 
         vTaskDelay(pdMS_TO_TICKS(STATUS_REPORT_INTERVAL));
-    }
-}
-
-void meshUpdateTask(void* pvParameters) {
-    while (true) {
-        if (otaInProgress) {
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            continue;
-        }
-
-        mesh.update();
-        vTaskDelay(pdMS_TO_TICKS(1));  // Reduced delay for faster processing
     }
 }
 
@@ -648,16 +640,14 @@ void setup() {
     xTaskCreatePinnedToCore(checkWiFiAndMQTT, "WiFiMQTT", 8192, NULL, 2, NULL,
                             1);
     xTaskCreatePinnedToCore(statusReport, "Status", 4096, NULL, 1, NULL, 1);
+    xTaskCreatePinnedToCore(checkMesh, "MeshCheck", 8192, NULL, 1, NULL, 1);
     xTaskCreatePinnedToCore(sendMQTTMessages, "sendMQTT", 4096, NULL, 2, NULL,
                             1);
-    xTaskCreatePinnedToCore(checkMesh, "MeshCheck", 8192, NULL, 1, NULL, 1);
-    xTaskCreatePinnedToCore(meshUpdateTask, "MeshUpdate", 8192, NULL, 5, NULL,
-                            0);
     xTaskCreatePinnedToCore(sendMeshMessages, "sendMesh", 4096, NULL, 2, NULL,
                             0);
-    xTaskCreatePinnedToCore(mqttCallbackTask, "MQTTCallback", 8192, NULL, 2,
+    xTaskCreatePinnedToCore(mqttCallbackTask, "MQTTCallback", 8192, NULL, 4,
                             NULL, 1);
-    xTaskCreatePinnedToCore(meshCallbackTask, "MeshCallback", 8192, NULL, 2,
+    xTaskCreatePinnedToCore(meshCallbackTask, "MeshCallback", 8192, NULL, 4,
                             NULL, 0);
 }
 
@@ -669,5 +659,10 @@ void loop() {
         xTaskCreatePinnedToCore(otaTask, "OTA", 16384, NULL, 5, NULL, 0);
     }
 
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    if (otaInProgress) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    } else {
+        mesh.update();
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
 }

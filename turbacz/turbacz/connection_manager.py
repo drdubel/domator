@@ -172,14 +172,6 @@ class ConnectionManager:
 
         self.cur.execute(
             """
-            DELETE FROM relays
-            WHERE id = %s;
-            """,
-            (relay_id,),
-        )
-
-        self.cur.execute(
-            """
             DELETE FROM outputs
             WHERE relay_id = %s;
             """,
@@ -190,6 +182,13 @@ class ConnectionManager:
             """
             DELETE FROM connections
             WHERE relay_id = %s;
+            """,
+            (relay_id,),
+        )
+        self.cur.execute(
+            """
+            DELETE FROM relays
+            WHERE id = %s;
             """,
             (relay_id,),
         )

@@ -32,6 +32,18 @@ void setLedColor(uint8_t r, uint8_t g, uint8_t b);
 void updateLedStatus();
 void printNodes();
 
+struct StatusReport {
+    int8_t rssi;
+    uint32_t uptime;
+    uint32_t clicks;
+    uint16_t disconnects;
+    uint32_t parent;
+    uint32_t deviceId;
+    uint32_t freeHeap;
+    char type;
+    char firmware[33];
+} __attribute__((packed));
+
 Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 painlessMesh mesh;
@@ -41,7 +53,7 @@ uint32_t deviceId = 0;
 uint32_t disconnects = 0;
 uint32_t clicks = 0;
 
-String fw_md5;  // MD5 of the firmware as flashed
+char fw_md5[33];  // MD5 of the firmware as flashed
 
 const int buttonPins[NLIGHTS] = {A0, A1, A3, A4, A5, 6, 7};
 unsigned long lastTimeClick[NLIGHTS] = {0};
@@ -49,19 +61,11 @@ int lastButtonState[NLIGHTS] = {HIGH};
 bool registeredWithRoot = false;
 unsigned long lastRegistrationAttempt = 0;
 unsigned long lastStatusPrint = 0;
-unsigned long lastStatusReport = 0;
 unsigned long long resetTimer = 0;
 volatile uint32_t isrTime[NLIGHTS];
 volatile bool buttonEvent[NLIGHTS];
 
 portMUX_TYPE isrMux = portMUX_INITIALIZER_UNLOCKED;
-
-// Task handles
-TaskHandle_t buttonTaskHandle = NULL;
-TaskHandle_t ledTaskHandle = NULL;
-TaskHandle_t statusTaskHandle = NULL;
-TaskHandle_t resetTaskHandle = NULL;
-TaskHandle_t statusReportTaskHandle = NULL;
 
 // OTA update flag
 volatile bool otaInProgress = false;
@@ -229,22 +233,22 @@ void sendStatusReport(void* pvParameters) {
             continue;
         }
 
-        lastStatusReport = millis();
         Serial.println("MESH: Sending status report to root");
 
-        JsonDocument doc;
-        JsonArray statusArray = doc.to<JsonArray>();
+        StatusReport status;
+        status.rssi = WiFi.RSSI();
+        status.uptime = millis() / 1000;
+        status.clicks = clicks;
+        status.disconnects = disconnects;
+        status.parent = 0;
+        status.deviceId = deviceId;
+        status.freeHeap = ESP.getFreeHeap();
+        status.type = 'S';
+        strncpy(status.firmware, fw_md5, sizeof(status.firmware));
+        status.firmware[sizeof(status.firmware) - 1] = '\0';
 
-        statusArray.add(String(WiFi.RSSI()));
-        statusArray.add(String(millis() / 1000));
-        statusArray.add(String(clicks));
-        statusArray.add(fw_md5);
-        statusArray.add(String(disconnects));
-
-        String message;
-        serializeJson(statusArray, message);
-
-        if (mesh.sendSingle(rootId, message)) {
+        if (mesh.sendSingle(rootId,
+                            String((char*)&status, sizeof(StatusReport)))) {
             Serial.println("MESH: Status report sent successfully");
         } else {
             Serial.println("MESH: Failed to send status report");
@@ -302,7 +306,7 @@ void statusPrint(void* pvParameters) {
 
         Serial.println("\n--- Status Report ---");
         Serial.printf("Device ID: %u\n", deviceId);
-        Serial.printf("Firmware MD5: %s\n", fw_md5.c_str());
+        Serial.printf("Firmware MD5: %s\n", fw_md5);
         Serial.printf("Root ID: %u\n", rootId);
         Serial.printf("Registered: %s\n", registeredWithRoot ? "Yes" : "No");
         Serial.printf("Free Heap: %d bytes\n", ESP.getFreeHeap());
@@ -420,16 +424,29 @@ void registerTask(void* pvParameters) {
     }
 }
 
+void meshUpdateTask(void* pvParameters) {
+    while (true) {
+        if (otaInProgress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        mesh.update();
+        vTaskDelay(pdMS_TO_TICKS(1));  // Reduced delay for faster processing
+    }
+}
+
 void setup() {
     Serial.begin(115200);
     vTaskDelay(pdMS_TO_TICKS(1000));
 
-    fw_md5 = ESP.getSketchMD5();
+    strncpy(fw_md5, ESP.getSketchMD5().c_str(), sizeof(fw_md5));
+    fw_md5[sizeof(fw_md5) - 1] = '\0';
 
     Serial.println("\n\n========================================");
     Serial.println("ESP32-C3 Mesh Switch Node Starting...");
     Serial.printf("Chip Model: %s\n", ESP.getChipModel());
-    Serial.printf("Sketch MD5: %s\n", fw_md5.c_str());
+    Serial.printf("Sketch MD5: %s\n", fw_md5);
     Serial.printf("Chip Revision: %d\n", ESP.getChipRevision());
     Serial.printf("CPU Frequency: %d MHz\n", ESP.getCpuFreqMHz());
     Serial.printf("Free Heap: %d bytes\n", ESP.getFreeHeap());
@@ -479,27 +496,29 @@ void setup() {
 
     // Start button handler task
     xTaskCreatePinnedToCore(handleButtonsTask, "ButtonTask", 4096, NULL, 2,
-                            &buttonTaskHandle, 0);
+                            NULL, 0);
 
     // Start LED status update task
-    xTaskCreatePinnedToCore(updateLedStatus, "LedTask", 4096, NULL, 1,
-                            &ledTaskHandle, 0);
+    xTaskCreatePinnedToCore(updateLedStatus, "LedTask", 4096, NULL, 1, NULL, 0);
 
     // Start status print task
-    xTaskCreatePinnedToCore(statusPrint, "StatusPrintTask", 4096, NULL, 1,
-                            &statusTaskHandle, 0);
+    xTaskCreatePinnedToCore(statusPrint, "StatusPrintTask", 4096, NULL, 1, NULL,
+                            0);
 
     // Start reset watchdog task
-    xTaskCreatePinnedToCore(resetTask, "ResetTask", 4096, NULL, 1,
-                            &resetTaskHandle, 0);
+    xTaskCreatePinnedToCore(resetTask, "ResetTask", 4096, NULL, 1, NULL, 0);
 
     // Start status report task
     xTaskCreatePinnedToCore(sendStatusReport, "SendStatusReportTask", 4096,
-                            NULL, 1, &statusReportTaskHandle, 0);
+                            NULL, 1, NULL, 0);
 
     // Start registration task
     xTaskCreatePinnedToCore(registerTask, "RegisterTask", 4096, NULL, 1, NULL,
                             0);
+
+    // Start mesh update task
+    xTaskCreatePinnedToCore(meshUpdateTask, "MeshUpdateTask", 8192, NULL, 5,
+                            NULL, 1);
 
     Serial.println("SWITCH: Setup complete, waiting for mesh connections...");
 }
@@ -520,9 +539,5 @@ void loop() {
         );
     }
 
-    if (!otaInProgress) {
-        mesh.update();
-    } else {
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
+    vTaskDelay(pdMS_TO_TICKS(1000));
 }

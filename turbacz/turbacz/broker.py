@@ -150,11 +150,9 @@ async def handle_root_state(payload_str):
     relays = connection_manager.connection_manager.get_relays()
     switches = connection_manager.connection_manager.get_switches()
 
-    print("Handling root state:", payload_str)
     if payload_str == "connected":
         logger.debug("Connections: %s", connections)  # Debug log
 
-        print("Root connected, sending connections")
         mqtt.client.publish("/switch/cmd/root", connections)
 
         return

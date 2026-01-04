@@ -209,6 +209,12 @@ void meshInit() {
     Serial.printf("SWITCH: Free heap: %d bytes\n", ESP.getFreeHeap());
 }
 
+void restartMesh() {
+    mesh.stop();
+    vTaskDelay(pdMS_TO_TICKS(100));
+    meshInit();
+}
+
 void sendStatusReport(void* pvParameters) {
     while (true) {
         if (otaInProgress) {
@@ -308,7 +314,7 @@ void statusPrint(void* pvParameters) {
 }
 
 void resetTask(void* pvParameters) {
-    while ((micros() - resetTimer) / 1000000 < 90) {
+    while (true) {
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
@@ -320,10 +326,10 @@ void resetTask(void* pvParameters) {
             resetTimer = micros();
         }
 
+        if ((micros() - resetTimer) / 1000000 > 90) restartMesh();
+
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
-
-    ESP.restart();
 }
 
 void handleButtonsTask(void* pvParameters) {
@@ -386,6 +392,8 @@ void handleButtonsTask(void* pvParameters) {
 
 void registerTask(void* pvParameters) {
     while (true) {
+        vTaskDelay(pdMS_TO_TICKS(REGISTRATION_RETRY_INTERVAL));
+
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
@@ -402,8 +410,6 @@ void registerTask(void* pvParameters) {
             mesh.sendSingle(rootId, "S");
             Serial.printf("MESH: Sent registration 'S' to root %u\n", rootId);
         }
-
-        vTaskDelay(pdMS_TO_TICKS(REGISTRATION_RETRY_INTERVAL));
     }
 }
 

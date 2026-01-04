@@ -180,6 +180,12 @@ void meshInit() {
     Serial.printf("RELAY: Free heap: %d bytes\n", ESP.getFreeHeap());
 }
 
+void restartMesh() {
+    mesh.stop();
+    vTaskDelay(pdMS_TO_TICKS(100));
+    meshInit();
+}
+
 void sendStatusReport(void* pvParameters) {
     while (true) {
         if (otaInProgress) {
@@ -361,7 +367,7 @@ void statusPrintTask(void* pvParameters) {
 }
 
 void resetTask(void* pvParameters) {
-    while ((micros() - resetTimer) / 1000000 < 90) {
+    while (true) {
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
@@ -373,10 +379,10 @@ void resetTask(void* pvParameters) {
             resetTimer = micros();
         }
 
+        if ((micros() - resetTimer) / 1000000 > 90) restartMesh();
+
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
-
-    ESP.restart();
 }
 
 void buttonPressTask(void* pvParameters) {

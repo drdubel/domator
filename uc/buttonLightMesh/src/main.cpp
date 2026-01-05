@@ -395,10 +395,10 @@ void meshCallbackTask(void* pvParameters) {
         }
 
         if (meshCallbackQueue.empty()) {
-            vTaskDelay(pdMS_TO_TICKS(50));
+            vTaskDelay(pdMS_TO_TICKS(20));
             continue;
         }
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(5));
 
         std::pair<uint32_t, String> message = meshCallbackQueue.front();
         uint32_t from = message.first;
@@ -439,10 +439,10 @@ void sendMeshMessages(void* pvParameters) {
         }
 
         if (meshMessageQueue.empty()) {
-            vTaskDelay(pdMS_TO_TICKS(50));
+            vTaskDelay(pdMS_TO_TICKS(20));
             continue;
         }
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(5));
 
         std::pair<uint32_t, String> message = meshMessageQueue.front();
         meshMessageQueue.pop();

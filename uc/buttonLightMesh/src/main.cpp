@@ -26,7 +26,7 @@
 #define WIFI_CONNECT_TIMEOUT 20000
 #define REGISTRATION_RETRY_INTERVAL 10000
 #define STATUS_REPORT_INTERVAL 15000
-#define RESET_TIMEOUT 30000
+#define RESET_TIMEOUT 60000
 
 // Minimal debug - only errors and critical events
 #define DEBUG_LEVEL 1  // 0=none, 1=errors only, 2=info, 3=verbose
@@ -268,15 +268,10 @@ void meshInit() {
 }
 
 void restartMesh() {
-    DEBUG_INFO("MESH: Restarting mesh connection due to timeout...");
-    mesh.stop();
-
+    DEBUG_ERROR("MESH: Restarting ESP32 due to mesh timeout");
     vTaskDelay(pdMS_TO_TICKS(100));
 
-    registeredWithRoot = false;
-    resetTimer = millis();
-
-    meshInit();
+    ESP.restart();
 }
 
 void sendStatusReport(void* pvParameters) {

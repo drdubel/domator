@@ -13,6 +13,7 @@
 #include <queue>
 
 #include "esp_task_wdt.h"
+#include "esp_wifi.h"
 
 // Pin and hardware definitions
 #define NLIGHTS 7
@@ -25,6 +26,7 @@
 #define WIFI_CONNECT_TIMEOUT 20000
 #define REGISTRATION_RETRY_INTERVAL 10000
 #define STATUS_REPORT_INTERVAL 15000
+#define RESET_TIMEOUT 30000
 
 // Minimal debug - only errors and critical events
 #define DEBUG_LEVEL 1  // 0=none, 1=errors only, 2=info, 3=verbose
@@ -50,6 +52,8 @@
 
 // Function declarations
 void receivedCallback(const uint32_t& from, const String& msg);
+void onDroppedConnection(uint32_t nodeId);
+void onNewConnection(uint32_t nodeId);
 void meshInit();
 void performFirmwareUpdate();
 void setLedColor(uint8_t r, uint8_t g, uint8_t b);
@@ -251,8 +255,12 @@ void performFirmwareUpdate() {
 void meshInit() {
     mesh.setDebugMsgTypes(ERROR | STARTUP);
 
+    esp_wifi_set_ps(WIFI_PS_NONE);
+
     mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA);
     mesh.onReceive(&receivedCallback);
+    mesh.onDroppedConnection(&onDroppedConnection);
+    mesh.onNewConnection(&onNewConnection);
 
     deviceId = mesh.getNodeId();
     DEBUG_INFO("SWITCH: Device ID: %u", deviceId);
@@ -260,8 +268,14 @@ void meshInit() {
 }
 
 void restartMesh() {
+    DEBUG_INFO("MESH: Restarting mesh connection due to timeout...");
     mesh.stop();
+
     vTaskDelay(pdMS_TO_TICKS(100));
+
+    registeredWithRoot = false;
+    resetTimer = millis();
+
     meshInit();
 }
 
@@ -327,7 +341,8 @@ void statusPrint(void* pvParameters) {
         DEBUG_INFO("Free Heap: %d bytes", ESP.getFreeHeap());
         DEBUG_INFO("Uptime: %lu seconds", millis() / 1000);
         DEBUG_INFO("WiFi RSSI: %d dBm", WiFi.RSSI());
-        DEBUG_INFO("Time to reset: %d", 90 - ((millis() - resetTimer) / 1000));
+        DEBUG_INFO("Time to reset: %d",
+                   RESET_TIMEOUT - (millis() - resetTimer));
 
         printNodes();
         DEBUG_INFO("-------------------\n");
@@ -349,7 +364,7 @@ void resetTask(void* pvParameters) {
             resetTimer = millis();
         }
 
-        if ((millis() - resetTimer) / 1000 > 90) restartMesh();
+        if ((millis() - resetTimer) > RESET_TIMEOUT) restartMesh();
 
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
@@ -427,6 +442,28 @@ void registerTask(void* pvParameters) {
             DEBUG_VERBOSE("MESH: Sent registration 'S' to root %u", rootId);
         }
     }
+}
+
+void onNewConnection(uint32_t nodeId) {
+    DEBUG_INFO("MESH: New connection from node %u", nodeId);
+
+    if (rootId == 0) {
+        DEBUG_ERROR("MESH: Root ID unknown, cannot register");
+        return;
+    }
+
+    meshMessageQueue.push({rootId, "S"});
+    DEBUG_VERBOSE("MESH: Sent registration 'S' to root %u", rootId);
+
+    printNodes();
+}
+
+void onDroppedConnection(uint32_t nodeId) {
+    DEBUG_ERROR("MESH: Dropped connection to node %u", nodeId);
+    DEBUG_ERROR("MESH: Lost connection to root, resetting");
+
+    registeredWithRoot = false;
+    disconnects++;
 }
 
 void meshCallbackTask(void* pvParameters) {
@@ -511,7 +548,7 @@ void setup() {
     DEBUG_INFO("CPU Frequency: %d MHz", ESP.getCpuFreqMHz());
     DEBUG_INFO("Free Heap: %d bytes", ESP.getFreeHeap());
     DEBUG_INFO("Flash Size: %d bytes", ESP.getFlashChipSize());
-    DEBUG_INFO("Reset Timer: %d", resetTimer);
+    DEBUG_INFO("Time To Reset: %d", RESET_TIMEOUT - (millis() - resetTimer));
     DEBUG_INFO("========================================\n");
 
     // Initialize NeoPixel
@@ -526,32 +563,6 @@ void setup() {
     for (int i = 0; i < NLIGHTS; i++) {
         pinMode(buttonPins[i], INPUT_PULLDOWN);
     }
-
-    // Setup new connection callback
-    mesh.onNewConnection([](uint32_t nodeId) {
-        DEBUG_INFO("MESH: New connection from node %u", nodeId);
-
-        // Send registration multiple times to ensure delivery
-        vTaskDelay(pdMS_TO_TICKS(1000));  // Wait for connection to stabilize
-
-        if (rootId == 0) {
-            DEBUG_ERROR("MESH: Root ID unknown, cannot register");
-            return;
-        }
-
-        meshMessageQueue.push({rootId, "S"});
-        DEBUG_VERBOSE("MESH: Sent registration 'S' to root %u", rootId);
-
-        printNodes();
-    });
-
-    // Setup dropped connection callback
-    mesh.onDroppedConnection([](uint32_t nodeId) {
-        DEBUG_ERROR("MESH: Lost connection to node %u", nodeId);
-        DEBUG_ERROR("MESH: Lost connection to root, resetting");
-        registeredWithRoot = false;
-        disconnects++;
-    });
 
     // Start button handler task
     xTaskCreatePinnedToCore(handleButtonsTask, "ButtonTask", 4096, NULL, 2,

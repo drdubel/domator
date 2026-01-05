@@ -26,6 +26,28 @@ const byte wifiActivityPin = 255;
 #define STATUS_REPORT_INTERVAL 15000
 #define BUTTON_DEBOUNCE_TIME 1000
 
+// Minimal debug - only errors and critical events
+#define DEBUG_LEVEL 1  // 0=none, 1=errors only, 2=info, 3=verbose
+
+#if DEBUG_LEVEL >= 1
+#define DEBUG_ERROR(fmt, ...) Serial.printf("[ERROR] " fmt "\n", ##__VA_ARGS__)
+#else
+#define DEBUG_ERROR(fmt, ...)
+#endif
+
+#if DEBUG_LEVEL >= 2
+#define DEBUG_INFO(fmt, ...) Serial.printf("[INFO] " fmt "\n", ##__VA_ARGS__)
+#else
+#define DEBUG_INFO(fmt, ...)
+#endif
+
+#if DEBUG_LEVEL >= 3
+#define DEBUG_VERBOSE(fmt, ...) \
+    Serial.printf("[VERBOSE] " fmt "\n", ##__VA_ARGS__)
+#else
+#define DEBUG_VERBOSE(fmt, ...)
+#endif
+
 // Function declarations
 void receivedCallback(const uint32_t& from, const String& msg);
 void meshInit();
@@ -65,7 +87,7 @@ void otaTask(void* pv) {
         detachInterrupt(buttons[i]);
     }
 
-    Serial.println("[OTA] Stopping mesh...");
+    DEBUG_INFO("[OTA] Stopping mesh...");
     mesh.stop();
 
     esp_task_wdt_deinit();
@@ -76,102 +98,128 @@ void otaTask(void* pv) {
 }
 
 void performFirmwareUpdate() {
-    vTaskDelay(1000 / portTICK_PERIOD_MS);  // Allow message to be sent
-    Serial.println("[OTA] Starting firmware update...");
+    const int MAX_RETRIES = 3;
+    int attemptCount = 0;
+    bool updateSuccess = false;
 
-    vTaskDelay(1000 / portTICK_PERIOD_MS);  // Give time for cleanup
+    while (attemptCount < MAX_RETRIES && !updateSuccess) {
+        attemptCount++;
+        DEBUG_INFO("[OTA] Starting update attempt %d/%d...", attemptCount,
+                   MAX_RETRIES);
 
-    Serial.println("[OTA] Switching to STA mode...");
-    WiFi.disconnect(true);
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_STA);
+        WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+        unsigned long startTime = millis();
 
-    Serial.print("[OTA] Connecting to WiFi");
-    unsigned long startTime = millis();
-    while (WiFi.status() != WL_CONNECTED) {
-        if (millis() - startTime > WIFI_CONNECT_TIMEOUT) {
-            Serial.println("\n[OTA] WiFi connection timeout, restarting...");
-            ESP.restart();
-            return;
+        while (WiFi.status() != WL_CONNECTED) {
+            if (millis() - startTime > WIFI_CONNECT_TIMEOUT) {
+                DEBUG_ERROR("[OTA] WiFi timeout on attempt %d", attemptCount);
+                break;
+            }
+            vTaskDelay(500 / portTICK_PERIOD_MS);
         }
-        vTaskDelay(500 / portTICK_PERIOD_MS);
-        Serial.print(".");
-    }
-    Serial.println(" connected!");
-    Serial.printf("[OTA] IP: %s\n", WiFi.localIP().toString().c_str());
 
-    WiFiClientSecure* client = new WiFiClientSecure();
-    if (!client) {
-        Serial.println("[OTA] Failed to allocate WiFiClientSecure");
-        ESP.restart();
-        return;
-    }
+        // Check if WiFi connection failed
+        if (WiFi.status() != WL_CONNECTED) {
+            if (attemptCount < MAX_RETRIES) {
+                DEBUG_INFO("[OTA] Retrying in 2 seconds...");
+                vTaskDelay(2000 / portTICK_PERIOD_MS);
+                continue;
+            } else {
+                DEBUG_ERROR("[OTA] All WiFi connection attempts failed");
+                break;
+            }
+        }
 
-    client->setInsecure();
-    HTTPClient http;
-    http.setTimeout(30000);  // 30 second timeout
+        WiFiClientSecure* client = new WiFiClientSecure();
+        if (!client) {
+            DEBUG_ERROR("[OTA] Client alloc failed on attempt %d",
+                        attemptCount);
+            if (attemptCount < MAX_RETRIES) {
+                vTaskDelay(2000 / portTICK_PERIOD_MS);
+                continue;
+            }
+            break;
+        }
 
-    Serial.println("[OTA] Connecting to update server...");
-    if (!http.begin(*client, firmware_url)) {
-        Serial.println("[OTA] Failed to begin HTTP connection");
-        delete client;
-        ESP.restart();
-        return;
-    }
+        client->setInsecure();
+        HTTPClient http;
+        http.setTimeout(30000);
 
-    int httpCode = http.GET();
-    if (httpCode == HTTP_CODE_OK) {
-        int contentLength = http.getSize();
-        Serial.printf("[OTA] Firmware size: %d bytes\n", contentLength);
-
-        if (contentLength <= 0) {
-            Serial.println("[OTA] Invalid content length");
-            http.end();
+        if (!http.begin(*client, firmware_url)) {
+            DEBUG_ERROR("[OTA] HTTP begin failed on attempt %d", attemptCount);
             delete client;
-            ESP.restart();
-            return;
+            if (attemptCount < MAX_RETRIES) {
+                vTaskDelay(2000 / portTICK_PERIOD_MS);
+                continue;
+            }
+            break;
         }
 
-        if (!Update.begin(contentLength)) {
-            Serial.printf(
-                "[OTA] Not enough space. Required: %d, Available: %d\n",
-                contentLength, ESP.getFreeSketchSpace());
-            http.end();
-            delete client;
-            ESP.restart();
-            return;
-        }
+        int httpCode = http.GET();
+        if (httpCode == HTTP_CODE_OK) {
+            int contentLength = http.getSize();
+            if (contentLength <= 0 || !Update.begin(contentLength)) {
+                DEBUG_ERROR("[OTA] Invalid size or begin failed on attempt %d",
+                            attemptCount);
+                http.end();
+                delete client;
+                if (attemptCount < MAX_RETRIES) {
+                    vTaskDelay(2000 / portTICK_PERIOD_MS);
+                    continue;
+                }
+                break;
+            }
 
-        Serial.println("[OTA] Writing firmware...");
-        WiFiClient* stream = http.getStreamPtr();
-        size_t written = Update.writeStream(*stream);
+            WiFiClient* stream = http.getStreamPtr();
+            size_t written = Update.writeStream(*stream);
+            if (written != contentLength) {
+                DEBUG_ERROR("[OTA] Write mismatch on attempt %d", attemptCount);
+                Update.abort();
+                http.end();
+                delete client;
+                if (attemptCount < MAX_RETRIES) {
+                    vTaskDelay(2000 / portTICK_PERIOD_MS);
+                    continue;
+                }
+                break;
+            }
 
-        Serial.printf("[OTA] Written %d/%d bytes\n", (int)written,
-                      contentLength);
-
-        if (Update.end()) {
-            if (Update.isFinished()) {
-                Serial.println("[OTA] Update finished successfully!");
+            if (Update.end() && Update.isFinished()) {
+                DEBUG_INFO("[OTA] Update successful on attempt %d!",
+                           attemptCount);
+                updateSuccess = true;
                 http.end();
                 delete client;
                 vTaskDelay(1000 / portTICK_PERIOD_MS);
                 ESP.restart();
+                return;
             } else {
-                Serial.println("[OTA] Update not finished properly");
-                Update.printError(Serial);
+                DEBUG_ERROR("[OTA] Update.end() failed on attempt %d",
+                            attemptCount);
+                http.end();
+                delete client;
+                if (attemptCount < MAX_RETRIES) {
+                    vTaskDelay(2000 / portTICK_PERIOD_MS);
+                    continue;
+                }
             }
         } else {
-            Serial.printf("[OTA] Update error: %d\n", Update.getError());
-            Update.printError(Serial);
+            DEBUG_ERROR("[OTA] HTTP failed with code %d on attempt %d",
+                        httpCode, attemptCount);
+            http.end();
+            delete client;
+            if (attemptCount < MAX_RETRIES) {
+                vTaskDelay(2000 / portTICK_PERIOD_MS);
+                continue;
+            }
         }
-    } else {
-        Serial.printf("[OTA] HTTP GET failed, code: %d\n", httpCode);
     }
 
-    http.end();
-    delete client;
-
-    Serial.println("[OTA] Update failed, restarting...");
+    // If we get here, all attempts failed
+    DEBUG_ERROR("[OTA] All %d update attempts failed. Restarting...",
+                MAX_RETRIES);
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     ESP.restart();
 }
@@ -185,8 +233,8 @@ void meshInit() {
     mesh.onDroppedConnection(&onDroppedConnection);
 
     deviceId = mesh.getNodeId();
-    Serial.printf("RELAY: Device ID: %u\n", deviceId);
-    Serial.printf("RELAY: Free heap: %d bytes\n", ESP.getFreeHeap());
+    DEBUG_INFO("RELAY: Device ID: %u", deviceId);
+    DEBUG_VERBOSE("RELAY: Free heap: %d bytes", ESP.getFreeHeap());
 }
 
 void restartMesh() {
@@ -202,7 +250,7 @@ void sendStatusReport(void* pvParameters) {
             continue;
         }
 
-        Serial.println("MESH: Sending status report to root");
+        DEBUG_VERBOSE("MESH: Sending status report to root");
 
         JsonDocument doc;
         doc["rssi"] = WiFi.RSSI();
@@ -226,7 +274,7 @@ void sendStatusReport(void* pvParameters) {
 }
 
 void syncLightStates() {
-    Serial.printf("RELAY: Syncing all light states to root\n");
+    DEBUG_INFO("RELAY: Syncing all light states to root");
 
     for (int i = 0; i < NLIGHTS; i++) {
         char message[2];
@@ -244,27 +292,27 @@ void statusPrintTask(void* pvParameters) {
             continue;
         }
 
-        Serial.println("\n--- Status Report ---");
-        Serial.printf("Device ID: %u\n", deviceId);
-        Serial.printf("Root ID: %u\n", rootId);
-        Serial.printf("Registered: %s\n", registeredWithRoot ? "Yes" : "No");
-        Serial.printf("Free Heap: %d bytes\n", ESP.getFreeHeap());
-        Serial.printf("Uptime: %lu seconds\n", millis() / 1000);
-        Serial.printf("Sketch MD5: %s\n", fw_md5.c_str());
+        DEBUG_INFO("\n--- Status Report ---");
+        DEBUG_INFO("Device ID: %u", deviceId);
+        DEBUG_INFO("Root ID: %u", rootId);
+        DEBUG_INFO("Registered: %s", registeredWithRoot ? "Yes" : "No");
+        DEBUG_INFO("Free Heap: %d bytes", ESP.getFreeHeap());
+        DEBUG_INFO("Uptime: %lu seconds", millis() / 1000);
+        DEBUG_INFO("Sketch MD5: %s", fw_md5.c_str());
 
-        Serial.println("\nRelay States:");
+        DEBUG_VERBOSE("\nRelay States:");
         for (int i = 0; i < NLIGHTS; i++) {
-            Serial.printf("  Light %c (Pin %d): %s\n", 'a' + i, relays[i],
+            DEBUG_VERBOSE("  Light %c (Pin %d): %s", 'a' + i, relays[i],
                           lights[i] ? "ON" : "OFF");
         }
 
         auto nodes = mesh.getNodeList();
-        Serial.printf("\nMesh Network: %u node(s)\n", nodes.size());
+        DEBUG_INFO("\nMesh Network: %u node(s)", nodes.size());
         for (auto node : nodes) {
-            Serial.printf("  Node: %u%s\n", node,
+            DEBUG_VERBOSE("  Node: %u%s", node,
                           (node == rootId) ? " (ROOT)" : "");
         }
-        Serial.println("-------------------\n");
+        DEBUG_INFO("-------------------\n");
 
         vTaskDelay(pdMS_TO_TICKS(STATUS_PRINT_INTERVAL));
     }
@@ -299,7 +347,7 @@ void buttonPressTask(void* pvParameters) {
         if (pressed) {
             for (int i = 0; i < NLIGHTS; i++) {
                 if (pressed & (1 << i)) {
-                    Serial.printf("RELAY: Button for light %d pressed\n", i);
+                    DEBUG_VERBOSE("RELAY: Button for light %d pressed", i);
                     String msg = String(char('a' + i)) +
                                  String(char(buttonState[i] + '0'));
                     meshMessageQueue.push({rootId, msg});
@@ -323,16 +371,16 @@ void registerTask(void* pvParameters) {
         }
 
         if (!registeredWithRoot) {
-            Serial.println("MESH: Attempting registration with root...");
+            DEBUG_INFO("MESH: Attempting registration with root...");
             digitalWrite(23, LOW);  // Indicate registration attempt
 
             if (rootId == 0) {
-                Serial.println("MESH: Root ID unknown, cannot register");
+                DEBUG_ERROR("MESH: Root ID unknown, cannot register");
                 continue;
             }
 
             meshMessageQueue.push({rootId, "R"});
-            Serial.printf("MESH: Sent registration 'R' to root %u\n", rootId);
+            DEBUG_VERBOSE("MESH: Sent registration 'R' to root %u", rootId);
         } else
             digitalWrite(23, HIGH);
     }
@@ -349,29 +397,29 @@ void IRAM_ATTR buttonISR(void* arg) {
 }
 
 void onDroppedConnection(uint32_t nodeId) {
-    Serial.printf("MESH: Lost connection to node %u\n", nodeId);
+    DEBUG_INFO("MESH: Lost connection to node %u", nodeId);
 
     if (nodeId == rootId) {
-        Serial.println("MESH: Lost connection to root, resetting");
+        DEBUG_ERROR("MESH: Lost connection to root, resetting");
         disconnects++;
         registeredWithRoot = false;
     }
 }
 
 void onNewConnection(uint32_t nodeId) {
-    Serial.printf("MESH: New connection from node %u\n", nodeId);
+    DEBUG_INFO("MESH: New connection from node %u", nodeId);
 
     if (rootId == 0) {
-        Serial.println("MESH: Root ID unknown, cannot register");
+        DEBUG_ERROR("MESH: Root ID unknown, cannot register");
         return;
     }
 
     meshMessageQueue.push({rootId, "R"});
-    Serial.printf("MESH: Sent registration 'R' to root %u\n", rootId);
+    DEBUG_VERBOSE("MESH: Sent registration 'R' to root %u", rootId);
 }
 
 void receivedCallback(const uint32_t& from, const String& msg) {
-    Serial.printf("MESH: [%u] %s\n", from, msg.c_str());
+    DEBUG_VERBOSE("MESH: [%u] %s", from, msg.c_str());
 
     meshCallbackQueue.push({from, msg});
 }
@@ -379,23 +427,23 @@ void receivedCallback(const uint32_t& from, const String& msg) {
 void processMeshMessage(const uint32_t& from, const String& msg) {
     // Handle sync request from root
     if (msg == "S") {
-        Serial.printf("MESH: Root %u requesting state sync\n", from);
+        DEBUG_INFO("MESH: Root %u requesting state sync", from);
         syncLightStates();
         return;
     }
 
     // Handle registration query from root
     if (msg == "Q") {
-        Serial.println("MESH: Registration query received from root");
+        DEBUG_INFO("MESH: Registration query received from root");
         rootId = from;
         meshMessageQueue.push({rootId, "R"});
-        Serial.printf("MESH: Sent registration 'R' to root %u\n", rootId);
+        DEBUG_VERBOSE("MESH: Sent registration 'R' to root %u", rootId);
         return;
     }
 
     // Handle firmware update command
     if (msg == "U") {
-        Serial.println("MESH: Firmware update command received");
+        DEBUG_INFO("MESH: Firmware update command received");
         performFirmwareUpdate();
         return;
     }
@@ -406,8 +454,8 @@ void processMeshMessage(const uint32_t& from, const String& msg) {
         int newState = msg[1] - '0';
 
         if (newState != 0 && newState != 1) {
-            Serial.printf("MESH: Invalid state '%c' in message from %u\n",
-                          msg[1], rootId);
+            DEBUG_ERROR("MESH: Invalid state '%c' in message from %u", msg[1],
+                        rootId);
             return;
         }
 
@@ -415,8 +463,8 @@ void processMeshMessage(const uint32_t& from, const String& msg) {
         clicks++;
         digitalWrite(relays[lightIndex], newState ? HIGH : LOW);
 
-        Serial.printf("RELAY: Light %c set to %s by root %u\n",
-                      'a' + lightIndex, newState ? "ON" : "OFF", rootId);
+        DEBUG_INFO("RELAY: Light %c set to %s by root %u", 'a' + lightIndex,
+                   newState ? "ON" : "OFF", rootId);
 
         // Send confirmation back
         char response[3];
@@ -435,9 +483,8 @@ void processMeshMessage(const uint32_t& from, const String& msg) {
         clicks++;
         digitalWrite(relays[lightIndex], lights[lightIndex] ? HIGH : LOW);
 
-        Serial.printf("RELAY: Light %c toggled to %s by root %u\n",
-                      'a' + lightIndex, lights[lightIndex] ? "ON" : "OFF",
-                      rootId);
+        DEBUG_INFO("RELAY: Light %c toggled to %s by root %u", 'a' + lightIndex,
+                   lights[lightIndex] ? "ON" : "OFF", rootId);
 
         // Send confirmation back
         char response[3];
@@ -450,14 +497,14 @@ void processMeshMessage(const uint32_t& from, const String& msg) {
     }
 
     if (msg == "A") {
-        Serial.println("MESH: Registration accepted by root");
+        DEBUG_INFO("MESH: Registration accepted by root");
         registeredWithRoot = true;
         return;
     }
 
     // Unknown message - just log it, don't respond
-    Serial.printf("MESH: Unknown/unhandled message '%s' from %u\n", msg.c_str(),
-                  from);
+    DEBUG_ERROR("MESH: Unknown/unhandled message '%s' from %u", msg.c_str(),
+                from);
 }
 
 void meshCallbackTask(void* pvParameters) {
@@ -480,7 +527,7 @@ void meshCallbackTask(void* pvParameters) {
 
         processMeshMessage(from, msg);
 
-        Serial.printf("MESH: Unknown message from %u: %s\n", from, msg.c_str());
+        DEBUG_ERROR("MESH: Unknown message from %u: %s", from, msg.c_str());
     }
 }
 
@@ -504,7 +551,7 @@ void sendMeshMessages(void* pvParameters) {
         String msg = message.second;
 
         mesh.sendSingle(to, msg);
-        Serial.printf("MESH: Sent message to %u: %s\n", to, msg.c_str());
+        DEBUG_VERBOSE("MESH: Sent message to %u: %s", to, msg.c_str());
     }
 }
 
@@ -514,21 +561,21 @@ void setup() {
 
     fw_md5 = ESP.getSketchMD5();
 
-    Serial.println("\n\n========================================");
-    Serial.println("ESP32 Mesh Relay Node Starting...");
-    Serial.printf("Chip Model: %s\n", ESP.getChipModel());
-    Serial.printf("Sketch MD5: %s\n", fw_md5.c_str());
-    Serial.printf("Chip Revision: %d\n", ESP.getChipRevision());
-    Serial.printf("CPU Frequency: %d MHz\n", ESP.getCpuFreqMHz());
-    Serial.printf("Free Heap: %d bytes\n", ESP.getFreeHeap());
-    Serial.printf("Flash Size: %d bytes\n", ESP.getFlashChipSize());
-    Serial.println("========================================\n");
+    DEBUG_INFO("\n\n========================================");
+    DEBUG_INFO("ESP32 Mesh Relay Node Starting...");
+    DEBUG_INFO("Chip Model: %s", ESP.getChipModel());
+    DEBUG_INFO("Sketch MD5: %s", fw_md5.c_str());
+    DEBUG_INFO("Chip Revision: %d", ESP.getChipRevision());
+    DEBUG_INFO("CPU Frequency: %d MHz", ESP.getCpuFreqMHz());
+    DEBUG_INFO("Free Heap: %d bytes", ESP.getFreeHeap());
+    DEBUG_INFO("Flash Size: %d bytes", ESP.getFlashChipSize());
+    DEBUG_INFO("========================================\n");
 
     // Initialize relay pins
     for (int i = 0; i < NLIGHTS; i++) {
         pinMode(relays[i], OUTPUT);
         digitalWrite(relays[i], LOW);
-        Serial.printf("RELAY: Initialized relay %d (Pin %d)\n", i, relays[i]);
+        DEBUG_VERBOSE("RELAY: Initialized relay %d (Pin %d)", i, relays[i]);
     }
 
     // Initialize additional pin
@@ -563,7 +610,7 @@ void setup() {
     xTaskCreatePinnedToCore(sendMeshMessages, "SendMeshMessages", 8192, NULL, 2,
                             NULL, 0);  // Core 0
 
-    Serial.println("RELAY: Setup complete, waiting for mesh connections...");
+    DEBUG_INFO("RELAY: Setup complete, waiting for mesh connections...");
 }
 
 void loop() {
@@ -572,7 +619,7 @@ void loop() {
     if (otaInProgress && !otaTaskStarted && millis() - otaTimer > 3000) {
         otaTaskStarted = true;
 
-        Serial.println("[OTA] Disconnecting mesh...");
+        DEBUG_INFO("[OTA] Disconnecting mesh...");
 
         xTaskCreatePinnedToCore(otaTask, "OTA", 4096, NULL, 5, NULL,
                                 0  // Core 0

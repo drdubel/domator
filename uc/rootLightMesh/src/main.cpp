@@ -33,24 +33,25 @@
 #define MQTT_CONNECT_TIMEOUT 5
 
 // Minimal debug - only errors and critical events
-#define DEBUG_LEVEL 3  // 0=none, 1=errors only, 2=info, 3=verbose
+#define DEBUG_LEVEL 1  // 0=none, 1=errors only, 2=info, 3=verbose
 
 #if DEBUG_LEVEL >= 1
-#define DEBUG_ERROR(x) Serial.println(x)
+#define DEBUG_ERROR(fmt, ...) Serial.printf("[ERROR] " fmt "\n", ##__VA_ARGS__)
 #else
-#define DEBUG_ERROR(x)
+#define DEBUG_ERROR(fmt, ...)
 #endif
 
 #if DEBUG_LEVEL >= 2
-#define DEBUG_INFO(x) Serial.println(x)
+#define DEBUG_INFO(fmt, ...) Serial.printf("[INFO] " fmt "\n", ##__VA_ARGS__)
 #else
-#define DEBUG_INFO(x)
+#define DEBUG_INFO(fmt, ...)
 #endif
 
 #if DEBUG_LEVEL >= 3
-#define DEBUG_VERBOSE(x) Serial.println(x)
+#define DEBUG_VERBOSE(fmt, ...) \
+    Serial.printf("[VERBOSE] " fmt "\n", ##__VA_ARGS__)
 #else
-#define DEBUG_VERBOSE(x)
+#define DEBUG_VERBOSE(fmt, ...)
 #endif
 
 const int mqtt_port = 1883;
@@ -94,91 +95,158 @@ bool toUint64(const String& s, uint64_t& out) {
 }
 
 void otaTask(void* pv) {
+    DEBUG_INFO("OTA task started");
     otaInProgress = true;
 
     esp_task_wdt_deinit();
+    DEBUG_VERBOSE("Watchdog disabled for OTA");
 
     mqttClient.disconnect();
+    DEBUG_VERBOSE("MQTT disconnected");
+
     mesh.stop();
+    DEBUG_VERBOSE("Mesh stopped");
 
     vTaskDelay(pdMS_TO_TICKS(1000));
     performFirmwareUpdate();
 }
 
 void performFirmwareUpdate() {
-    DEBUG_INFO("[OTA] Starting update...");
+    const int MAX_RETRIES = 3;
+    int attemptCount = 0;
+    bool updateSuccess = false;
 
-    WiFi.disconnect(true);
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    while (attemptCount < MAX_RETRIES && !updateSuccess) {
+        attemptCount++;
+        DEBUG_INFO("OTA: Starting update attempt %d/%d...", attemptCount,
+                   MAX_RETRIES);
 
-    unsigned long startTime = millis();
-    while (WiFi.status() != WL_CONNECTED) {
-        if (millis() - startTime > WIFI_CONNECT_TIMEOUT) {
-            DEBUG_ERROR("[OTA] WiFi timeout");
-            ESP.restart();
-            return;
-        }
-        vTaskDelay(500 / portTICK_PERIOD_MS);
-    }
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_STA);
+        WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+        DEBUG_VERBOSE("OTA: Connecting to WiFi...");
+        unsigned long startTime = millis();
 
-    WiFiClientSecure* client = new WiFiClientSecure();
-    if (!client) {
-        DEBUG_ERROR("[OTA] Client alloc failed");
-        ESP.restart();
-        return;
-    }
-
-    client->setInsecure();
-    HTTPClient http;
-    http.setTimeout(30000);
-
-    if (!http.begin(*client, firmware_url)) {
-        DEBUG_ERROR("[OTA] HTTP begin failed");
-        delete client;
-        ESP.restart();
-        return;
-    }
-
-    int httpCode = http.GET();
-    if (httpCode == HTTP_CODE_OK) {
-        int contentLength = http.getSize();
-
-        if (contentLength <= 0 || !Update.begin(contentLength)) {
-            DEBUG_ERROR("[OTA] Invalid size or begin failed");
-            http.end();
-            delete client;
-            ESP.restart();
-            return;
+        while (WiFi.status() != WL_CONNECTED) {
+            if (millis() - startTime > WIFI_CONNECT_TIMEOUT) {
+                DEBUG_ERROR("OTA: WiFi timeout on attempt %d", attemptCount);
+                break;
+            }
+            vTaskDelay(500 / portTICK_PERIOD_MS);
         }
 
-        WiFiClient* stream = http.getStreamPtr();
-        size_t written = Update.writeStream(*stream);
-
-        if (written != contentLength) {
-            DEBUG_ERROR("[OTA] Write mismatch");
-            Update.abort();
-            http.end();
-            delete client;
-            ESP.restart();
-            return;
+        // Check if WiFi connection failed
+        if (WiFi.status() != WL_CONNECTED) {
+            if (attemptCount < MAX_RETRIES) {
+                DEBUG_INFO("OTA: Retrying in 2 seconds...");
+                vTaskDelay(2000 / portTICK_PERIOD_MS);
+                continue;
+            } else {
+                DEBUG_ERROR("OTA: All WiFi connection attempts failed");
+                break;
+            }
         }
 
-        if (Update.end() && Update.isFinished()) {
-            DEBUG_INFO("[OTA] Success");
-            http.end();
+        DEBUG_VERBOSE("OTA: WiFi connected, IP: %s",
+                      WiFi.localIP().toString().c_str());
+
+        WiFiClientSecure* client = new WiFiClientSecure();
+        if (!client) {
+            DEBUG_ERROR("OTA: Client alloc failed on attempt %d", attemptCount);
+            if (attemptCount < MAX_RETRIES) {
+                vTaskDelay(2000 / portTICK_PERIOD_MS);
+                continue;
+            }
+            break;
+        }
+
+        client->setInsecure();
+        HTTPClient http;
+        http.setTimeout(30000);
+
+        if (!http.begin(*client, firmware_url)) {
+            DEBUG_ERROR("OTA: HTTP begin failed on attempt %d", attemptCount);
             delete client;
-            vTaskDelay(1000 / portTICK_PERIOD_MS);
-            ESP.restart();
+            if (attemptCount < MAX_RETRIES) {
+                vTaskDelay(2000 / portTICK_PERIOD_MS);
+                continue;
+            }
+            break;
+        }
+
+        DEBUG_VERBOSE("OTA: Downloading from %s", firmware_url);
+        int httpCode = http.GET();
+
+        if (httpCode == HTTP_CODE_OK) {
+            int contentLength = http.getSize();
+            DEBUG_VERBOSE("OTA: Content length: %d bytes", contentLength);
+
+            if (contentLength <= 0 || !Update.begin(contentLength)) {
+                DEBUG_ERROR("OTA: Invalid size or begin failed on attempt %d",
+                            attemptCount);
+                http.end();
+                delete client;
+                if (attemptCount < MAX_RETRIES) {
+                    vTaskDelay(2000 / portTICK_PERIOD_MS);
+                    continue;
+                }
+                break;
+            }
+
+            WiFiClient* stream = http.getStreamPtr();
+            size_t written = Update.writeStream(*stream);
+            DEBUG_VERBOSE("OTA: Written %d/%d bytes", written, contentLength);
+
+            if (written != contentLength) {
+                DEBUG_ERROR(
+                    "OTA: Write mismatch on attempt %d (written: %d, expected: "
+                    "%d)",
+                    attemptCount, written, contentLength);
+                Update.abort();
+                http.end();
+                delete client;
+                if (attemptCount < MAX_RETRIES) {
+                    vTaskDelay(2000 / portTICK_PERIOD_MS);
+                    continue;
+                }
+                break;
+            }
+
+            if (Update.end() && Update.isFinished()) {
+                DEBUG_INFO("OTA: Update successful on attempt %d!",
+                           attemptCount);
+                updateSuccess = true;
+                http.end();
+                delete client;
+                vTaskDelay(1000 / portTICK_PERIOD_MS);
+                ESP.restart();
+                return;
+            } else {
+                DEBUG_ERROR(
+                    "OTA: Update.end() failed on attempt %d (error: %s)",
+                    attemptCount, Update.errorString());
+                http.end();
+                delete client;
+                if (attemptCount < MAX_RETRIES) {
+                    vTaskDelay(2000 / portTICK_PERIOD_MS);
+                    continue;
+                }
+            }
         } else {
-            DEBUG_ERROR("[OTA] Update failed");
+            DEBUG_ERROR("OTA: HTTP failed with code %d on attempt %d", httpCode,
+                        attemptCount);
+            http.end();
+            delete client;
+            if (attemptCount < MAX_RETRIES) {
+                vTaskDelay(2000 / portTICK_PERIOD_MS);
+                continue;
+            }
         }
-    } else {
-        DEBUG_ERROR("[OTA] HTTP failed");
     }
 
-    http.end();
-    delete client;
+    // If we get here, all attempts failed
+    DEBUG_ERROR("OTA: All %d update attempts failed. Restarting...",
+                MAX_RETRIES);
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     ESP.restart();
 }
@@ -192,7 +260,12 @@ bool isValidJson(const String& s) {
 }
 
 void parseConnections(JsonObject root) {
-    if (root.isNull()) return;
+    if (root.isNull()) {
+        DEBUG_ERROR("parseConnections: root is null");
+        return;
+    }
+
+    DEBUG_INFO("Parsing connections configuration");
 
     for (JsonPair idPair : root) {
         String id = idPair.key().c_str();
@@ -224,19 +297,24 @@ void parseConnections(JsonObject root) {
 
     DEBUG_VERBOSE("Connections parsed:");
     for (const auto& idPair : connections) {
-        DEBUG_VERBOSE("  ID: " + idPair.first);
+        DEBUG_VERBOSE("  ID: %s", idPair.first.c_str());
         for (const auto& letterPair : idPair.second) {
-            DEBUG_VERBOSE("    Letter: " + String(letterPair.first));
+            DEBUG_VERBOSE("    Letter: %c", letterPair.first);
             for (const auto& target : letterPair.second) {
-                DEBUG_VERBOSE("      -> " + target.first + ": " +
-                              target.second);
+                DEBUG_VERBOSE("      -> %s: %s", target.first.c_str(),
+                              target.second.c_str());
             }
         }
     }
 }
 
 void mqttConnect() {
-    if (WiFi.status() != WL_CONNECTED) return;
+    if (WiFi.status() != WL_CONNECTED) {
+        DEBUG_VERBOSE("mqttConnect: WiFi not connected");
+        return;
+    }
+
+    DEBUG_INFO("Connecting to MQTT broker...");
 
     mqttClient.setCallback(mqttCallback);
     mqttClient.setKeepAlive(90);
@@ -247,24 +325,34 @@ void mqttConnect() {
         String clientId = String(device_id);
 
         if (mqttClient.connect(clientId.c_str(), MQTT_USER, MQTT_PASSWORD)) {
+            DEBUG_INFO("MQTT connected");
             mqttClient.subscribe("/switch/cmd/+");
             mqttClient.subscribe("/switch/cmd");
             mqttClient.subscribe("/relay/cmd/+");
             mqttClient.subscribe("/relay/cmd");
+            DEBUG_VERBOSE("MQTT subscriptions completed");
 
             mqttMessageQueue.push({"/switch/state/root", "connected"});
             return;
         }
         retries++;
+        DEBUG_VERBOSE("MQTT connection attempt %d/%d failed", retries,
+                      MQTT_CONNECT_TIMEOUT);
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
+
+    DEBUG_ERROR("MQTT connection failed after %d attempts",
+                MQTT_CONNECT_TIMEOUT);
 }
 
 void meshInit() {
+    DEBUG_INFO("Initializing mesh network...");
+
     mesh.setDebugMsgTypes(ERROR | STARTUP | CONNECTION);
     mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA);
 
     esp_wifi_set_ps(WIFI_PS_NONE);
+    DEBUG_VERBOSE("WiFi power save disabled");
 
     mesh.stationManual(WIFI_SSID, WIFI_PASSWORD);
     mesh.setRoot(true);
@@ -276,11 +364,16 @@ void meshInit() {
     mesh.onNewConnection(&newConnectionCallback);
 
     device_id = mesh.getNodeId();
+    DEBUG_INFO("Mesh initialized, device ID: %u", device_id);
 }
 
-void droppedConnectionCallback(uint32_t nodeId) { nodes.erase(nodeId); }
+void droppedConnectionCallback(uint32_t nodeId) {
+    DEBUG_INFO("Node disconnected: %u", nodeId);
+    nodes.erase(nodeId);
+}
 
 void newConnectionCallback(uint32_t nodeId) {
+    DEBUG_INFO("New node connected: %u", nodeId);
     meshMessageQueue.push({nodeId, "Q"});
 }
 
@@ -291,12 +384,12 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         msg += (char)payload[i];
     }
 
-    DEBUG_VERBOSE("MQTT: [" + String(topic) + "] " + msg);
+    DEBUG_VERBOSE("MQTT RX: [%s] %s", topic, msg.c_str());
     mqttCallbackQueue.push({String(topic), msg});
 }
 
 void receivedCallback(const uint32_t& from, const String& msg) {
-    DEBUG_VERBOSE("MESH: [" + String(from) + "] " + msg);
+    DEBUG_VERBOSE("MESH RX: [%u] %s", from, msg.c_str());
     meshCallbackQueue.push({from, msg});
 }
 
@@ -305,15 +398,15 @@ void handleSwitchMessage(const uint32_t& from, const char output,
     std::vector<std::pair<String, String>> targets =
         connections[String(from)][output];
 
-    Serial.printf("SWITCH: Handling message from %u for output %c\n", from,
-                  output);
+    DEBUG_INFO("SWITCH: Handling message from %u for output %c (state: %d)",
+               from, output, state);
 
     for (const auto& target : targets) {
         String relayIdStr = target.first;
         String command = target.second;
         uint32_t relayId = relayIdStr.toInt();
-        Serial.printf("SWITCH: Sending command to relay %s (%u)\n",
-                      relayIdStr.c_str(), relayId);
+        DEBUG_VERBOSE("SWITCH: Sending command '%s' to relay %s (%u)",
+                      command.c_str(), relayIdStr.c_str(), relayId);
 
         if (state != -1) {
             command += String(state);
@@ -325,9 +418,13 @@ void handleSwitchMessage(const uint32_t& from, const char output,
 }
 
 void handleRelayMessage(const uint32_t& from, const String& msg) {
-    if (WiFi.status() != WL_CONNECTED || !mqttClient.connected()) return;
+    if (WiFi.status() != WL_CONNECTED || !mqttClient.connected()) {
+        DEBUG_VERBOSE("handleRelayMessage: WiFi or MQTT not connected");
+        return;
+    }
 
     String topic = "/relay/state/" + String(from);
+    DEBUG_VERBOSE("RELAY: Publishing state from %u: %s", from, msg.c_str());
     mqttMessageQueue.push({topic, msg});
 }
 
@@ -335,12 +432,13 @@ void checkWiFi() {
     IPAddress currentIP = getlocalIP();
     if (myIP != currentIP && currentIP != IPAddress(0, 0, 0, 0)) {
         myIP = currentIP;
-        DEBUG_INFO("Connected to WiFi.");
-        DEBUG_INFO("New IP: " + myIP.toString());
+        DEBUG_INFO("Connected to WiFi, IP: %s", myIP.toString().c_str());
     }
 }
 
 void checkWiFiAndMQTT(void* pvParameters) {
+    DEBUG_VERBOSE("checkWiFiAndMQTT task started");
+
     while (true) {
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
@@ -359,6 +457,7 @@ void checkWiFiAndMQTT(void* pvParameters) {
 
             if (now - lastMqttReconnect > MQTT_RECONNECT_INTERVAL) {
                 lastMqttReconnect = now;
+                DEBUG_VERBOSE("Attempting MQTT reconnection");
                 mqttConnect();
             }
         } else {
@@ -370,6 +469,8 @@ void checkWiFiAndMQTT(void* pvParameters) {
 }
 
 void checkMesh(void* pvParameters) {
+    DEBUG_VERBOSE("checkMesh task started");
+
     while (true) {
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
@@ -382,6 +483,7 @@ void checkMesh(void* pvParameters) {
         for (auto it = nodes.begin(); it != nodes.end();) {
             if (std::find(nowNodes.begin(), nowNodes.end(), it->first) ==
                 nowNodes.end()) {
+                DEBUG_VERBOSE("Removing disconnected node: %u", it->first);
                 it = nodes.erase(it);
             } else {
                 ++it;
@@ -391,6 +493,7 @@ void checkMesh(void* pvParameters) {
         // Query new nodes
         for (auto nodeId : nowNodes) {
             if (nodes.find(nodeId) == nodes.end()) {
+                DEBUG_VERBOSE("Querying new node: %u", nodeId);
                 meshMessageQueue.push({nodeId, "Q"});
                 vTaskDelay(pdMS_TO_TICKS(25));
             }
@@ -403,12 +506,15 @@ void checkMesh(void* pvParameters) {
 void buildParentMap(const painlessmesh::protocol::NodeTree& node,
                     uint32_t parent = 0) {
     nodeParentMap[node.nodeId] = parent;
+    DEBUG_VERBOSE("buildParentMap: node %u parent %u", node.nodeId, parent);
     for (const auto& child : node.subs) {
         buildParentMap(child, node.nodeId);
     }
 }
 
 void statusReport(void* pvParameters) {
+    DEBUG_VERBOSE("statusReport task started");
+
     while (true) {
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
@@ -433,15 +539,22 @@ void statusReport(void* pvParameters) {
         String msg;
         serializeJson(doc, msg);
 
+        DEBUG_VERBOSE("Status report: %s", msg.c_str());
+
         if (WiFi.status() == WL_CONNECTED && mqttClient.connected())
             mqttMessageQueue.push({"/switch/state/root", msg});
+        else
+            DEBUG_VERBOSE("Status report: WiFi or MQTT not connected");
 
         vTaskDelay(pdMS_TO_TICKS(STATUS_REPORT_INTERVAL));
     }
 }
 
 void handleUpdateMessage(const String& topic) {
+    DEBUG_INFO("Update requested for topic: %s", topic.c_str());
+
     if (topic == "/switch/cmd/root") {
+        DEBUG_INFO("Root OTA update triggered");
         otaInProgress = true;
         return;
     }
@@ -452,10 +565,12 @@ void handleUpdateMessage(const String& topic) {
     uint64_t nodeId;
 
     if (toUint64(last, nodeId)) {
+        DEBUG_INFO("Update requested for node: %llu", nodeId);
         meshMessageQueue.push({(uint32_t)nodeId, "U"});
         return;
     }
 
+    DEBUG_INFO("Broadcasting update to all compatible nodes");
     for (const auto& pair : nodes) {
         uint32_t nodeId = pair.first;
         String nodeType = pair.second;
@@ -464,11 +579,15 @@ void handleUpdateMessage(const String& topic) {
             (nodeType == "switch" && topic == "/relay/cmd")) {
             continue;
         }
+        DEBUG_VERBOSE("Sending update to node %u (%s)", nodeId,
+                      nodeType.c_str());
         meshMessageQueue.push({nodeId, "U"});
     }
 }
 
 void sendMQTTMessages(void* pvParameters) {
+    DEBUG_VERBOSE("sendMQTTMessages task started");
+
     while (true) {
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
@@ -486,11 +605,14 @@ void sendMQTTMessages(void* pvParameters) {
         String msg = message.second;
         mqttMessageQueue.pop();
 
+        DEBUG_VERBOSE("MQTT TX: [%s] %s", topic.c_str(), msg.c_str());
         mqttClient.publish(topic.c_str(), msg.c_str(), msg.length());
     }
 }
 
 void sendMeshMessages(void* pvParameters) {
+    DEBUG_VERBOSE("sendMeshMessages task started");
+
     while (true) {
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
@@ -509,11 +631,14 @@ void sendMeshMessages(void* pvParameters) {
         uint32_t to = message.first;
         String msg = message.second;
 
+        DEBUG_VERBOSE("MESH TX: [%u] %s", to, msg.c_str());
         mesh.sendSingle(to, msg);
     }
 }
 
 void mqttCallbackTask(void* pvParameters) {
+    DEBUG_VERBOSE("mqttCallbackTask started");
+
     while (true) {
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
@@ -543,6 +668,7 @@ void mqttCallbackTask(void* pvParameters) {
             continue;
         }
         if (topic == "/switch/cmd/root" && isValidJson(msg)) {
+            DEBUG_INFO("Received connections config");
             JsonDocument doc;
             deserializeJson(doc, msg);
 
@@ -557,7 +683,11 @@ void mqttCallbackTask(void* pvParameters) {
 
             if (nodeId != 0 || idStr == "0") {
                 if (nodes.count(nodeId)) {
+                    DEBUG_VERBOSE("Forwarding command to node %u: %s", nodeId,
+                                  msg.c_str());
                     meshMessageQueue.push({nodeId, msg});
+                } else {
+                    DEBUG_VERBOSE("Node %u not found in node list", nodeId);
                 }
             }
         }
@@ -565,6 +695,8 @@ void mqttCallbackTask(void* pvParameters) {
 }
 
 void meshCallbackTask(void* pvParameters) {
+    DEBUG_VERBOSE("meshCallbackTask started");
+
     while (true) {
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
@@ -583,16 +715,16 @@ void meshCallbackTask(void* pvParameters) {
         meshCallbackQueue.pop();
 
         if (msg == "R") {
+            DEBUG_INFO("Node %u identified as relay", from);
             nodes[from] = "relay";
             meshMessageQueue.push({from, "A"});
-
             continue;
         }
 
         if (msg == "S") {
+            DEBUG_INFO("Node %u identified as switch", from);
             nodes[from] = "switch";
             meshMessageQueue.push({from, "A"});
-
             continue;
         }
 
@@ -602,17 +734,16 @@ void meshCallbackTask(void* pvParameters) {
             } else {
                 handleSwitchMessage(from, msg[0], msg[1] - '0');
             }
-
             continue;
         }
 
         if (msg.length() == 2 && msg[0] >= 'A' && msg[0] < 'A' + NLIGHTS) {
             handleRelayMessage(from, msg);
-
             continue;
         }
 
         if (isValidJson(msg)) {
+            DEBUG_VERBOSE("Processing JSON status from node %u", from);
             JsonDocument doc;
             deserializeJson(doc, msg.c_str());
 
@@ -623,22 +754,29 @@ void meshCallbackTask(void* pvParameters) {
 
             if (WiFi.status() == WL_CONNECTED && mqttClient.connected())
                 mqttMessageQueue.push({"/switch/state/root", newMsg});
+            else
+                DEBUG_VERBOSE(
+                    "Cannot publish status: WiFi or MQTT not connected");
 
             continue;
         }
+
+        DEBUG_VERBOSE("Unknown message from node %u: %s", from, msg.c_str());
     }
 }
 
 void setup() {
     Serial.begin(115200);
-    vTaskDelay(500 / portTICK_PERIOD_MS);  // Reduced startup delay
+    vTaskDelay(500 / portTICK_PERIOD_MS);
 
     fw_md5 = ESP.getSketchMD5();
-    DEBUG_INFO("Mesh Root Starting...");
+    DEBUG_INFO("=== Mesh Root Starting ===");
+    DEBUG_INFO("Firmware MD5: %s", fw_md5.c_str());
+    DEBUG_INFO("Free heap: %u bytes", ESP.getFreeHeap());
 
     meshInit();
 
-    // Optimized task priorities and stack sizes
+    DEBUG_INFO("Creating tasks...");
     xTaskCreatePinnedToCore(checkWiFiAndMQTT, "WiFiMQTT", 8192, NULL, 2, NULL,
                             1);
     xTaskCreatePinnedToCore(statusReport, "Status", 4096, NULL, 1, NULL, 1);
@@ -651,6 +789,8 @@ void setup() {
                             NULL, 1);
     xTaskCreatePinnedToCore(meshCallbackTask, "MeshCallback", 8192, NULL, 4,
                             NULL, 0);
+
+    DEBUG_INFO("=== Initialization complete ===");
 }
 
 void loop() {
@@ -658,6 +798,7 @@ void loop() {
 
     if (otaInProgress && !otaTaskStarted) {
         otaTaskStarted = true;
+        DEBUG_INFO("Starting OTA task");
         xTaskCreatePinnedToCore(otaTask, "OTA", 16384, NULL, 5, NULL, 0);
     }
 

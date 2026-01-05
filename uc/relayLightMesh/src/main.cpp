@@ -238,8 +238,14 @@ void meshInit() {
 }
 
 void restartMesh() {
+    DEBUG_INFO("MESH: Restarting mesh connection due to timeout...");
     mesh.stop();
+
     vTaskDelay(pdMS_TO_TICKS(100));
+
+    registeredWithRoot = false;
+    resetTimer = millis();
+
     meshInit();
 }
 

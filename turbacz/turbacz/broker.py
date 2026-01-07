@@ -1,5 +1,7 @@
+import asyncio
 import json
 import logging
+from time import time
 
 import httpx
 import namer
@@ -7,7 +9,7 @@ from fastapi_mqtt import FastMQTT, MQTTConfig
 
 from turbacz import connection_manager, metrics
 from turbacz.settings import config
-from turbacz.state import relay_state
+from turbacz.state import state_manager
 from turbacz.websocket import ws_manager
 
 logger = logging.getLogger(__name__)
@@ -24,14 +26,36 @@ mqtt_config = MQTTConfig(
 mqtt = FastMQTT(config=mqtt_config)
 
 
+async def periodic_check_devices(interval: int = 15):
+    """Periodically check if relays are online."""
+    while True:
+        try:
+            await state_manager.check_relays_if_online()
+            await state_manager.check_switches_if_online()
+
+        except Exception as e:
+            print(f"Error checking relays/switches: {e}")
+
+        await ws_manager.broadcast(
+            {
+                "type": "online_status",
+                "online_relays": list(state_manager._online_relays.keys()),
+                "online_switches": list(state_manager._online_switches.keys()),
+            },
+            "/rcm/ws/",
+        )
+
+        await asyncio.sleep(interval)
+
+
 @mqtt.on_connect()
 def connect(client, flags, rc, properties):
-    global task
-
     mqtt.client.subscribe("/blind/pos")
     mqtt.client.subscribe("/heating/metrics")
     mqtt.client.subscribe("/relay/state/+")
     mqtt.client.subscribe("/switch/state/+")
+
+    asyncio.create_task(periodic_check_devices())
 
     logger.info("Connected: %s %s %s %s", client, flags, rc, properties)
 
@@ -106,7 +130,7 @@ async def handle_relay_state(payload_str, topic):
         state = int(payload_str[1])
         output_id = chr(ord(payload_str[0]) - ord("A") + 97)
 
-        await relay_state.update_state(relay_id, output_id, state)
+        await state_manager.update_state(relay_id, output_id, state)
 
     except ValueError as e:
         logger.error("Error processing relay state: %s", e)
@@ -159,6 +183,7 @@ async def handle_root_state(payload_str):
 
     try:
         data = json.loads(payload_str)
+        logger.info("Root State Data: %s", data)  # Info log
 
     except json.JSONDecodeError:
         logger.error("Error processing root state JSON payload: %s", payload_str)
@@ -200,6 +225,9 @@ async def handle_root_state(payload_str):
 
     if "name" not in data:
         return
+
+    state_manager.mark_relay_online(data["deviceId"], time())
+    state_manager.mark_switch_online(data["deviceId"], time())
 
     data["name"] = data["name"].replace(" ", "\\ ")
 

@@ -601,8 +601,10 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
 
     switchDiv.innerHTML = `
                 <div class="device-header">
+                    <span>
                     ${statusDot}
                     <span class="device-id" onclick="event.stopPropagation(); copyIdToClipboard(${switchId}, this)">ID: ${switchId}</span>
+                    </span>
                     <button class="delete-btn" onclick="event.stopPropagation(); deleteSwitch(${switchId})">✕</button>
                 </div>
                 <div class="device-name" onclick="event.stopPropagation(); editDeviceName('switch', ${switchId})">${switchName}</div>
@@ -695,8 +697,10 @@ function createRelay(relayId, relayName, outputs, x, y) {
 
     relayDiv.innerHTML = `
                 <div class="device-header">
+                    <span>
                     ${statusDot}
                     <span class="device-id" onclick="event.stopPropagation(); copyIdToClipboard(${relayId}, this)">ID: ${relayId}</span>
+                    </span>
                     <button class="delete-btn" onclick="event.stopPropagation(); deleteRelay(${relayId})">✕</button>
                 </div>
                 <div class="device-name" onclick="event.stopPropagation(); editDeviceName('relay', ${relayId})">${relayName}</div>

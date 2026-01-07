@@ -11,7 +11,7 @@ let isLoadingConnections = false
 
 // Zoom and Pan
 let zoomLevel = 0.7
-let panX = -500
+let panX = -300
 let panY = -900
 let isPanning = false
 let startX = 0
@@ -111,7 +111,7 @@ function hideLoading() {
 
 function resetZoom() {
     zoomLevel = 0.7
-    panX = -500
+    panX = -300
     panY = -900
     updateZoom()
 }

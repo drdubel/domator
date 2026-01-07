@@ -28,6 +28,11 @@
 #define STATUS_REPORT_INTERVAL 15000
 #define RESET_TIMEOUT 60000
 
+// Queue size limits
+#define MAX_QUEUE_SIZE 30
+#define CRITICAL_HEAP_THRESHOLD 20000
+#define LOW_HEAP_THRESHOLD 40000
+
 // Minimal debug - only errors and critical events
 #define DEBUG_LEVEL 1  // 0=none, 1=errors only, 2=info, 3=verbose
 
@@ -60,18 +65,31 @@ void setLedColor(uint8_t r, uint8_t g, uint8_t b);
 void printNodes();
 
 Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
-
 painlessMesh mesh;
 
 uint32_t rootId = 0;
 uint32_t deviceId = 0;
 uint32_t disconnects = 0;
 uint32_t clicks = 0;
+String fw_md5;
 
-String fw_md5;  // MD5 of the firmware as flashed
-
+// Queues
 std::queue<std::pair<uint32_t, String>> meshCallbackQueue;
 std::queue<std::pair<uint32_t, String>> meshMessageQueue;
+std::queue<std::pair<uint32_t, String>>
+    meshPriorityQueue;  // Fast path for button presses
+
+// Mutexes for thread safety
+SemaphoreHandle_t meshCallbackQueueMutex = NULL;
+SemaphoreHandle_t meshMessageQueueMutex = NULL;
+SemaphoreHandle_t meshPriorityQueueMutex = NULL;
+
+// Statistics
+struct Statistics {
+    uint32_t meshDropped = 0;
+    uint32_t lowHeapEvents = 0;
+    uint32_t criticalHeapEvents = 0;
+} stats;
 
 const int buttonPins[NLIGHTS] = {A0, A1, A3, A4, A5, 6, 7};
 unsigned long lastTimeClick[NLIGHTS] = {0};
@@ -79,11 +97,73 @@ int lastButtonState[NLIGHTS] = {HIGH};
 bool registeredWithRoot = false;
 unsigned long long resetTimer = 0;
 uint32_t otaTimer = 0;
-volatile uint32_t isrTime[NLIGHTS];
-volatile bool buttonEvent[NLIGHTS];
-
-// OTA update flag
 volatile bool otaInProgress = false;
+
+// Helper function to safely push to bounded queue
+template <typename T>
+bool safePush(std::queue<T>& q, const T& item, SemaphoreHandle_t mutex,
+              uint32_t& dropCounter, const char* queueName) {
+    if (!mutex) {
+        DEBUG_ERROR("Mutex is NULL for %s queue - dropping message", queueName);
+        dropCounter++;
+        return false;
+    }
+    if (xSemaphoreTake(mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        if (q.size() >= MAX_QUEUE_SIZE) {
+            dropCounter++;
+            DEBUG_ERROR(
+                "%s queue full (%d items), dropping message (total dropped: "
+                "%u)",
+                queueName, q.size(), dropCounter);
+            xSemaphoreGive(mutex);
+            return false;
+        }
+        q.push(item);
+        xSemaphoreGive(mutex);
+        return true;
+    }
+    DEBUG_ERROR("Failed to acquire mutex for %s queue", queueName);
+    dropCounter++;
+    return false;
+}
+
+// Helper function to safely pop from queue
+template <typename T>
+bool safePop(std::queue<T>& q, T& item, SemaphoreHandle_t mutex) {
+    if (!mutex) return false;
+    if (xSemaphoreTake(mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        if (q.empty()) {
+            xSemaphoreGive(mutex);
+            return false;
+        }
+        item = q.front();
+        q.pop();
+        xSemaphoreGive(mutex);
+        return true;
+    }
+    return false;
+}
+
+// Check heap and handle critical memory situations
+bool checkHeapHealth() {
+    uint32_t freeHeap = ESP.getFreeHeap();
+    if (freeHeap < CRITICAL_HEAP_THRESHOLD) {
+        stats.criticalHeapEvents++;
+        DEBUG_ERROR("CRITICAL: Low heap %u bytes! Clearing queues...",
+                    freeHeap);
+        if (xSemaphoreTake(meshMessageQueueMutex, pdMS_TO_TICKS(100)) ==
+            pdTRUE) {
+            while (!meshMessageQueue.empty()) meshMessageQueue.pop();
+            xSemaphoreGive(meshMessageQueueMutex);
+        }
+        return false;
+    } else if (freeHeap < LOW_HEAP_THRESHOLD) {
+        stats.lowHeapEvents++;
+        DEBUG_ERROR("Low heap: %u bytes", freeHeap);
+        return false;
+    }
+    return true;
+}
 
 void setLedColor(uint8_t r, uint8_t g, uint8_t b) {
     pixels.setPixelColor(0, pixels.Color(r, g, b));
@@ -97,7 +177,6 @@ void updateLedStatus(void* pvParameters) {
             continue;
         }
         bool meshConnected = mesh.getNodeList().size() > 0;
-
         if (meshConnected && registeredWithRoot) {
             setLedColor(0, 255, 0);  // Green - fully connected
         } else if (meshConnected) {
@@ -107,39 +186,35 @@ void updateLedStatus(void* pvParameters) {
         } else {
             setLedColor(255, 0, 0);  // Red - not connected
         }
-
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
 void otaTask(void* pv) {
     otaInProgress = true;
-
     DEBUG_INFO("[OTA] Stopping mesh...");
     mesh.stop();
-
     esp_task_wdt_deinit();
-
     vTaskDelay(pdMS_TO_TICKS(2000));
-
     performFirmwareUpdate();
+    esp_task_wdt_init(30, true);
+    DEBUG_ERROR("OTA failed, watchdog re-enabled");
+    otaInProgress = false;
+    vTaskDelete(NULL);
 }
 
 void performFirmwareUpdate() {
     const int MAX_RETRIES = 3;
     int attemptCount = 0;
     bool updateSuccess = false;
-
     while (attemptCount < MAX_RETRIES && !updateSuccess) {
         attemptCount++;
         DEBUG_INFO("[OTA] Starting update attempt %d/%d...", attemptCount,
                    MAX_RETRIES);
-
         WiFi.disconnect(true);
         WiFi.mode(WIFI_STA);
         WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
         unsigned long startTime = millis();
-
         while (WiFi.status() != WL_CONNECTED) {
             if (millis() - startTime > WIFI_CONNECT_TIMEOUT) {
                 DEBUG_ERROR("[OTA] WiFi timeout on attempt %d", attemptCount);
@@ -147,8 +222,6 @@ void performFirmwareUpdate() {
             }
             vTaskDelay(500 / portTICK_PERIOD_MS);
         }
-
-        // Check if WiFi connection failed
         if (WiFi.status() != WL_CONNECTED) {
             if (attemptCount < MAX_RETRIES) {
                 DEBUG_INFO("[OTA] Retrying in 2 seconds...");
@@ -159,7 +232,6 @@ void performFirmwareUpdate() {
                 break;
             }
         }
-
         WiFiClientSecure* client = new WiFiClientSecure();
         if (!client) {
             DEBUG_ERROR("[OTA] Client alloc failed on attempt %d",
@@ -170,11 +242,9 @@ void performFirmwareUpdate() {
             }
             break;
         }
-
         client->setInsecure();
         HTTPClient http;
         http.setTimeout(30000);
-
         if (!http.begin(*client, firmware_url)) {
             DEBUG_ERROR("[OTA] HTTP begin failed on attempt %d", attemptCount);
             delete client;
@@ -184,7 +254,6 @@ void performFirmwareUpdate() {
             }
             break;
         }
-
         int httpCode = http.GET();
         if (httpCode == HTTP_CODE_OK) {
             int contentLength = http.getSize();
@@ -199,7 +268,6 @@ void performFirmwareUpdate() {
                 }
                 break;
             }
-
             WiFiClient* stream = http.getStreamPtr();
             size_t written = Update.writeStream(*stream);
             if (written != contentLength) {
@@ -213,7 +281,6 @@ void performFirmwareUpdate() {
                 }
                 break;
             }
-
             if (Update.end() && Update.isFinished()) {
                 DEBUG_INFO("[OTA] Update successful on attempt %d!",
                            attemptCount);
@@ -244,8 +311,6 @@ void performFirmwareUpdate() {
             }
         }
     }
-
-    // If we get here, all attempts failed
     DEBUG_ERROR("[OTA] All %d update attempts failed. Restarting...",
                 MAX_RETRIES);
     vTaskDelay(1000 / portTICK_PERIOD_MS);
@@ -254,14 +319,11 @@ void performFirmwareUpdate() {
 
 void meshInit() {
     mesh.setDebugMsgTypes(ERROR | STARTUP);
-
     esp_wifi_set_ps(WIFI_PS_NONE);
-
     mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA);
     mesh.onReceive(&receivedCallback);
     mesh.onDroppedConnection(&onDroppedConnection);
     mesh.onNewConnection(&onNewConnection);
-
     deviceId = mesh.getNodeId();
     DEBUG_INFO("SWITCH: Device ID: %u", deviceId);
     DEBUG_INFO("SWITCH: Free heap: %d bytes", ESP.getFreeHeap());
@@ -270,7 +332,6 @@ void meshInit() {
 void restartMesh() {
     DEBUG_ERROR("MESH: Restarting ESP32 due to mesh timeout");
     vTaskDelay(pdMS_TO_TICKS(100));
-
     ESP.restart();
 }
 
@@ -280,14 +341,11 @@ void sendStatusReport(void* pvParameters) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
-
         if (rootId == 0) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
-
         DEBUG_VERBOSE("MESH: Sending status report to root");
-
         JsonDocument doc;
         doc["rssi"] = WiFi.RSSI();
         doc["uptime"] = millis() / 1000;
@@ -298,19 +356,25 @@ void sendStatusReport(void* pvParameters) {
         doc["freeHeap"] = ESP.getFreeHeap();
         doc["type"] = "switch";
         doc["firmware"] = fw_md5;
-
+        doc["meshDropped"] = stats.meshDropped;
+        doc["lowHeap"] = stats.lowHeapEvents;
+        doc["criticalHeap"] = stats.criticalHeapEvents;
         String msg;
         serializeJson(doc, msg);
-
-        meshMessageQueue.push({rootId, msg});
-
+        safePush(meshMessageQueue, std::make_pair(rootId, msg),
+                 meshMessageQueueMutex, stats.meshDropped, "MESH-MSG");
         vTaskDelay(pdMS_TO_TICKS(STATUS_REPORT_INTERVAL));
     }
 }
 
 void receivedCallback(const uint32_t& from, const String& msg) {
+    if (!checkHeapHealth()) {
+        stats.meshDropped++;
+        return;
+    }
     DEBUG_VERBOSE("MESH: [%u] %s", from, msg.c_str());
-    meshCallbackQueue.push({from, msg});
+    safePush(meshCallbackQueue, std::make_pair(from, msg),
+             meshCallbackQueueMutex, stats.meshDropped, "MESH-CB");
 }
 
 void printNodes() {
@@ -327,7 +391,6 @@ void statusPrint(void* pvParameters) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
-
         DEBUG_INFO("\n--- Status Report ---");
         DEBUG_INFO("Device ID: %u", deviceId);
         DEBUG_INFO("Firmware MD5: %s", fw_md5.c_str());
@@ -338,10 +401,9 @@ void statusPrint(void* pvParameters) {
         DEBUG_INFO("WiFi RSSI: %d dBm", WiFi.RSSI());
         DEBUG_INFO("Time to reset: %d",
                    RESET_TIMEOUT - (millis() - resetTimer));
-
+        DEBUG_INFO("Dropped messages: %u", stats.meshDropped);
         printNodes();
         DEBUG_INFO("-------------------\n");
-
         vTaskDelay(pdMS_TO_TICKS(STATUS_PRINT_INTERVAL));
     }
 }
@@ -352,15 +414,12 @@ void resetTask(void* pvParameters) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
-
         if (mesh.getNodeList().empty()) {
             registeredWithRoot = false;
         } else if (registeredWithRoot) {
             resetTimer = millis();
         }
-
         if ((millis() - resetTimer) > RESET_TIMEOUT) restartMesh();
-
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
@@ -368,49 +427,40 @@ void resetTask(void* pvParameters) {
 void handleButtonsTask(void* pvParameters) {
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(20));
-
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
-
         unsigned long currentMillis = millis();
-
         for (int i = 0; i < NLIGHTS; i++) {
             int currentState = digitalRead(buttonPins[i]);
-
-            // Skip if within debounce period
             if (currentMillis - lastTimeClick[i] < BUTTON_DEBOUNCE_TIME) {
                 continue;
             }
-
             // Detect button press (LOW to HIGH transition)
             if (currentState == HIGH && lastButtonState[i] == LOW) {
                 lastTimeClick[i] = currentMillis;
                 clicks++;
-
                 char msg = 'a' + i;
                 DEBUG_VERBOSE("BUTTON: Button %d pressed, sending '%c'", i,
                               msg);
-
-                // Check if we're connected to mesh
                 if (mesh.getNodeList().empty()) {
                     DEBUG_ERROR("BUTTON: No mesh connection, message not sent");
                     setLedColor(255, 0, 0);  // Flash red
                     vTaskDelay(100 / portTICK_PERIOD_MS);
                     continue;
                 }
-
                 String message = String(msg);
-                meshMessageQueue.push({rootId, message});
+                // Use PRIORITY queue for instant response
+                safePush(meshPriorityQueue, std::make_pair(rootId, message),
+                         meshPriorityQueueMutex, stats.meshDropped,
+                         "MESH-PRIORITY");
                 DEBUG_VERBOSE("BUTTON: Sent '%s' to root %u", message.c_str(),
                               rootId);
-
                 // Flash LED to confirm
                 setLedColor(0, 255, 255);  // Cyan flash
                 vTaskDelay(50 / portTICK_PERIOD_MS);
             }
-
             lastButtonState[i] = currentState;
         }
     }
@@ -419,21 +469,18 @@ void handleButtonsTask(void* pvParameters) {
 void registerTask(void* pvParameters) {
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(REGISTRATION_RETRY_INTERVAL));
-
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
-
         if (!registeredWithRoot) {
             if (rootId == 0) {
                 DEBUG_VERBOSE("MESH: Root ID unknown, cannot register");
                 continue;
             }
-
             DEBUG_INFO("MESH: Attempting registration with root...");
-
-            meshMessageQueue.push({rootId, "S"});
+            safePush(meshMessageQueue, std::make_pair(rootId, String("S")),
+                     meshMessageQueueMutex, stats.meshDropped, "MESH-MSG");
             DEBUG_VERBOSE("MESH: Sent registration 'S' to root %u", rootId);
         }
     }
@@ -441,22 +488,19 @@ void registerTask(void* pvParameters) {
 
 void onNewConnection(uint32_t nodeId) {
     DEBUG_INFO("MESH: New connection from node %u", nodeId);
-
     if (rootId == 0) {
         DEBUG_ERROR("MESH: Root ID unknown, cannot register");
         return;
     }
-
-    meshMessageQueue.push({rootId, "S"});
+    safePush(meshMessageQueue, std::make_pair(rootId, String("S")),
+             meshMessageQueueMutex, stats.meshDropped, "MESH-MSG");
     DEBUG_VERBOSE("MESH: Sent registration 'S' to root %u", rootId);
-
     printNodes();
 }
 
 void onDroppedConnection(uint32_t nodeId) {
     DEBUG_ERROR("MESH: Dropped connection to node %u", nodeId);
     DEBUG_ERROR("MESH: Lost connection to root, resetting");
-
     registeredWithRoot = false;
     disconnects++;
 }
@@ -467,18 +511,14 @@ void meshCallbackTask(void* pvParameters) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
-
-        if (meshCallbackQueue.empty()) {
-            vTaskDelay(pdMS_TO_TICKS(20));
+        std::pair<uint32_t, String> message;
+        if (!safePop(meshCallbackQueue, message, meshCallbackQueueMutex)) {
+            vTaskDelay(pdMS_TO_TICKS(5));  // Reduced from 20ms
             continue;
         }
-        vTaskDelay(pdMS_TO_TICKS(5));
-
-        std::pair<uint32_t, String> message = meshCallbackQueue.front();
+        // No artificial delay for processing
         uint32_t from = message.first;
         String msg = message.second;
-        meshCallbackQueue.pop();
-
         if (msg == "U") {
             DEBUG_INFO("MESH: Firmware update command received");
             otaTimer = millis();
@@ -486,21 +526,19 @@ void meshCallbackTask(void* pvParameters) {
             otaInProgress = true;
             continue;
         }
-
         if (msg == "Q") {
             DEBUG_VERBOSE("MESH: Registration query received from root");
             rootId = from;
-            meshMessageQueue.push({rootId, "S"});
+            safePush(meshMessageQueue, std::make_pair(rootId, String("S")),
+                     meshMessageQueueMutex, stats.meshDropped, "MESH-MSG");
             DEBUG_VERBOSE("MESH: Sent registration 'S' to root %u", rootId);
             continue;
         }
-
         if (msg == "A") {
             DEBUG_INFO("MESH: Registration accepted by root");
             registeredWithRoot = true;
             continue;
         }
-
         DEBUG_ERROR("MESH: Unknown message from %u: %s", from, msg.c_str());
     }
 }
@@ -512,29 +550,34 @@ void sendMeshMessages(void* pvParameters) {
             continue;
         }
 
-        if (meshMessageQueue.empty()) {
-            vTaskDelay(pdMS_TO_TICKS(20));
+        // Check priority queue FIRST for button presses (no delay)
+        std::pair<uint32_t, String> message;
+        if (safePop(meshPriorityQueue, message, meshPriorityQueueMutex)) {
+            uint32_t to = message.first;
+            String msg = message.second;
+            mesh.sendSingle(to, msg);
+            DEBUG_VERBOSE("MESH TX PRIORITY: [%u] %s", to, msg.c_str());
+            vTaskDelay(pdMS_TO_TICKS(2));  // Minimal delay
             continue;
         }
-        vTaskDelay(pdMS_TO_TICKS(5));
 
-        std::pair<uint32_t, String> message = meshMessageQueue.front();
-        meshMessageQueue.pop();
-
+        // Then check regular queue
+        if (!safePop(meshMessageQueue, message, meshMessageQueueMutex)) {
+            vTaskDelay(pdMS_TO_TICKS(5));  // Reduced from 20ms
+            continue;
+        }
+        vTaskDelay(pdMS_TO_TICKS(5));  // Reduced rate limiting
         uint32_t to = message.first;
         String msg = message.second;
-
         mesh.sendSingle(to, msg);
-        DEBUG_VERBOSE("MESH: Sent message to %u: %s", to, msg.c_str());
+        DEBUG_VERBOSE("MESH TX: [%u] %s", to, msg.c_str());
     }
 }
 
 void setup() {
     Serial.begin(115200);
     vTaskDelay(pdMS_TO_TICKS(1000));
-
     fw_md5 = ESP.getSketchMD5();
-
     DEBUG_INFO("\n\n========================================");
     DEBUG_INFO("ESP32-C3 Mesh Switch Node Starting...");
     DEBUG_INFO("Chip Model: %s", ESP.getChipModel());
@@ -545,6 +588,19 @@ void setup() {
     DEBUG_INFO("Flash Size: %d bytes", ESP.getFlashChipSize());
     DEBUG_INFO("Time To Reset: %d", RESET_TIMEOUT - (millis() - resetTimer));
     DEBUG_INFO("========================================\n");
+
+    // CRITICAL: Create mutexes BEFORE meshInit()
+    DEBUG_INFO("Creating mutexes...");
+    meshCallbackQueueMutex = xSemaphoreCreateMutex();
+    meshMessageQueueMutex = xSemaphoreCreateMutex();
+    meshPriorityQueueMutex = xSemaphoreCreateMutex();
+
+    if (!meshCallbackQueueMutex || !meshMessageQueueMutex ||
+        !meshPriorityQueueMutex) {
+        DEBUG_ERROR("FATAL: Failed to create mutexes!");
+        ESP.restart();
+    }
+    DEBUG_INFO("All mutexes created successfully");
 
     // Initialize NeoPixel
     pixels.begin();
@@ -559,7 +615,8 @@ void setup() {
         pinMode(buttonPins[i], INPUT_PULLDOWN);
     }
 
-    // Start button handler task
+    // Start tasks with optimized priorities
+    DEBUG_INFO("Creating tasks...");
     xTaskCreatePinnedToCore(handleButtonsTask, "ButtonTask", 4096, NULL, 2,
                             NULL, 0);
     xTaskCreatePinnedToCore(updateLedStatus, "LedTask", 4096, NULL, 1, NULL, 0);
@@ -572,25 +629,20 @@ void setup() {
                             0);
     xTaskCreatePinnedToCore(meshCallbackTask, "MeshCallbackTask", 8192, NULL, 4,
                             NULL, 0);
-    xTaskCreatePinnedToCore(sendMeshMessages, "SendMeshMessages", 8192, NULL, 2,
-                            NULL, 0);
+    xTaskCreatePinnedToCore(sendMeshMessages, "SendMeshMessages", 8192, NULL, 3,
+                            NULL, 0);  // Higher priority
 
     DEBUG_INFO("SWITCH: Setup complete, waiting for mesh connections...");
 }
 
 void loop() {
     static bool otaTaskStarted = false;
-
     if (otaInProgress && !otaTaskStarted && millis() - otaTimer > 3000) {
         otaTaskStarted = true;
-
         DEBUG_INFO("[OTA] Disconnecting mesh...");
-
-        xTaskCreatePinnedToCore(otaTask, "OTA", 4096, NULL, 5, NULL,
-                                0  // Core 0
-        );
+        xTaskCreatePinnedToCore(otaTask, "OTA", 8192, NULL, 5, NULL,
+                                0);  // Increased stack size
     }
-
     if (otaInProgress) {
         vTaskDelay(pdMS_TO_TICKS(1000));
     } else {

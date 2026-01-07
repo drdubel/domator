@@ -2,6 +2,8 @@
 let jsPlumbInstance
 let switches = {}
 let relays = {}
+let online_relays = new Set()
+let online_switches = new Set()
 let connections = {}
 var lights = {}
 var pendingClicks = new Set()
@@ -69,6 +71,16 @@ function connectWebSocket() {
             pendingClicks.delete(`${msg.relay_id}-${msg.output_id}`)
             lights[`${msg.relay_id}-${msg.output_id}`] = msg.state
             updateLightUI(msg.relay_id, msg.output_id, msg.state)
+        }
+
+        if (msg.type == "online_status") {
+            online_relays = new Set(msg.online_relays)
+            online_switches = new Set(msg.online_switches)
+
+            console.log('Online relays:', online_relays)
+            console.log('Online switches:', online_switches)
+
+            updateOnlineStatus()
         }
     }
 
@@ -583,9 +595,14 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
                 `
     }
 
+    const isOnline = online_switches.has(switchId)
+    const statusClass = isOnline ? 'status-online' : 'status-offline'
+    const statusDot = `<span class="status-indicator ${statusClass}"></span>`
+
     switchDiv.innerHTML = `
                 <div class="device-header">
-                    <span class="device-id">ID: ${switchId}</span>
+                    ${statusDot}
+                    <span class="device-id" onclick="event.stopPropagation(); copyIdToClipboard(${switchId}, this)">ID: ${switchId}</span>
                     <button class="delete-btn" onclick="event.stopPropagation(); deleteSwitch(${switchId})">✕</button>
                 </div>
                 <div class="device-name" onclick="event.stopPropagation(); editDeviceName('switch', ${switchId})">${switchName}</div>
@@ -617,6 +634,40 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
     switches[switchId] = { name: switchName, buttonCount, element: switchDiv }
 }
 
+function copyIdToClipboard(id, element) {
+    navigator.clipboard.writeText(id).then(() => {
+        // Get element position
+        const rect = element.getBoundingClientRect()
+
+        // Create message element
+        const message = document.createElement('div')
+        message.textContent = `ID ${id} copied!`
+        message.style.cssText = `
+            position: fixed;
+            top: ${rect.top - 40}px;
+            left: ${rect.left + rect.width / 2}px;
+            transform: translateX(-50%);
+            background: #10b981;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-weight: 500;
+            font-size: 12px;
+            z-index: 10000;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            pointer-events: none;
+        `
+        document.body.appendChild(message)
+
+        // Remove after 1.5 seconds
+        setTimeout(() => {
+            message.remove()
+        }, 1500)
+    }).catch(err => {
+        console.error('Failed to copy ID:', err)
+    })
+}
+
 function createRelay(relayId, relayName, outputs, x, y) {
     const relayDiv = document.createElement('div')
     relayDiv.id = `relay-${relayId}`
@@ -638,9 +689,14 @@ function createRelay(relayId, relayName, outputs, x, y) {
                 `
     }
 
+    const isOnline = online_relays.has(relayId)
+    const statusClass = isOnline ? 'status-online' : 'status-offline'
+    const statusDot = `<span class="status-indicator ${statusClass}"></span>`
+
     relayDiv.innerHTML = `
                 <div class="device-header">
-                    <span class="device-id">ID: ${relayId}</span>
+                    ${statusDot}
+                    <span class="device-id" onclick="event.stopPropagation(); copyIdToClipboard(${relayId}, this)">ID: ${relayId}</span>
                     <button class="delete-btn" onclick="event.stopPropagation(); deleteRelay(${relayId})">✕</button>
                 </div>
                 <div class="device-name" onclick="event.stopPropagation(); editDeviceName('relay', ${relayId})">${relayName}</div>
@@ -667,6 +723,32 @@ function createRelay(relayId, relayName, outputs, x, y) {
     }
 
     relays[relayId] = { name: relayName, outputs, element: relayDiv }
+}
+
+function updateOnlineStatus() {
+    // Update all switches
+    for (let switchId in switches) {
+        const element = document.getElementById(`switch-${switchId}`)
+        if (element) {
+            const indicator = element.querySelector('.status-indicator')
+            if (indicator) {
+                const isOnline = online_switches.has(parseInt(switchId))
+                indicator.className = isOnline ? 'status-indicator status-online' : 'status-indicator status-offline'
+            }
+        }
+    }
+
+    // Update all relays
+    for (let relayId in relays) {
+        const element = document.getElementById(`relay-${relayId}`)
+        if (element) {
+            const indicator = element.querySelector('.status-indicator')
+            if (indicator) {
+                const isOnline = online_relays.has(parseInt(relayId))
+                indicator.className = isOnline ? 'status-indicator status-online' : 'status-indicator status-offline'
+            }
+        }
+    }
 }
 
 function createConnection(switchId, buttonId, relayId, outputId) {

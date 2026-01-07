@@ -377,6 +377,26 @@ body {
     /* make it invisible but still clickable */
 }
 
+.status-indicator {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-left: 8px;
+    transition: background-color 0.3s ease;
+}
+
+.status-online {
+    background-color: #10b981;
+    /* Green */
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+}
+
+.status-offline {
+    background-color: #ef4444;
+    /* Red */
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+}
 
 /* Modal */
 .modal {

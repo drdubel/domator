@@ -22,7 +22,7 @@ from starlette.types import ASGIApp
 from turbacz import auth, connection_manager
 from turbacz.broker import mqtt
 from turbacz.settings import config
-from turbacz.state import relay_state
+from turbacz.state import state_manager
 from turbacz.websocket import ws_manager
 
 logger = logging.getLogger(__name__)
@@ -318,7 +318,7 @@ async def websocket_lights(websocket: WebSocket):
     for relay_id in connection_manager.connection_manager.get_relays():
         mqtt.client.publish(f"/relay/cmd/{relay_id}", "S")
 
-    current_states = relay_state.get_all()
+    current_states = state_manager.get_all()
     for relay_id, outputs in current_states.items():
         for output_id, state in outputs.items():
             await ws_manager.send_personal_message(
@@ -383,6 +383,15 @@ async def websocket_rcm(websocket: WebSocket):
     for relay_id in connection_manager.connection_manager.get_relays():
         mqtt.client.publish(f"/relay/cmd/{relay_id}", "S")
 
+    await ws_manager.send_personal_message(
+        {
+            "type": "online_status",
+            "online_relays": list(state_manager._online_relays.keys()),
+            "online_switches": list(state_manager._online_switches.keys()),
+        },
+        websocket,
+    )
+
     async def receive_command(websocket: WebSocket):
         async for cmd in websocket.iter_json():
             logger.debug("putting %s in command queue", cmd)
@@ -397,7 +406,7 @@ async def websocket_rcm(websocket: WebSocket):
                 continue
 
             if cmd.get("type") == "get_states":
-                current_states = relay_state.get_all()
+                current_states = state_manager.get_all()
 
                 for relay_id, outputs in current_states.items():
                     for output_id, state in outputs.items():

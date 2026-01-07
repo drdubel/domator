@@ -1,12 +1,13 @@
+from time import time
+
 from turbacz.websocket import ws_manager
 
 
-class RelayStateManager:
+class StateManager:
     def __init__(self):
         self._states: dict[int, dict[str, int]] = {}
-        self._ping_times: dict[str, float] = {}
-        self._send_ping_time: dict[str, float] = {}
-        self.relays: list[str] = []
+        self._online_relays: dict[int, int] = {}
+        self._online_switches: dict[int, int] = {}
 
     async def update_state(self, relay_id: int, output_id: str, state: int):
         if relay_id not in self._states:
@@ -31,6 +32,30 @@ class RelayStateManager:
             "/lights/ws/",
         )
 
+    def mark_switch_offline(self, switch_id: str):
+        if switch_id in self._online_switches:
+            del self._online_switches[switch_id]
+
+    def mark_relay_offline(self, relay_id: int):
+        if relay_id in self._online_relays:
+            del self._online_relays[relay_id]
+
+    def mark_switch_online(self, switch_id: int, timestamp: int):
+        self._online_switches[switch_id] = timestamp
+
+    def mark_relay_online(self, relay_id: int, timestamp: int):
+        self._online_relays[relay_id] = timestamp
+
+    async def check_relays_if_online(self):
+        for id, timestamp in self._online_relays.items():
+            if timestamp + 30 < time():
+                self.mark_relay_offline(id)
+
+    async def check_switches_if_online(self):
+        for id, timestamp in self._online_switches.items():
+            if timestamp + 30 < time():
+                self.mark_switch_offline(id)
+
     def get_state(self, relay_id: int, output_id: str) -> int | None:
         return self._states.get(relay_id, {}).get(output_id)
 
@@ -39,4 +64,4 @@ class RelayStateManager:
 
 
 # Singleton instance
-relay_state = RelayStateManager()
+state_manager = StateManager()

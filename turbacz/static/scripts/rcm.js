@@ -11,7 +11,7 @@ let isLoadingConnections = false
 
 // Zoom and Pan
 let zoomLevel = 0.7
-let panX = -500
+let panX = -300
 let panY = -900
 let isPanning = false
 let startX = 0
@@ -111,7 +111,7 @@ function hideLoading() {
 
 function resetZoom() {
     zoomLevel = 0.7
-    panX = -500
+    panX = -300
     panY = -900
     updateZoom()
 }
@@ -476,16 +476,16 @@ async function loadConfiguration() {
         for (let [relayId, relayName] of Object.entries(relays_config)) {
             createRelay(parseInt(relayId), relayName, outputs_config[relayId] || {}, relayX, relayY)
             relayY += 770
-            if (relayY > 6000) { relayY = 1500; relayX += 350; }
+            if (relayY > 4000) { relayY = 1500; relayX += 350; }
         }
 
         // create switches
-        let switchX = 1500, switchY = 1500
+        let switchX = 1000, switchY = 1500
         for (let [switchId, switchData] of Object.entries(switches_config)) {
             const [switchName, buttonCount] = switchData
             createSwitch(parseInt(switchId), switchName, buttonCount, switchX, switchY)
             switchY += buttonCount * 72 + 185
-            if (switchY > 6000) { switchY = 1500; switchX += 350; }
+            if (switchY > 4000) { switchY = 1500; switchX += 500; }
         }
 
         // Create connections after elements exist

@@ -10,7 +10,10 @@
 #include <credentials.h>
 #include <painlessMesh.h>
 
+#include <queue>
+
 #include "esp_task_wdt.h"
+#include "esp_wifi.h"
 
 // Pin and hardware definitions
 #define NLIGHTS 7
@@ -23,9 +26,34 @@
 #define WIFI_CONNECT_TIMEOUT 20000
 #define REGISTRATION_RETRY_INTERVAL 10000
 #define STATUS_REPORT_INTERVAL 15000
+#define RESET_TIMEOUT 60000
+
+// Minimal debug - only errors and critical events
+#define DEBUG_LEVEL 1  // 0=none, 1=errors only, 2=info, 3=verbose
+
+#if DEBUG_LEVEL >= 1
+#define DEBUG_ERROR(fmt, ...) Serial.printf("[ERROR] " fmt "\n", ##__VA_ARGS__)
+#else
+#define DEBUG_ERROR(fmt, ...)
+#endif
+
+#if DEBUG_LEVEL >= 2
+#define DEBUG_INFO(fmt, ...) Serial.printf("[INFO] " fmt "\n", ##__VA_ARGS__)
+#else
+#define DEBUG_INFO(fmt, ...)
+#endif
+
+#if DEBUG_LEVEL >= 3
+#define DEBUG_VERBOSE(fmt, ...) \
+    Serial.printf("[VERBOSE] " fmt "\n", ##__VA_ARGS__)
+#else
+#define DEBUG_VERBOSE(fmt, ...)
+#endif
 
 // Function declarations
 void receivedCallback(const uint32_t& from, const String& msg);
+void onDroppedConnection(uint32_t nodeId);
+void onNewConnection(uint32_t nodeId);
 void meshInit();
 void performFirmwareUpdate();
 void setLedColor(uint8_t r, uint8_t g, uint8_t b);
@@ -41,6 +69,9 @@ uint32_t disconnects = 0;
 uint32_t clicks = 0;
 
 String fw_md5;  // MD5 of the firmware as flashed
+
+std::queue<std::pair<uint32_t, String>> meshCallbackQueue;
+std::queue<std::pair<uint32_t, String>> meshMessageQueue;
 
 const int buttonPins[NLIGHTS] = {A0, A1, A3, A4, A5, 6, 7};
 unsigned long lastTimeClick[NLIGHTS] = {0};
@@ -84,7 +115,7 @@ void updateLedStatus(void* pvParameters) {
 void otaTask(void* pv) {
     otaInProgress = true;
 
-    Serial.println("[OTA] Stopping mesh...");
+    DEBUG_INFO("[OTA] Stopping mesh...");
     mesh.stop();
 
     esp_task_wdt_deinit();
@@ -95,118 +126,152 @@ void otaTask(void* pv) {
 }
 
 void performFirmwareUpdate() {
-    vTaskDelay(1000 / portTICK_PERIOD_MS);  // Allow message to be sent
-    Serial.println("[OTA] Starting firmware update...");
+    const int MAX_RETRIES = 3;
+    int attemptCount = 0;
+    bool updateSuccess = false;
 
-    setLedColor(0, 0, 255);  // Blue during update
+    while (attemptCount < MAX_RETRIES && !updateSuccess) {
+        attemptCount++;
+        DEBUG_INFO("[OTA] Starting update attempt %d/%d...", attemptCount,
+                   MAX_RETRIES);
 
-    vTaskDelay(1000 / portTICK_PERIOD_MS);  // Give time for cleanup
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_STA);
+        WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+        unsigned long startTime = millis();
 
-    Serial.println("[OTA] Switching to STA mode...");
-    WiFi.disconnect(true);
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-    Serial.print("[OTA] Connecting to WiFi");
-    unsigned long startTime = millis();
-    while (WiFi.status() != WL_CONNECTED) {
-        if (millis() - startTime > WIFI_CONNECT_TIMEOUT) {
-            Serial.println("\n[OTA] WiFi connection timeout, restarting...");
-            ESP.restart();
-            return;
+        while (WiFi.status() != WL_CONNECTED) {
+            if (millis() - startTime > WIFI_CONNECT_TIMEOUT) {
+                DEBUG_ERROR("[OTA] WiFi timeout on attempt %d", attemptCount);
+                break;
+            }
+            vTaskDelay(500 / portTICK_PERIOD_MS);
         }
-        vTaskDelay(500 / portTICK_PERIOD_MS);
-        Serial.print(".");
-    }
-    Serial.println(" connected!");
-    Serial.printf("[OTA] IP: %s\n", WiFi.localIP().toString().c_str());
 
-    WiFiClientSecure* client = new WiFiClientSecure();
-    if (!client) {
-        Serial.println("[OTA] Failed to allocate WiFiClientSecure");
-        ESP.restart();
-        return;
-    }
+        // Check if WiFi connection failed
+        if (WiFi.status() != WL_CONNECTED) {
+            if (attemptCount < MAX_RETRIES) {
+                DEBUG_INFO("[OTA] Retrying in 2 seconds...");
+                vTaskDelay(2000 / portTICK_PERIOD_MS);
+                continue;
+            } else {
+                DEBUG_ERROR("[OTA] All WiFi connection attempts failed");
+                break;
+            }
+        }
 
-    client->setInsecure();
-    HTTPClient http;
-    http.setTimeout(30000);  // 30 second timeout
+        WiFiClientSecure* client = new WiFiClientSecure();
+        if (!client) {
+            DEBUG_ERROR("[OTA] Client alloc failed on attempt %d",
+                        attemptCount);
+            if (attemptCount < MAX_RETRIES) {
+                vTaskDelay(2000 / portTICK_PERIOD_MS);
+                continue;
+            }
+            break;
+        }
 
-    Serial.println("[OTA] Connecting to update server...");
-    if (!http.begin(*client, firmware_url)) {
-        Serial.println("[OTA] Failed to begin HTTP connection");
-        delete client;
-        ESP.restart();
-        return;
-    }
+        client->setInsecure();
+        HTTPClient http;
+        http.setTimeout(30000);
 
-    int httpCode = http.GET();
-    if (httpCode == HTTP_CODE_OK) {
-        int contentLength = http.getSize();
-        Serial.printf("[OTA] Firmware size: %d bytes\n", contentLength);
-
-        if (contentLength <= 0) {
-            Serial.println("[OTA] Invalid content length");
-            http.end();
+        if (!http.begin(*client, firmware_url)) {
+            DEBUG_ERROR("[OTA] HTTP begin failed on attempt %d", attemptCount);
             delete client;
-            ESP.restart();
-            return;
+            if (attemptCount < MAX_RETRIES) {
+                vTaskDelay(2000 / portTICK_PERIOD_MS);
+                continue;
+            }
+            break;
         }
 
-        if (!Update.begin(contentLength)) {
-            Serial.printf(
-                "[OTA] Not enough space. Required: %d, Available: %d\n",
-                contentLength, ESP.getFreeSketchSpace());
-            http.end();
-            delete client;
-            ESP.restart();
-            return;
-        }
+        int httpCode = http.GET();
+        if (httpCode == HTTP_CODE_OK) {
+            int contentLength = http.getSize();
+            if (contentLength <= 0 || !Update.begin(contentLength)) {
+                DEBUG_ERROR("[OTA] Invalid size or begin failed on attempt %d",
+                            attemptCount);
+                http.end();
+                delete client;
+                if (attemptCount < MAX_RETRIES) {
+                    vTaskDelay(2000 / portTICK_PERIOD_MS);
+                    continue;
+                }
+                break;
+            }
 
-        Serial.println("[OTA] Writing firmware...");
-        WiFiClient* stream = http.getStreamPtr();
-        size_t written = Update.writeStream(*stream);
+            WiFiClient* stream = http.getStreamPtr();
+            size_t written = Update.writeStream(*stream);
+            if (written != contentLength) {
+                DEBUG_ERROR("[OTA] Write mismatch on attempt %d", attemptCount);
+                Update.abort();
+                http.end();
+                delete client;
+                if (attemptCount < MAX_RETRIES) {
+                    vTaskDelay(2000 / portTICK_PERIOD_MS);
+                    continue;
+                }
+                break;
+            }
 
-        Serial.printf("[OTA] Written %d/%d bytes\n", (int)written,
-                      contentLength);
-
-        if (Update.end()) {
-            if (Update.isFinished()) {
-                Serial.println("[OTA] Update finished successfully!");
+            if (Update.end() && Update.isFinished()) {
+                DEBUG_INFO("[OTA] Update successful on attempt %d!",
+                           attemptCount);
+                updateSuccess = true;
                 http.end();
                 delete client;
                 vTaskDelay(1000 / portTICK_PERIOD_MS);
                 ESP.restart();
+                return;
             } else {
-                Serial.println("[OTA] Update not finished properly");
-                Update.printError(Serial);
+                DEBUG_ERROR("[OTA] Update.end() failed on attempt %d",
+                            attemptCount);
+                http.end();
+                delete client;
+                if (attemptCount < MAX_RETRIES) {
+                    vTaskDelay(2000 / portTICK_PERIOD_MS);
+                    continue;
+                }
             }
         } else {
-            Serial.printf("[OTA] Update error: %d\n", Update.getError());
-            Update.printError(Serial);
+            DEBUG_ERROR("[OTA] HTTP failed with code %d on attempt %d",
+                        httpCode, attemptCount);
+            http.end();
+            delete client;
+            if (attemptCount < MAX_RETRIES) {
+                vTaskDelay(2000 / portTICK_PERIOD_MS);
+                continue;
+            }
         }
-    } else {
-        Serial.printf("[OTA] HTTP GET failed, code: %d\n", httpCode);
     }
 
-    http.end();
-    delete client;
-
-    Serial.println("[OTA] Update failed, restarting...");
-    setLedColor(255, 0, 0);  // Red on failure
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    // If we get here, all attempts failed
+    DEBUG_ERROR("[OTA] All %d update attempts failed. Restarting...",
+                MAX_RETRIES);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
     ESP.restart();
 }
 
 void meshInit() {
     mesh.setDebugMsgTypes(ERROR | STARTUP);
 
+    esp_wifi_set_ps(WIFI_PS_NONE);
+
     mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA);
     mesh.onReceive(&receivedCallback);
+    mesh.onDroppedConnection(&onDroppedConnection);
+    mesh.onNewConnection(&onNewConnection);
 
     deviceId = mesh.getNodeId();
-    Serial.printf("SWITCH: Device ID: %u\n", deviceId);
-    Serial.printf("SWITCH: Free heap: %d bytes\n", ESP.getFreeHeap());
+    DEBUG_INFO("SWITCH: Device ID: %u", deviceId);
+    DEBUG_INFO("SWITCH: Free heap: %d bytes", ESP.getFreeHeap());
+}
+
+void restartMesh() {
+    DEBUG_ERROR("MESH: Restarting ESP32 due to mesh timeout");
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    ESP.restart();
 }
 
 void sendStatusReport(void* pvParameters) {
@@ -216,7 +281,12 @@ void sendStatusReport(void* pvParameters) {
             continue;
         }
 
-        Serial.println("MESH: Sending status report to root");
+        if (rootId == 0) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        DEBUG_VERBOSE("MESH: Sending status report to root");
 
         JsonDocument doc;
         doc["rssi"] = WiFi.RSSI();
@@ -232,53 +302,22 @@ void sendStatusReport(void* pvParameters) {
         String msg;
         serializeJson(doc, msg);
 
-        // Send via mesh
-        if (mesh.sendSingle(rootId, msg)) {
-            Serial.printf("MESH: Status report: %s\n", msg.c_str());
-            Serial.println("MESH: Status report sent successfully");
-        } else {
-            Serial.println("MESH: Failed to send status report");
-        }
+        meshMessageQueue.push({rootId, msg});
 
         vTaskDelay(pdMS_TO_TICKS(STATUS_REPORT_INTERVAL));
     }
 }
 
 void receivedCallback(const uint32_t& from, const String& msg) {
-    Serial.printf("MESH: [%u] %s\n", from, msg.c_str());
-
-    if (msg == "U") {
-        Serial.println("MESH: Firmware update command received");
-        otaTimer = millis();
-        setLedColor(0, 0, 255);
-        otaInProgress = true;
-        return;
-    }
-
-    if (msg == "Q") {
-        Serial.println("MESH: Registration query received from root");
-        rootId = from;
-        mesh.sendSingle(rootId, "S");
-        Serial.printf("MESH: Sent registration 'S' to root %u\n", rootId);
-        return;
-    }
-
-    if (msg == "A") {
-        Serial.println("MESH: Registration accepted by root");
-        registeredWithRoot = true;
-        return;
-    }
-
-    // Handle other messages if needed
-    Serial.printf("MESH: Unknown message from %u: %s\n", from, msg.c_str());
+    DEBUG_VERBOSE("MESH: [%u] %s", from, msg.c_str());
+    meshCallbackQueue.push({from, msg});
 }
 
 void printNodes() {
     auto nodes = mesh.getNodeList();
-    Serial.printf("MESH: Connected to %u node(s)\n", nodes.size());
+    DEBUG_INFO("MESH: Connected to %u node(s)", nodes.size());
     for (auto node : nodes) {
-        Serial.printf("  Node: %u%s\n", node,
-                      (node == rootId) ? " (ROOT)" : "");
+        DEBUG_INFO("  Node: %u%s", node, (node == rootId) ? " (ROOT)" : "");
     }
 }
 
@@ -289,26 +328,26 @@ void statusPrint(void* pvParameters) {
             continue;
         }
 
-        Serial.println("\n--- Status Report ---");
-        Serial.printf("Device ID: %u\n", deviceId);
-        Serial.printf("Firmware MD5: %s\n", fw_md5.c_str());
-        Serial.printf("Root ID: %u\n", rootId);
-        Serial.printf("Registered: %s\n", registeredWithRoot ? "Yes" : "No");
-        Serial.printf("Free Heap: %d bytes\n", ESP.getFreeHeap());
-        Serial.printf("Uptime: %lu seconds\n", millis() / 1000);
-        Serial.printf("WiFi RSSI: %d dBm\n", WiFi.RSSI());
-        Serial.printf("Time to reset: %d\n",
-                      90 - ((micros() - resetTimer) / 1000000));
+        DEBUG_INFO("\n--- Status Report ---");
+        DEBUG_INFO("Device ID: %u", deviceId);
+        DEBUG_INFO("Firmware MD5: %s", fw_md5.c_str());
+        DEBUG_INFO("Root ID: %u", rootId);
+        DEBUG_INFO("Registered: %s", registeredWithRoot ? "Yes" : "No");
+        DEBUG_INFO("Free Heap: %d bytes", ESP.getFreeHeap());
+        DEBUG_INFO("Uptime: %lu seconds", millis() / 1000);
+        DEBUG_INFO("WiFi RSSI: %d dBm", WiFi.RSSI());
+        DEBUG_INFO("Time to reset: %d",
+                   RESET_TIMEOUT - (millis() - resetTimer));
 
         printNodes();
-        Serial.println("-------------------\n");
+        DEBUG_INFO("-------------------\n");
 
         vTaskDelay(pdMS_TO_TICKS(STATUS_PRINT_INTERVAL));
     }
 }
 
 void resetTask(void* pvParameters) {
-    while ((micros() - resetTimer) / 1000000 < 90) {
+    while (true) {
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
@@ -317,13 +356,13 @@ void resetTask(void* pvParameters) {
         if (mesh.getNodeList().empty()) {
             registeredWithRoot = false;
         } else if (registeredWithRoot) {
-            resetTimer = micros();
+            resetTimer = millis();
         }
+
+        if ((millis() - resetTimer) > RESET_TIMEOUT) restartMesh();
 
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
-
-    ESP.restart();
 }
 
 void handleButtonsTask(void* pvParameters) {
@@ -351,32 +390,25 @@ void handleButtonsTask(void* pvParameters) {
                 clicks++;
 
                 char msg = 'a' + i;
-                Serial.printf("BUTTON: Button %d pressed, sending '%c'\n", i,
+                DEBUG_VERBOSE("BUTTON: Button %d pressed, sending '%c'", i,
                               msg);
 
                 // Check if we're connected to mesh
                 if (mesh.getNodeList().empty()) {
-                    Serial.println(
-                        "BUTTON: No mesh connection, message not sent");
+                    DEBUG_ERROR("BUTTON: No mesh connection, message not sent");
                     setLedColor(255, 0, 0);  // Flash red
                     vTaskDelay(100 / portTICK_PERIOD_MS);
                     continue;
                 }
 
-                String message =
-                    String(msg);  // Format: just the letter (e.g., 'a')
-                if (mesh.sendSingle(rootId, message)) {
-                    Serial.printf("BUTTON: Sent '%s' to root %u\n",
-                                  message.c_str(), rootId);
+                String message = String(msg);
+                meshMessageQueue.push({rootId, message});
+                DEBUG_VERBOSE("BUTTON: Sent '%s' to root %u", message.c_str(),
+                              rootId);
 
-                    // Flash LED to confirm
-                    setLedColor(0, 255, 255);  // Cyan flash
-                    vTaskDelay(50 / portTICK_PERIOD_MS);
-                } else {
-                    Serial.println("BUTTON: Failed to send message");
-                    setLedColor(255, 128, 0);  // Orange flash
-                    vTaskDelay(100 / portTICK_PERIOD_MS);
-                }
+                // Flash LED to confirm
+                setLedColor(0, 255, 255);  // Cyan flash
+                vTaskDelay(50 / portTICK_PERIOD_MS);
             }
 
             lastButtonState[i] = currentState;
@@ -386,36 +418,114 @@ void handleButtonsTask(void* pvParameters) {
 
 void registerTask(void* pvParameters) {
     while (true) {
+        vTaskDelay(pdMS_TO_TICKS(REGISTRATION_RETRY_INTERVAL));
+
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
 
         if (!registeredWithRoot) {
-            Serial.println("MESH: Attempting registration with root...");
-
             if (rootId == 0) {
-                Serial.println("MESH: Root ID unknown, cannot register");
+                DEBUG_VERBOSE("MESH: Root ID unknown, cannot register");
                 continue;
             }
 
-            mesh.sendSingle(rootId, "S");
-            Serial.printf("MESH: Sent registration 'S' to root %u\n", rootId);
-        }
+            DEBUG_INFO("MESH: Attempting registration with root...");
 
-        vTaskDelay(pdMS_TO_TICKS(REGISTRATION_RETRY_INTERVAL));
+            meshMessageQueue.push({rootId, "S"});
+            DEBUG_VERBOSE("MESH: Sent registration 'S' to root %u", rootId);
+        }
     }
 }
 
-void meshUpdateTask(void* pvParameters) {
+void onNewConnection(uint32_t nodeId) {
+    DEBUG_INFO("MESH: New connection from node %u", nodeId);
+
+    if (rootId == 0) {
+        DEBUG_ERROR("MESH: Root ID unknown, cannot register");
+        return;
+    }
+
+    meshMessageQueue.push({rootId, "S"});
+    DEBUG_VERBOSE("MESH: Sent registration 'S' to root %u", rootId);
+
+    printNodes();
+}
+
+void onDroppedConnection(uint32_t nodeId) {
+    DEBUG_ERROR("MESH: Dropped connection to node %u", nodeId);
+    DEBUG_ERROR("MESH: Lost connection to root, resetting");
+
+    registeredWithRoot = false;
+    disconnects++;
+}
+
+void meshCallbackTask(void* pvParameters) {
     while (true) {
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
 
-        mesh.update();
-        vTaskDelay(pdMS_TO_TICKS(1));  // Reduced delay for faster processing
+        if (meshCallbackQueue.empty()) {
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
+        vTaskDelay(pdMS_TO_TICKS(5));
+
+        std::pair<uint32_t, String> message = meshCallbackQueue.front();
+        uint32_t from = message.first;
+        String msg = message.second;
+        meshCallbackQueue.pop();
+
+        if (msg == "U") {
+            DEBUG_INFO("MESH: Firmware update command received");
+            otaTimer = millis();
+            setLedColor(0, 0, 255);
+            otaInProgress = true;
+            continue;
+        }
+
+        if (msg == "Q") {
+            DEBUG_VERBOSE("MESH: Registration query received from root");
+            rootId = from;
+            meshMessageQueue.push({rootId, "S"});
+            DEBUG_VERBOSE("MESH: Sent registration 'S' to root %u", rootId);
+            continue;
+        }
+
+        if (msg == "A") {
+            DEBUG_INFO("MESH: Registration accepted by root");
+            registeredWithRoot = true;
+            continue;
+        }
+
+        DEBUG_ERROR("MESH: Unknown message from %u: %s", from, msg.c_str());
+    }
+}
+
+void sendMeshMessages(void* pvParameters) {
+    while (true) {
+        if (otaInProgress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        if (meshMessageQueue.empty()) {
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
+        vTaskDelay(pdMS_TO_TICKS(5));
+
+        std::pair<uint32_t, String> message = meshMessageQueue.front();
+        meshMessageQueue.pop();
+
+        uint32_t to = message.first;
+        String msg = message.second;
+
+        mesh.sendSingle(to, msg);
+        DEBUG_VERBOSE("MESH: Sent message to %u: %s", to, msg.c_str());
     }
 }
 
@@ -425,16 +535,16 @@ void setup() {
 
     fw_md5 = ESP.getSketchMD5();
 
-    Serial.println("\n\n========================================");
-    Serial.println("ESP32-C3 Mesh Switch Node Starting...");
-    Serial.printf("Chip Model: %s\n", ESP.getChipModel());
-    Serial.printf("Sketch MD5: %s\n", fw_md5.c_str());
-    Serial.printf("Chip Revision: %d\n", ESP.getChipRevision());
-    Serial.printf("CPU Frequency: %d MHz\n", ESP.getCpuFreqMHz());
-    Serial.printf("Free Heap: %d bytes\n", ESP.getFreeHeap());
-    Serial.printf("Flash Size: %d bytes\n", ESP.getFlashChipSize());
-    Serial.printf("Reset Timer: %d\n", resetTimer);
-    Serial.println("========================================\n");
+    DEBUG_INFO("\n\n========================================");
+    DEBUG_INFO("ESP32-C3 Mesh Switch Node Starting...");
+    DEBUG_INFO("Chip Model: %s", ESP.getChipModel());
+    DEBUG_INFO("Sketch MD5: %s", fw_md5.c_str());
+    DEBUG_INFO("Chip Revision: %d", ESP.getChipRevision());
+    DEBUG_INFO("CPU Frequency: %d MHz", ESP.getCpuFreqMHz());
+    DEBUG_INFO("Free Heap: %d bytes", ESP.getFreeHeap());
+    DEBUG_INFO("Flash Size: %d bytes", ESP.getFlashChipSize());
+    DEBUG_INFO("Time To Reset: %d", RESET_TIMEOUT - (millis() - resetTimer));
+    DEBUG_INFO("========================================\n");
 
     // Initialize NeoPixel
     pixels.begin();
@@ -449,60 +559,23 @@ void setup() {
         pinMode(buttonPins[i], INPUT_PULLDOWN);
     }
 
-    // Setup new connection callback
-    mesh.onNewConnection([](uint32_t nodeId) {
-        Serial.printf("MESH: New connection from node %u\n", nodeId);
-
-        // Send registration multiple times to ensure delivery
-        vTaskDelay(pdMS_TO_TICKS(1000));  // Wait for connection to stabilize
-
-        if (rootId == 0) {
-            Serial.println("MESH: Root ID unknown, cannot register");
-            return;
-        }
-
-        mesh.sendSingle(rootId, "S");
-        Serial.printf("MESH: Sent registration 'S' to root %u\n", rootId);
-
-        printNodes();
-    });
-
-    // Setup dropped connection callback
-    mesh.onDroppedConnection([](uint32_t nodeId) {
-        Serial.printf("MESH: Lost connection to node %u\n", nodeId);
-
-        Serial.println("MESH: Lost connection to root, resetting");
-        registeredWithRoot = false;
-        disconnects++;
-    });
-
     // Start button handler task
     xTaskCreatePinnedToCore(handleButtonsTask, "ButtonTask", 4096, NULL, 2,
                             NULL, 0);
-
-    // Start LED status update task
     xTaskCreatePinnedToCore(updateLedStatus, "LedTask", 4096, NULL, 1, NULL, 0);
-
-    // Start status print task
     xTaskCreatePinnedToCore(statusPrint, "StatusPrintTask", 4096, NULL, 1, NULL,
                             0);
-
-    // Start reset watchdog task
     xTaskCreatePinnedToCore(resetTask, "ResetTask", 4096, NULL, 1, NULL, 0);
-
-    // Start status report task
     xTaskCreatePinnedToCore(sendStatusReport, "SendStatusReportTask", 4096,
                             NULL, 1, NULL, 0);
-
-    // Start registration task
     xTaskCreatePinnedToCore(registerTask, "RegisterTask", 4096, NULL, 1, NULL,
                             0);
-
-    // Start mesh update task
-    xTaskCreatePinnedToCore(meshUpdateTask, "MeshUpdateTask", 8192, NULL, 5,
+    xTaskCreatePinnedToCore(meshCallbackTask, "MeshCallbackTask", 8192, NULL, 4,
+                            NULL, 0);
+    xTaskCreatePinnedToCore(sendMeshMessages, "SendMeshMessages", 8192, NULL, 2,
                             NULL, 0);
 
-    Serial.println("SWITCH: Setup complete, waiting for mesh connections...");
+    DEBUG_INFO("SWITCH: Setup complete, waiting for mesh connections...");
 }
 
 void loop() {
@@ -511,12 +584,17 @@ void loop() {
     if (otaInProgress && !otaTaskStarted && millis() - otaTimer > 3000) {
         otaTaskStarted = true;
 
-        Serial.println("[OTA] Disconnecting mesh...");
+        DEBUG_INFO("[OTA] Disconnecting mesh...");
 
         xTaskCreatePinnedToCore(otaTask, "OTA", 4096, NULL, 5, NULL,
                                 0  // Core 0
         );
     }
 
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    if (otaInProgress) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    } else {
+        mesh.update();
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
 }

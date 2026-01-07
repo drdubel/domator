@@ -47,14 +47,24 @@ class StateManager:
         self._online_relays[relay_id] = timestamp
 
     async def check_relays_if_online(self):
+        to_remove = []
+
         for id, timestamp in self._online_relays.items():
             if timestamp + 30 < time():
-                self.mark_relay_offline(id)
+                to_remove.append(id)
+
+        for id in to_remove:
+            self.mark_relay_offline(id)
 
     async def check_switches_if_online(self):
+        to_remove = []
+
         for id, timestamp in self._online_switches.items():
             if timestamp + 30 < time():
-                self.mark_switch_offline(id)
+                to_remove.append(id)
+
+        for id in to_remove:
+            self.mark_switch_offline(id)
 
     def get_state(self, relay_id: int, output_id: str) -> int | None:
         return self._states.get(relay_id, {}).get(output_id)

@@ -809,13 +809,20 @@ void meshCallbackTask(void* pvParameters) {
         if (msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
             if (msg.length() == 1) {
                 handleSwitchMessage(from, msg[0]);
-            } else {
+            } else if (msg.length() == 2 && msg[1] >= '0' && msg[1] <= '1') {
                 handleSwitchMessage(from, msg[0], msg[1] - '0');
             }
+
+            safePush(mqttMessageQueue,
+                     std::make_pair(
+                         String(String("/switch/state/") + String(from)), msg),
+                     mqttMessageQueueMutex, stats.mqttDropped, "MQTT-MSG");
+
             continue;
         }
         if (msg.length() == 2 && msg[0] >= 'A' && msg[0] < 'A' + NLIGHTS) {
             handleRelayMessage(from, msg);
+
             continue;
         }
         if (isValidJson(msg)) {

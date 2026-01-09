@@ -363,7 +363,44 @@ function bindJsPlumbEvents() {
         console.log("Clicked connection:", connection.sourceId, "->", connection.targetId)
     })
 
+    jsPlumbInstance.bind("dblclick", function (connection, e) {
+        e.preventDefault()
 
+        const sourceId = connection.sourceId
+        const targetId = connection.targetId
+
+        const switchMatch = sourceId.match(/switch-(\d+)-btn-(\w+)/)
+        const relayMatch = targetId.match(/relay-(\d+)-output-(\w+)/)
+
+        if (switchMatch && relayMatch) {
+            const switchId = parseInt(switchMatch[1])
+            const buttonId = switchMatch[2]
+            const relayId = parseInt(relayMatch[1])
+            const outputId = relayMatch[2]
+
+            console.log('Double-clicked connection, removing:', { switchId, buttonId, relayId, outputId })
+
+            postForm('/lights/remove_connection', {
+                switch_id: switchId,
+                button_id: buttonId,
+                relay_id: relayId,
+                output_id: outputId
+            }).then(result => {
+                if (result) {
+                    jsPlumbInstance.deleteConnection(connection)
+
+                    if (connections[switchId] && connections[switchId][buttonId]) {
+                        connections[switchId][buttonId] = connections[switchId][buttonId].filter(
+                            conn => !(conn.relayId === relayId && conn.outputId === outputId)
+                        )
+                    }
+                    console.log('Connection removed successfully')
+                } else {
+                    console.error('Failed to remove connection from API')
+                }
+            })
+        }
+    })
 }
 
 function highlightDevice(deviceId) {

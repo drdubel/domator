@@ -82,6 +82,15 @@ function connectWebSocket() {
 
             updateOnlineStatus()
         }
+
+        if (msg.type == "switch_state" && msg.switch_id && msg.button_id) {
+            highlightButton(msg.switch_id, msg.button_id)
+
+            // Auto-clear highlight after 5 seconds
+            setTimeout(() => {
+                clearButtonHighlight(msg.switch_id, msg.button_id)
+            }, 5000)
+        }
     }
 
     ws.onerror = function (error) {
@@ -451,6 +460,42 @@ function clearHighlights() {
     })
 
     highlightedDevice = null
+}
+
+function highlightButton(switchId, buttonId) {
+    const buttonElement = document.getElementById(`switch-${switchId}-btn-${buttonId}`)
+    if (!buttonElement) {
+        console.warn(`Button not found: switch-${switchId}-btn-${buttonId}`)
+        return
+    }
+
+    // Set initial red background
+    buttonElement.style.background = 'rgba(255, 0, 0, 1)'
+    buttonElement.style.transition = 'none'
+
+    // Force reflow to ensure the transition works
+    buttonElement.offsetHeight
+
+    // Start fading to normal blue gradient color over 5 seconds
+    // Using ease-in: starts slow, ends fast
+    requestAnimationFrame(() => {
+        buttonElement.style.transition = 'background 5s ease-in'
+        buttonElement.style.background = 'linear-gradient(135deg, rgba(99, 102, 241, 0.2) 0%, rgba(79, 70, 229, 0.2) 100%)'
+    })
+
+    console.log('Highlighted button:', switchId, buttonId)
+}
+
+function clearButtonHighlight(switchId, buttonId) {
+    const buttonElement = document.getElementById(`switch-${switchId}-btn-${buttonId}`)
+    if (!buttonElement) {
+        console.warn(`Button not found: switch-${switchId}-btn-${buttonId}`)
+        return
+    }
+
+    buttonElement.style.background = ''
+    buttonElement.style.transition = ''
+    console.log('Cleared button highlight:', switchId, buttonId)
 }
 
 function initJsPlumb() {

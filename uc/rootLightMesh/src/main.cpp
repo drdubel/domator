@@ -357,6 +357,72 @@ void parseConnections(JsonObject root) {
     xSemaphoreGive(connectionsMapMutex);
 }
 
+void sendConnectionToNode(uint32_t nodeId) {
+    String nodeIdStr = String(nodeId);
+
+    // Check if this node has connections
+    if (xSemaphoreTake(connectionsMapMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        DEBUG_ERROR(
+            "sendConnectionToNode: Failed to acquire connections mutex");
+        return;
+    }
+
+    auto it = connections.find(nodeIdStr);
+    if (it == connections.end()) {
+        xSemaphoreGive(connectionsMapMutex);
+        DEBUG_VERBOSE("No connections configured for node %u", nodeId);
+        return;
+    }
+
+    // Build JSON for this specific node
+    JsonDocument doc;
+    JsonObject nodeObj = doc[nodeIdStr].to<JsonObject>();
+
+    for (const auto& letterPair : it->second) {
+        char letter = letterPair.first;
+        JsonArray letterArray = nodeObj[String(letter)].to<JsonArray>();
+
+        for (const auto& target : letterPair.second) {
+            JsonArray targetPair = letterArray.add<JsonArray>();
+            targetPair.add(target.first);
+            targetPair.add(target.second);
+        }
+    }
+
+    String jsonStr;
+    serializeJson(doc, jsonStr);
+    xSemaphoreGive(connectionsMapMutex);
+
+    // Send to this specific node
+    safePush(meshMessageQueue, std::make_pair(nodeId, jsonStr),
+             meshMessageQueueMutex, stats.meshDropped, "MESH-MSG");
+    DEBUG_INFO("Sent connections to node %u: %s", nodeId, jsonStr.c_str());
+}
+
+void sendConnectionsToAllNodes() {
+    // First, get list of all node IDs while holding nodes mutex
+    if (xSemaphoreTake(nodesMapMutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        DEBUG_ERROR("sendConnectionsToAllNodes: Failed to acquire nodes mutex");
+        return;
+    }
+
+    std::vector<uint32_t> nodeIds;
+    for (const auto& node : nodes) {
+        nodeIds.push_back(node.first);
+    }
+    xSemaphoreGive(nodesMapMutex);
+
+    DEBUG_INFO("Sending connections to %d nodes", nodeIds.size());
+
+    // Send to each node
+    for (uint32_t nodeId : nodeIds) {
+        sendConnectionToNode(nodeId);
+        vTaskDelay(pdMS_TO_TICKS(50));  // Small delay to avoid flooding mesh
+    }
+
+    DEBUG_INFO("Finished sending connections to all nodes");
+}
+
 void mqttConnect() {
     if (WiFi.status() != WL_CONNECTED) {
         DEBUG_VERBOSE("mqttConnect: WiFi not connected");
@@ -732,6 +798,8 @@ void mqttCallbackTask(void* pvParameters) {
             JsonDocument doc;
             deserializeJson(doc, msg);
             parseConnections(doc.as<JsonObject>());
+
+            sendConnectionsToAllNodes();
             continue;
         }
 
@@ -743,28 +811,30 @@ void mqttCallbackTask(void* pvParameters) {
             String idStr = topic.substring(lastSlash + 1);
             uint32_t nodeId = idStr.toInt();
             if (nodeId != 0 || idStr == "0") {
-                if (xSemaphoreTake(nodesMapMutex, pdMS_TO_TICKS(50)) ==
+                if (xSemaphoreTake(nodesMapMutex, pdMS_TO_TICKS(50)) !=
                     pdTRUE) {
-                    bool found = (nodes.count(nodeId) > 0);
-                    xSemaphoreGive(nodesMapMutex);
-                    if (found) {
-                        DEBUG_VERBOSE("Forwarding command to node %u: %s",
-                                      nodeId, msg.c_str());
-                        // Use priority queue for relay commands from MQTT
-                        if (isRelayCommand) {
-                            safePush(meshPriorityQueue,
-                                     std::make_pair(nodeId, msg),
-                                     meshPriorityQueueMutex, stats.meshDropped,
-                                     "MESH-PRIORITY");
-                        } else {
-                            safePush(meshMessageQueue,
-                                     std::make_pair(nodeId, msg),
-                                     meshMessageQueueMutex, stats.meshDropped,
-                                     "MESH-MSG");
-                        }
-                    } else {
-                        DEBUG_VERBOSE("Node %u not found in node list", nodeId);
-                    }
+                    DEBUG_ERROR("Failed to acquire nodes mutex");
+                    continue;
+                }
+
+                bool found = (nodes.count(nodeId) > 0);
+                xSemaphoreGive(nodesMapMutex);
+                if (!found) {
+                    DEBUG_VERBOSE("Node %u not found in node list", nodeId);
+                    continue;
+                }
+
+                DEBUG_VERBOSE("Forwarding command to node %u: %s", nodeId,
+                              msg.c_str());
+                // Use priority queue for relay commands from MQTT
+                if (isRelayCommand) {
+                    safePush(meshPriorityQueue, std::make_pair(nodeId, msg),
+                             meshPriorityQueueMutex, stats.meshDropped,
+                             "MESH-PRIORITY");
+                } else {
+                    safePush(meshMessageQueue, std::make_pair(nodeId, msg),
+                             meshMessageQueueMutex, stats.meshDropped,
+                             "MESH-MSG");
                 }
             }
         }
@@ -783,9 +853,11 @@ void meshCallbackTask(void* pvParameters) {
             vTaskDelay(pdMS_TO_TICKS(20));
             continue;
         }
+
         vTaskDelay(pdMS_TO_TICKS(5));
         uint32_t from = message.first;
         String msg = message.second;
+
         if (msg == "R") {
             DEBUG_INFO("Node %u identified as relay", from);
             if (xSemaphoreTake(nodesMapMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
@@ -794,8 +866,11 @@ void meshCallbackTask(void* pvParameters) {
             }
             safePush(meshMessageQueue, std::make_pair(from, String("A")),
                      meshMessageQueueMutex, stats.meshDropped, "MESH-MSG");
+
+            sendConnectionToNode(from);
             continue;
         }
+
         if (msg == "S") {
             DEBUG_INFO("Node %u identified as switch", from);
             if (xSemaphoreTake(nodesMapMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
@@ -804,8 +879,11 @@ void meshCallbackTask(void* pvParameters) {
             }
             safePush(meshMessageQueue, std::make_pair(from, String("A")),
                      meshMessageQueueMutex, stats.meshDropped, "MESH-MSG");
+
+            sendConnectionToNode(from);
             continue;
         }
+
         if (msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
             if (msg.length() == 1) {
                 handleSwitchMessage(from, msg[0]);
@@ -820,11 +898,13 @@ void meshCallbackTask(void* pvParameters) {
 
             continue;
         }
+
         if (msg.length() == 2 && msg[0] >= 'A' && msg[0] < 'A' + NLIGHTS) {
             handleRelayMessage(from, msg);
 
             continue;
         }
+
         if (isValidJson(msg)) {
             DEBUG_VERBOSE("Processing JSON status from node %u", from);
             JsonDocument doc;
@@ -842,6 +922,7 @@ void meshCallbackTask(void* pvParameters) {
             }
             continue;
         }
+
         DEBUG_VERBOSE("Unknown message from node %u: %s", from, msg.c_str());
     }
 }

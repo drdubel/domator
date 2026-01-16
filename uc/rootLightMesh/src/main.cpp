@@ -507,48 +507,6 @@ void receivedCallback(const uint32_t& from, const String& msg) {
              meshCallbackQueueMutex, stats.meshDropped, "MESH-CB");
 }
 
-void handleSwitchMessage(const uint32_t& from, const char output,
-                         int state = -1, bool priority = false) {
-    if (xSemaphoreTake(connectionsMapMutex, pdMS_TO_TICKS(100)) != pdTRUE) {
-        DEBUG_ERROR(
-            "Failed to acquire connections mutex in handleSwitchMessage");
-        return;
-    }
-    auto it = connections.find(String(from));
-    if (it == connections.end()) {
-        xSemaphoreGive(connectionsMapMutex);
-        return;
-    }
-    auto& outputMap = it->second;
-    auto outputIt = outputMap.find(output);
-    if (outputIt == outputMap.end()) {
-        xSemaphoreGive(connectionsMapMutex);
-        return;
-    }
-    std::vector<std::pair<String, String>> targets = outputIt->second;
-    xSemaphoreGive(connectionsMapMutex);
-    DEBUG_INFO("SWITCH: Handling message from %u for output %c (state: %d)",
-               from, output, state);
-    for (const auto& target : targets) {
-        String relayIdStr = target.first;
-        String command = target.second;
-        uint32_t relayId = relayIdStr.toInt();
-        DEBUG_VERBOSE("SWITCH: Sending command '%s' to relay %s (%u)",
-                      command.c_str(), relayIdStr.c_str(), relayId);
-        if (state != -1) command += String(state);
-
-        // Use priority queue for real-time commands
-        if (priority) {
-            safePush(meshPriorityQueue, std::make_pair(relayId, command),
-                     meshPriorityQueueMutex, stats.meshDropped,
-                     "MESH-PRIORITY");
-        } else {
-            safePush(meshMessageQueue, std::make_pair(relayId, command),
-                     meshMessageQueueMutex, stats.meshDropped, "MESH-MSG");
-        }
-    }
-}
-
 void handleRelayMessage(const uint32_t& from, const String& msg) {
     if (WiFi.status() != WL_CONNECTED || !mqttClient.connected()) {
         DEBUG_VERBOSE("handleRelayMessage: WiFi or MQTT not connected");
@@ -678,15 +636,18 @@ void statusReport(void* pvParameters) {
 
 void handleUpdateMessage(const String& topic) {
     DEBUG_INFO("Update requested for topic: %s", topic.c_str());
+
     if (topic == "/switch/cmd/root") {
         DEBUG_INFO("Root OTA update triggered");
         otaInProgress = true;
         return;
     }
+
     String path = topic;
     int lastSlash = path.lastIndexOf('/');
     String last = path.substring(lastSlash + 1);
     uint64_t nodeId;
+
     if (toUint64(last, nodeId)) {
         DEBUG_INFO("Update requested for node: %llu", nodeId);
         safePush(meshMessageQueue,
@@ -694,22 +655,28 @@ void handleUpdateMessage(const String& topic) {
                  meshMessageQueueMutex, stats.meshDropped, "MESH-MSG");
         return;
     }
+
     DEBUG_INFO("Broadcasting update to all compatible nodes");
     if (xSemaphoreTake(nodesMapMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         for (const auto& pair : nodes) {
             uint32_t nodeId = pair.first;
             String nodeType = pair.second;
+
             if ((nodeType == "relay" && topic == "/switch/cmd") ||
                 (nodeType == "switch" && topic == "/relay/cmd")) {
                 continue;
             }
+
             DEBUG_VERBOSE("Sending update to node %u (%s)", nodeId,
                           nodeType.c_str());
+
             xSemaphoreGive(nodesMapMutex);
+
             safePush(meshMessageQueue, std::make_pair(nodeId, String("U")),
                      meshMessageQueueMutex, stats.meshDropped, "MESH-MSG");
             xSemaphoreTake(nodesMapMutex, pdMS_TO_TICKS(100));
         }
+
         xSemaphoreGive(nodesMapMutex);
     }
 }
@@ -885,12 +852,6 @@ void meshCallbackTask(void* pvParameters) {
         }
 
         if (msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
-            if (msg.length() == 1) {
-                handleSwitchMessage(from, msg[0]);
-            } else if (msg.length() == 2 && msg[1] >= '0' && msg[1] <= '1') {
-                handleSwitchMessage(from, msg[0], msg[1] - '0');
-            }
-
             safePush(mqttMessageQueue,
                      std::make_pair(
                          String(String("/switch/state/") + String(from)), msg),

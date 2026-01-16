@@ -35,7 +35,7 @@ const byte wifiActivityPin = 255;
 #define LOW_HEAP_THRESHOLD 50000
 
 // Minimal debug - only errors and critical events
-#define DEBUG_LEVEL 1  // 0=none, 1=errors only, 2=info, 3=verbose
+#define DEBUG_LEVEL 3  // 0=none, 1=errors only, 2=info, 3=verbose
 
 #if DEBUG_LEVEL >= 1
 #define DEBUG_ERROR(fmt, ...) Serial.printf("[ERROR] " fmt "\n", ##__VA_ARGS__)
@@ -709,7 +709,11 @@ void buttonPressTask(void* pvParameters) {
         if (!pressed) continue;
 
         for (int i = 0; i < NLIGHTS; i++) {
-            if (!(pressed & (1 << i))) continue;
+            if (pressed & (1 << i)) {
+                pressed &= ~(1 << i);
+            } else {
+                continue;
+            }
 
             char button = 'a' + i;
             DEBUG_VERBOSE("BUTTON: Button %d pressed ('%c')", i, button);
@@ -734,12 +738,27 @@ void buttonPressTask(void* pvParameters) {
                 uint32_t targetId = target.first.toInt();
                 String command = target.second;
 
-                DEBUG_VERBOSE("  -> Node %s: %s", targetId.c_str(),
-                              command.c_str());
+                DEBUG_VERBOSE("  -> Node %u: %s", targetId, command.c_str());
 
-                safePush(meshPriorityQueue, std::make_pair(targetId, command),
-                         meshPriorityQueueMutex, stats.meshDropped,
-                         "MESH-PRIORITY");
+                if (targetId == deviceId) {
+                    uint32_t lightIndex = button - 'a';
+                    if (xSemaphoreTake(lightsArrayMutex, pdMS_TO_TICKS(50)) ==
+                        pdTRUE) {
+                        lights[lightIndex] = (command == "1") ? 1 : 0;
+                        digitalWrite(relays[lightIndex],
+                                     lights[lightIndex] ? HIGH : LOW);
+                        clicks++;
+                        DEBUG_INFO(
+                            "RELAY: Light %c set to %s by local button press",
+                            button, lights[lightIndex] ? "ON" : "OFF");
+                        xSemaphoreGive(lightsArrayMutex);
+                    }
+                } else {
+                    safePush(meshPriorityQueue,
+                             std::make_pair(targetId, command),
+                             meshPriorityQueueMutex, stats.meshDropped,
+                             "MESH-PRIORITY");
+                }
 
                 safePush(meshMessageQueue, std::make_pair(rootId, command),
                          meshMessageQueueMutex, stats.meshDropped, "MESH-MSG");

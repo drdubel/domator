@@ -980,6 +980,7 @@ void setup() {
 
 void loop() {
     static bool otaTaskStarted = false;
+
     if (otaInProgress && !otaTaskStarted) {
         otaTaskStarted = true;
         DEBUG_INFO("[OTA] Disconnecting mesh...");

@@ -812,11 +812,18 @@ void receivedCallback(const uint32_t& from, const String& msg) {
 }
 
 void processMeshMessage(const uint32_t& from, const String& msg) {
+    if (msg.startsWith("{")) {
+        DEBUG_INFO("MESH: Received connections configuration from %u", from);
+        receiveConnections(msg);
+        return;
+    }
+
     if (msg == "S") {
         DEBUG_INFO("MESH: Root %u requesting state sync", from);
         syncLightStates();
         return;
     }
+
     if (msg == "Q") {
         DEBUG_INFO("MESH: Registration query received from root");
         rootId = from;
@@ -825,6 +832,7 @@ void processMeshMessage(const uint32_t& from, const String& msg) {
         DEBUG_VERBOSE("MESH: Sent registration 'R' to root %u", rootId);
         return;
     }
+
     if (msg == "U") {
         DEBUG_INFO("MESH: Firmware update command received");
         otaTimerStarted = true;
@@ -964,13 +972,16 @@ void setup() {
     meshMessageQueueMutex = xSemaphoreCreateMutex();
     meshPriorityQueueMutex = xSemaphoreCreateMutex();
     lightsArrayMutex = xSemaphoreCreateMutex();
+    myConnectionsMutex = xSemaphoreCreateMutex();
 
     if (!meshCallbackQueueMutex || !meshMessageQueueMutex ||
-        !meshPriorityQueueMutex || !lightsArrayMutex) {
+        !meshPriorityQueueMutex || !lightsArrayMutex || !myConnectionsMutex) {
         DEBUG_ERROR("FATAL: Failed to create mutexes!");
         ESP.restart();
     }
     DEBUG_INFO("All mutexes created successfully");
+
+    loadConnectionsOnBoot();
 
     // Initialize relay pins
     for (int i = 0; i < NLIGHTS; i++) {
@@ -1012,6 +1023,7 @@ void setup() {
 
 void loop() {
     static bool otaTaskStarted = false;
+
     if (otaInProgress && !otaTaskStarted) {
         otaTaskStarted = true;
         DEBUG_INFO("[OTA] Disconnecting mesh...");

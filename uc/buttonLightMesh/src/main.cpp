@@ -27,7 +27,7 @@
 #define WIFI_CONNECT_TIMEOUT 20000
 #define REGISTRATION_RETRY_INTERVAL 10000
 #define STATUS_REPORT_INTERVAL 15000
-#define RESET_TIMEOUT 60000
+#define RESET_TIMEOUT 120000
 
 // Queue size limits
 #define MAX_QUEUE_SIZE 30
@@ -35,7 +35,7 @@
 #define LOW_HEAP_THRESHOLD 40000
 
 // Minimal debug - only errors and critical events
-#define DEBUG_LEVEL 1  // 0=none, 1=errors only, 2=info, 3=verbose
+#define DEBUG_LEVEL 3  // 0=none, 1=errors only, 2=info, 3=verbose
 
 #if DEBUG_LEVEL >= 1
 #define DEBUG_ERROR(fmt, ...) Serial.printf("[ERROR] " fmt "\n", ##__VA_ARGS__)
@@ -464,6 +464,7 @@ String loadConnectionsFromNVS() {
     connectionsHash = savedHash;
     DEBUG_INFO("loadConnectionsFromNVS: Loaded %d bytes, hash: %s",
                jsonStr.length(), savedHash.c_str());
+    DEBUG_INFO("loadConnectionsFromNVS: Connections data: %s", jsonStr.c_str());
 
     return jsonStr;
 }
@@ -495,18 +496,7 @@ bool hasConnectionsChanged(const String& newJsonStr) {
     return changed;
 }
 
-void receiveConnections(const String& jsonStr) {
-    if (!myConnectionsMutex) {
-        DEBUG_ERROR("receiveConnections: Mutex not initialized!");
-        return;
-    }
-
-    // Check if connections actually changed
-    if (!hasConnectionsChanged(jsonStr)) {
-        DEBUG_INFO("receiveConnections: No changes detected, skipping update");
-        return;
-    }
-
+void processConnectionsJSON(const String& jsonStr) {
     JsonDocument doc;
     DeserializationError err = deserializeJson(doc, jsonStr);
 
@@ -567,6 +557,21 @@ void receiveConnections(const String& jsonStr) {
 
     DEBUG_INFO("receiveConnections: Loaded %d buttons, %d total targets",
                myConnections.size(), totalTargets);
+}
+
+void receiveConnections(const String& jsonStr) {
+    if (!myConnectionsMutex) {
+        DEBUG_ERROR("receiveConnections: Mutex not initialized!");
+        return;
+    }
+
+    processConnectionsJSON(jsonStr);
+
+    // Check if connections actually changed
+    if (!hasConnectionsChanged(jsonStr)) {
+        DEBUG_INFO("receiveConnections: No changes detected, skipping update");
+        return;
+    }
 
     // Save to NVS
     if (saveConnectionsToNVS(jsonStr)) {

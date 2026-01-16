@@ -718,12 +718,6 @@ void buttonPressTask(void* pvParameters) {
             char button = 'a' + i;
             DEBUG_VERBOSE("BUTTON: Button %d pressed ('%c')", i, button);
 
-            if (mesh.getNodeList().empty()) {
-                DEBUG_ERROR("BUTTON: No mesh connection");
-                vTaskDelay(100 / portTICK_PERIOD_MS);
-                continue;
-            }
-
             auto targets = getTargetsForButton(button);
 
             if (targets.empty()) {
@@ -741,10 +735,10 @@ void buttonPressTask(void* pvParameters) {
                 DEBUG_VERBOSE("  -> Node %u: %s", targetId, command.c_str());
 
                 if (targetId == deviceId) {
-                    uint32_t lightIndex = button - 'a';
+                    uint32_t lightIndex = command[0] - 'a';
                     if (xSemaphoreTake(lightsArrayMutex, pdMS_TO_TICKS(50)) ==
                         pdTRUE) {
-                        lights[lightIndex] = (command == "1") ? 1 : 0;
+                        lights[lightIndex] = (lights[lightIndex]) ? 0 : 1;
                         digitalWrite(relays[lightIndex],
                                      lights[lightIndex] ? HIGH : LOW);
                         clicks++;

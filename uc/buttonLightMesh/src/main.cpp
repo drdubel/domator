@@ -28,6 +28,7 @@
 #define REGISTRATION_RETRY_INTERVAL 10000
 #define STATUS_REPORT_INTERVAL 15000
 #define RESET_TIMEOUT 120000
+#define OTA_START_DELAY 5000
 
 // Queue size limits
 #define MAX_QUEUE_SIZE 30
@@ -35,7 +36,7 @@
 #define LOW_HEAP_THRESHOLD 40000
 
 // Minimal debug - only errors and critical events
-#define DEBUG_LEVEL 3  // 0=none, 1=errors only, 2=info, 3=verbose
+#define DEBUG_LEVEL 1  // 0=none, 1=errors only, 2=info, 3=verbose
 
 #if DEBUG_LEVEL >= 1
 #define DEBUG_ERROR(fmt, ...) Serial.printf("[ERROR] " fmt "\n", ##__VA_ARGS__)
@@ -104,6 +105,8 @@ int lastButtonState[NLIGHTS] = {HIGH};
 bool registeredWithRoot = false;
 unsigned long long resetTimer = 0;
 uint32_t otaTimer = 0;
+
+bool otaTimerStarted = false;
 volatile bool otaInProgress = false;
 
 // Helper function to safely push to bounded queue
@@ -198,7 +201,6 @@ void updateLedStatus(void* pvParameters) {
 }
 
 void otaTask(void* pv) {
-    otaInProgress = true;
     DEBUG_INFO("[OTA] Stopping mesh...");
     mesh.stop();
     esp_task_wdt_deinit();
@@ -334,12 +336,6 @@ void meshInit() {
     deviceId = mesh.getNodeId();
     DEBUG_INFO("SWITCH: Device ID: %u", deviceId);
     DEBUG_INFO("SWITCH: Free heap: %d bytes", ESP.getFreeHeap());
-}
-
-void restartMesh() {
-    DEBUG_ERROR("MESH: Restarting ESP32 due to mesh timeout");
-    vTaskDelay(pdMS_TO_TICKS(100));
-    ESP.restart();
 }
 
 void sendStatusReport(void* pvParameters) {
@@ -712,12 +708,21 @@ void resetTask(void* pvParameters) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
+
         if (mesh.getNodeList().empty()) {
             registeredWithRoot = false;
         } else if (registeredWithRoot) {
             resetTimer = millis();
         }
-        if ((millis() - resetTimer) > RESET_TIMEOUT) restartMesh();
+
+        if (!otaTimerStarted)
+            otaTimer = millis();
+        else if ((millis() - otaTimer) > OTA_START_DELAY) {
+            otaInProgress = true;
+        }
+
+        if ((millis() - resetTimer) > RESET_TIMEOUT) ESP.restart();
+
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
@@ -770,10 +775,16 @@ void handleButtonsTask(void* pvParameters) {
 
                         DEBUG_VERBOSE("BUTTON: -> Node %u: %s", targetId,
                                       command.c_str());
+
                         safePush(meshPriorityQueue,
                                  std::make_pair(targetId, command),
                                  meshPriorityQueueMutex, stats.meshDropped,
                                  "MESH-PRIORITY");
+
+                        safePush(meshMessageQueue,
+                                 std::make_pair(rootId, command),
+                                 meshMessageQueueMutex, stats.meshDropped,
+                                 "MESH-MSG");
                     }
                 }
 
@@ -852,9 +863,8 @@ void meshCallbackTask(void* pvParameters) {
 
         if (msg == "U") {
             DEBUG_INFO("MESH: Firmware update command received");
-            otaTimer = millis();
+            otaTimerStarted = true;
             setLedColor(0, 0, 255);
-            otaInProgress = true;
             continue;
         }
 
@@ -974,7 +984,7 @@ void setup() {
 
 void loop() {
     static bool otaTaskStarted = false;
-    if (otaInProgress && !otaTaskStarted && millis() - otaTimer > 3000) {
+    if (otaInProgress && !otaTaskStarted) {
         otaTaskStarted = true;
         DEBUG_INFO("[OTA] Disconnecting mesh...");
         xTaskCreatePinnedToCore(otaTask, "OTA", 8192, NULL, 5, NULL,

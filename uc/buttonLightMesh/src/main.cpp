@@ -100,12 +100,13 @@ Preferences preferences;
 String connectionsHash = "";
 
 const int buttonPins[NLIGHTS] = {A0, A1, A3, A4, A5, 6, 7};
-unsigned long lastTimeClick[NLIGHTS] = {0};
+uint32_t lastTimeClick[NLIGHTS] = {0};
 int lastButtonState[NLIGHTS] = {HIGH};
-bool registeredWithRoot = false;
-unsigned long long resetTimer = 0;
-uint32_t otaTimer = 0;
 
+// State variables
+bool registeredWithRoot = false;
+uint32_t resetTimer = 0;
+uint32_t otaTimer = 0;
 bool otaTimerStarted = false;
 volatile bool otaInProgress = false;
 
@@ -573,11 +574,7 @@ void receiveConnections(const String& jsonStr) {
     if (saveConnectionsToNVS(jsonStr)) {
         DEBUG_INFO("receiveConnections: Saved to NVS successfully");
 
-// Flash LED to indicate config update
-#ifdef LED_PIN
         setLedColor(255, 0, 255);  // Magenta flash
-        vTaskDelay(pdMS_TO_TICKS(200));
-#endif
     } else {
         DEBUG_ERROR("receiveConnections: Failed to save to NVS");
     }
@@ -766,26 +763,25 @@ void handleButtonsTask(void* pvParameters) {
                     DEBUG_VERBOSE(
                         "BUTTON: No targets configured for button '%c'",
                         button);
-                } else {
-                    // Send to all configured targets
-                    DEBUG_INFO("BUTTON: Sending to %d targets", targets.size());
-                    for (const auto& target : targets) {
-                        uint32_t targetId = target.first.toInt();
-                        String command = target.second;
+                    continue;
+                }
+                DEBUG_INFO("BUTTON: Sending to %d targets", targets.size());
 
-                        DEBUG_VERBOSE("BUTTON: -> Node %u: %s", targetId,
-                                      command.c_str());
+                for (const auto& target : targets) {
+                    uint32_t targetId = target.first.toInt();
+                    String command = target.second;
 
-                        safePush(meshPriorityQueue,
-                                 std::make_pair(targetId, command),
-                                 meshPriorityQueueMutex, stats.meshDropped,
-                                 "MESH-PRIORITY");
+                    DEBUG_VERBOSE("BUTTON: -> Node %u: %s", targetId,
+                                  command.c_str());
 
-                        safePush(meshMessageQueue,
-                                 std::make_pair(rootId, command),
-                                 meshMessageQueueMutex, stats.meshDropped,
-                                 "MESH-MSG");
-                    }
+                    safePush(meshPriorityQueue,
+                             std::make_pair(targetId, command),
+                             meshPriorityQueueMutex, stats.meshDropped,
+                             "MESH-PRIORITY");
+
+                    safePush(meshMessageQueue, std::make_pair(rootId, command),
+                             meshMessageQueueMutex, stats.meshDropped,
+                             "MESH-MSG");
                 }
 
                 // Flash LED to confirm

@@ -736,11 +736,13 @@ void buttonPressTask(void* pvParameters) {
 
                 if (targetId == deviceId) {
                     uint32_t lightIndex = command[0] - 'a';
+
                     if (xSemaphoreTake(lightsArrayMutex, pdMS_TO_TICKS(50)) ==
                         pdTRUE) {
-                        lights[lightIndex] = (lights[lightIndex]) ? 0 : 1;
+                        lights[lightIndex] =
+                            buttonState[lightIndex] ? HIGH : LOW;
                         digitalWrite(relays[lightIndex],
-                                     lights[lightIndex] ? HIGH : LOW);
+                                     buttonState[lightIndex] ? HIGH : LOW);
                         clicks++;
                         DEBUG_INFO(
                             "RELAY: Light %c set to %s by local button press",

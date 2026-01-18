@@ -12,19 +12,12 @@ router = APIRouter(prefix="/lights")
 
 class ConnectionManager:
     def __init__(self):
-        self._connections: dict[int, dict[str, list[tuple[int, str]]]] = {}
-        self._relays: dict[int, str] = {}
-        self._switches: dict[int, tuple[str, int]] = {}
-        self._outputs: dict[int, dict[str, tuple[str, int]]] = {}
-        self._sections: dict[int, str] = {}
-        self._removed: bool = False
         self.rootId: Optional[int] = None
 
         self._init_db()
         self.create_tables()
-        self.load_from_db()
 
-        if not self._sections:
+        if not self.get_sections():
             self.add_section("Default")
 
     def _init_db(self):
@@ -32,193 +25,141 @@ class ConnectionManager:
         self.conn = psycopg.connect(
             f"dbname={config.psql.dbname} user={config.psql.user} password={config.psql.password} host={config.psql.host} port={config.psql.port}"
         )
-        self.cur = self.conn.cursor()
 
     def create_tables(self):
-        self.cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS relays (
-                id BIGINT PRIMARY KEY,
-                name TEXT NOT NULL
-            );
-            """
-        )
-        self.cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS sections (
-                id INTEGER PRIMARY KEY,
-                name TEXT NOT NULL
-            );
-            """
-        )
-        self.cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS outputs (
-                relay_id BIGINT REFERENCES relays(id),
-                output_id TEXT NOT NULL,
-                name TEXT NOT NULL,
-                section_id INTEGER,
-                PRIMARY KEY (relay_id, output_id)
-            );
-            """
-        )
-        self.cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS switches (
-                id BIGINT PRIMARY KEY,
-                name TEXT NOT NULL,
-                buttons INTEGER NOT NULL
-            );
-            """
-        )
-        self.cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS connections (
-                switch_id BIGINT REFERENCES switches(id),
-                button_id TEXT,
-                relay_id BIGINT REFERENCES relays(id),
-                output_id TEXT,
-                PRIMARY KEY (switch_id, button_id, relay_id, output_id)
-            );
-            """
-        )
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS relays (
+                    id BIGINT PRIMARY KEY,
+                    name TEXT NOT NULL
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sections (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS outputs (
+                    relay_id BIGINT REFERENCES relays(id),
+                    output_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    section_id INTEGER,
+                    PRIMARY KEY (relay_id, output_id)
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS switches (
+                    id BIGINT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    buttons INTEGER NOT NULL
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS connections (
+                    switch_id BIGINT REFERENCES switches(id),
+                    button_id TEXT,
+                    relay_id BIGINT REFERENCES relays(id),
+                    output_id TEXT,
+                    PRIMARY KEY (switch_id, button_id, relay_id, output_id)
+                );
+                """
+            )
+
         self.conn.commit()
-
-    def load_from_db(self):
-        self.cur.execute("SELECT id, name FROM relays;")
-        for relay_id, relay_name in self.cur.fetchall():
-            self._relays[relay_id] = relay_name
-
-        self.cur.execute("SELECT id, name, buttons FROM switches;")
-        for switch_id, switch_name, buttons in self.cur.fetchall():
-            self._switches[switch_id] = (switch_name, buttons)
-
-        self.cur.execute("SELECT relay_id, output_id, section_id, name FROM outputs;")
-        for relay_id, output_id, section_id, output_name in self.cur.fetchall():
-            if relay_id not in self._outputs:
-                self._outputs[relay_id] = {}
-            self._outputs[relay_id][output_id] = (output_name, section_id)
-
-        self.cur.execute(
-            "SELECT switch_id, button_id, relay_id, output_id FROM connections;"
-        )
-        for switch_id, button_id, relay_id, output_id in self.cur.fetchall():
-            if switch_id not in self._connections:
-                self._connections[switch_id] = {}
-
-            if button_id not in self._connections[switch_id]:
-                self._connections[switch_id][button_id] = []
-
-            self._connections[switch_id][button_id].append((relay_id, output_id))
-
-        self.cur.execute("SELECT id, name FROM sections;")
-        for section_id, section_name in self.cur.fetchall():
-            if section_id not in self._sections:
-                self._sections[section_id] = []
-            self._sections[section_id].append(section_name)
 
     def add_relay(self, relay_id: int, relay_name: str):
-        self._relays[relay_id] = relay_name
-
-        self.cur.execute(
-            """
-            INSERT INTO relays (id, name)
-            VALUES (%s, %s)
-            ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name;
-            """,
-            (relay_id, relay_name),
-        )
-
-        for i in range(8):
-            self.add_output(relay_id, chr(97 + i), f"Output {i + 1}", 0)
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO relays (id, name)
+                VALUES (%s, %s)
+                ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name;
+                """,
+                (relay_id, relay_name),
+            )
 
         self.conn.commit()
 
-    def get_relays(self) -> dict[int, str] | None:
-        return self._relays
+    def get_relays(self) -> dict[int, str]:
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT id, name FROM relays;")
+            relays = cur.fetchall()
+
+        return {row[0]: row[1] for row in relays}
 
     def rename_relay(self, relay_id: int, relay_name: str):
-        if relay_id in self._relays:
-            self._relays[relay_id] = relay_name
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE relays
+                SET name = %s
+                WHERE id = %s;
+                """,
+                (relay_name, relay_id),
+            )
 
-        self.cur.execute(
-            """
-            UPDATE relays
-            SET name = %s
-            WHERE id = %s;
-            """,
-            (relay_name, relay_id),
-        )
         self.conn.commit()
 
     def remove_relay(self, relay_id: int):
-        if relay_id in self._relays:
-            del self._relays[relay_id]
-
-        if relay_id in self._outputs:
-            del self._outputs[relay_id]
-
-        for switch_id in list(self._connections.keys()):
-            for button_id in list(self._connections[switch_id].keys()):
-                self._connections[switch_id][button_id] = [
-                    conn
-                    for conn in self._connections[switch_id][button_id]
-                    if conn[0] != relay_id
-                ]
-                if not self._connections[switch_id][button_id]:
-                    del self._connections[switch_id][button_id]
-            if not self._connections[switch_id]:
-                del self._connections[switch_id]
-
-        self.cur.execute(
-            """
-            DELETE FROM outputs
-            WHERE relay_id = %s;
-            """,
-            (relay_id,),
-        )
-
-        self.cur.execute(
-            """
-            DELETE FROM connections
-            WHERE relay_id = %s;
-            """,
-            (relay_id,),
-        )
-        self.cur.execute(
-            """
-            DELETE FROM relays
-            WHERE id = %s;
-            """,
-            (relay_id,),
-        )
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM outputs
+                WHERE relay_id = %s;
+                """,
+                (relay_id,),
+            )
+            cur.execute(
+                """
+                DELETE FROM connections
+                WHERE relay_id = %s;
+                """,
+                (relay_id,),
+            )
+            cur.execute(
+                """
+                DELETE FROM relays
+                WHERE id = %s;
+                """,
+                (relay_id,),
+            )
 
         self.conn.commit()
 
     def add_switch(self, switch_id: int, switch_name: str, buttons: int = 3):
-        self._switches[switch_id] = (switch_name, buttons)
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO switches (id, name, buttons)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, buttons = EXCLUDED.buttons;
+                """,
+                (switch_id, switch_name, buttons),
+            )
 
-        self.cur.execute(
-            """
-            INSERT INTO switches (id, name, buttons)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, buttons = EXCLUDED.buttons;
-            """,
-            (switch_id, switch_name, buttons),
-        )
         self.conn.commit()
 
     def get_switches(self) -> dict[int, tuple[str, int]] | None:
-        return self._switches
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT id, name, buttons FROM switches;")
+            switches = cur.fetchall()
+
+        return {row[0]: (row[1], row[2]) for row in switches}
 
     def rename_switch(self, switch_id: int, switch_name: str, buttons: int):
-        if switch_id in self._switches:
-            self._switches[switch_id] = (
-                switch_name,
-                buttons,
-            )
-
-            self.cur.execute(
+        with self.conn.cursor() as cur:
+            cur.execute(
                 """
                 UPDATE switches
                 SET name = %s, buttons = %s
@@ -226,65 +167,60 @@ class ConnectionManager:
                 """,
                 (switch_name, buttons, switch_id),
             )
-            self.conn.commit()
+
+        self.conn.commit()
 
     def remove_switch(self, switch_id: int):
-        if switch_id in self._connections:
-            del self._connections[switch_id]
-            self.cur.execute(
+        with self.conn.cursor() as cur:
+            cur.execute(
                 """
                 DELETE FROM connections
                 WHERE switch_id = %s;
                 """,
                 (switch_id,),
             )
-            self.conn.commit()
 
-        if switch_id in self._switches:
-            del self._switches[switch_id]
-            self.cur.execute(
+            cur.execute(
                 """
                 DELETE FROM switches
                 WHERE id = %s;
                 """,
                 (switch_id,),
             )
-            self.conn.commit()
+
+        self.conn.commit()
 
     def add_output(
         self, relay_id: int, output_id: str, output_name: str, section_id: int = 0
     ):
-        self._outputs.setdefault(relay_id, {})[output_id] = (output_name, section_id)
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO outputs (relay_id, output_id, name, section_id)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (relay_id, output_id) DO NOTHING;
+                """,
+                (relay_id, output_id, output_name, section_id),
+            )
 
-        self.cur.execute(
-            """
-            INSERT INTO outputs (relay_id, output_id, name, section_id)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (relay_id, output_id) DO NOTHING;
-            """,
-            (relay_id, output_id, output_name, section_id),
-        )
+        self.conn.commit()
 
     def name_output(self, relay_id: int, output_id: str, output_name: str):
-        section_id = self._outputs.get(relay_id, {}).get(output_id, ("", 0))[1]
-        self._outputs.setdefault(relay_id, {})[output_id] = (output_name, section_id)
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE outputs
+                SET name = %s
+                WHERE relay_id = %s AND output_id = %s;
+                """,
+                (output_name, relay_id, output_id),
+            )
 
-        self.cur.execute(
-            """
-            UPDATE outputs
-            SET name = %s
-            WHERE relay_id = %s AND output_id = %s;
-            """,
-            (output_name, relay_id, output_id),
-        )
         self.conn.commit()
 
     def change_output_section(self, relay_id: int, output_id: str, section_id: int):
-        if relay_id in self._outputs and output_id in self._outputs[relay_id]:
-            output_name, _ = self._outputs[relay_id][output_id]
-            self._outputs[relay_id][output_id] = (output_name, section_id)
-
-            self.cur.execute(
+        with self.conn.cursor() as cur:
+            cur.execute(
                 """
                 UPDATE outputs
                 SET section_id = %s
@@ -292,15 +228,27 @@ class ConnectionManager:
                 """,
                 (section_id, relay_id, output_id),
             )
-            self.conn.commit()
+
+        self.conn.commit()
 
     def get_outputs(self) -> dict[int, dict[str, tuple[str, int]]] | None:
-        return self._outputs
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT relay_id, output_id, name, section_id FROM outputs;")
+            outputs = cur.fetchall()
+
+        output_dict = {}
+        for row in outputs:
+            relay_id, output_id, name, section_id = row
+            if relay_id not in output_dict:
+                output_dict[relay_id] = {}
+            output_dict[relay_id][output_id] = (name, section_id)
+
+        return output_dict
 
     def get_named_outputs(self) -> dict[int, dict[str, tuple[str, int]]] | None:
         named_outputs = {}
 
-        for relay_id, outputs in self._outputs.items():
+        for relay_id, outputs in self.get_outputs().items():
             named_outputs[relay_id] = {
                 output_id: (output[0], output[1])
                 for output_id, output in outputs.items()
@@ -310,99 +258,119 @@ class ConnectionManager:
         return named_outputs
 
     def add_section(self, section_name: str):
-        if section_name not in self._sections.values():
-            self._sections[len(self._sections)] = section_name
-
-            self.cur.execute(
+        with self.conn.cursor() as cur:
+            cur.execute(
                 """
-                INSERT INTO sections (id, name)
-                VALUES (%s, %s)
-                ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name;
+                INSERT INTO sections (name)
+                VALUES (%s)
+                ON CONFLICT (id) DO NOTHING;
                 """,
-                (len(self._sections) - 1, section_name),
+                (section_name,),
             )
-            self.conn.commit()
+
+        self.conn.commit()
 
     def remove_section(self, section_name: str):
-        if section_name in self._sections.values():
-            section_id = [
-                key for key, value in self._sections.items() if value == section_name
-            ][0]
-            del self._sections[section_id]
-
-            self.cur.execute(
+        with self.conn.cursor() as cur:
+            cur.execute(
                 """
-                DELETE FROM sections
-                WHERE id = %s;
+                SELECT id FROM sections
+                WHERE name = %s;
                 """,
+                (section_name,),
+            )
+            section = cur.fetchone()
+            if not section:
+                return
+
+            section_id = section[0]
+
+            cur.execute(
+                """
+                    DELETE FROM sections
+                    WHERE id = %s;
+                    """,
+                (section_id,),
+            )
+            cur.execute(
+                """
+                    UPDATE outputs
+                    SET section_id = 0
+                    WHERE section_id = %s;
+                    """,
                 (section_id,),
             )
 
-            for relay_id in self._outputs:
-                for output_id in self._outputs[relay_id]:
-                    output_name, output_section_id = self._outputs[relay_id][output_id]
-                    if output_section_id == section_id:
-                        self._outputs[relay_id][output_id] = (output_name, 0)
-                        self.cur.execute(
-                            """
-                            UPDATE outputs
-                            SET section_id = %s
-                            WHERE relay_id = %s AND output_id = %s;
-                            """,
-                            (0, relay_id, output_id),
-                        )
-            self.conn.commit()
+        self.conn.commit()
 
     def get_sections(self) -> dict[int, str] | None:
-        return self._sections
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT id, name FROM sections;")
+            sections = cur.fetchall()
+
+        return {row[0]: row[1] for row in sections}
 
     def add_connection(
         self, switch_id: int, button_id: str, relay_id: int, output_id: str
     ):
-        if switch_id not in self._connections:
-            self._connections[switch_id] = {}
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO connections (switch_id, button_id, relay_id, output_id)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (switch_id, button_id, relay_id, output_id) DO NOTHING;
+                """,
+                (switch_id, button_id, relay_id, output_id),
+            )
 
-        if button_id not in self._connections[switch_id]:
-            self._connections[switch_id][button_id] = []
-
-        self._connections[switch_id][button_id].append((relay_id, output_id))
-
-        self.cur.execute(
-            """
-            INSERT INTO connections (switch_id, button_id, relay_id, output_id)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (switch_id, button_id, relay_id, output_id) DO NOTHING;
-            """,
-            (switch_id, button_id, relay_id, output_id),
-        )
         self.conn.commit()
 
     def remove_connection(
         self, switch_id: int, button_id: str, relay_id: int, output_id: str
     ):
-        if switch_id in self._connections and button_id in self._connections[switch_id]:
-            connection = (relay_id, output_id)
-            if connection in self._connections[switch_id][button_id]:
-                self._connections[switch_id][button_id].remove(connection)
-                if not self._connections[switch_id][button_id]:
-                    del self._connections[switch_id][button_id]
-                if not self._connections[switch_id]:
-                    del self._connections[switch_id]
-
-            self.cur.execute(
+        with self.conn.cursor() as cur:
+            cur.execute(
                 """
                 DELETE FROM connections
                 WHERE switch_id = %s AND button_id = %s AND relay_id = %s AND output_id = %s;
                 """,
                 (switch_id, button_id, relay_id, output_id),
             )
-            self.conn.commit()
+
+        self.conn.commit()
 
     def get_connection(self, switch_id: int, button_id: str) -> tuple[int, str] | None:
-        return self._connections.get(switch_id, {}).get(button_id, None)
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT relay_id, output_id FROM connections
+                WHERE switch_id = %s AND button_id = %s;
+                """,
+                (switch_id, button_id),
+            )
+            connection = cur.fetchone()
+
+        return connection
 
     def get_all_connections(self) -> dict[int, dict[str, tuple[int, str]]]:
-        return self._connections
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT switch_id, button_id, relay_id, output_id FROM connections;"
+            )
+            connections = cur.fetchall()
+
+        connection_dict = {}
+        for row in connections:
+            switch_id, button_id, relay_id, output_id = row
+            if switch_id not in connection_dict:
+                connection_dict[switch_id] = {}
+
+            if button_id not in connection_dict[switch_id]:
+                connection_dict[switch_id][button_id] = []
+
+            connection_dict[switch_id][button_id].append((relay_id, output_id))
+
+        return connection_dict
 
 
 @router.post("/add_relay")

@@ -4,6 +4,7 @@
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <HTTPClient.h>
+#include <Preferences.h>
 #include <Update.h>
 #include <WiFi.h>
 #include <WiFiClient.h>
@@ -26,7 +27,8 @@
 #define WIFI_CONNECT_TIMEOUT 20000
 #define REGISTRATION_RETRY_INTERVAL 10000
 #define STATUS_REPORT_INTERVAL 15000
-#define RESET_TIMEOUT 60000
+#define RESET_TIMEOUT 120000
+#define OTA_START_DELAY 5000
 
 // Queue size limits
 #define MAX_QUEUE_SIZE 30
@@ -83,6 +85,7 @@ std::queue<std::pair<uint32_t, String>>
 SemaphoreHandle_t meshCallbackQueueMutex = NULL;
 SemaphoreHandle_t meshMessageQueueMutex = NULL;
 SemaphoreHandle_t meshPriorityQueueMutex = NULL;
+SemaphoreHandle_t myConnectionsMutex = NULL;
 
 // Statistics
 struct Statistics {
@@ -91,12 +94,20 @@ struct Statistics {
     uint32_t criticalHeapEvents = 0;
 } stats;
 
+std::map<char, std::vector<std::pair<String, String>>> myConnections;
+
+Preferences preferences;
+String connectionsHash = "";
+
 const int buttonPins[NLIGHTS] = {A0, A1, A3, A4, A5, 6, 7};
-unsigned long lastTimeClick[NLIGHTS] = {0};
+uint32_t lastTimeClick[NLIGHTS] = {0};
 int lastButtonState[NLIGHTS] = {HIGH};
+
+// State variables
 bool registeredWithRoot = false;
-unsigned long long resetTimer = 0;
+uint32_t resetTimer = 0;
 uint32_t otaTimer = 0;
+bool otaTimerStarted = false;
 volatile bool otaInProgress = false;
 
 // Helper function to safely push to bounded queue
@@ -191,7 +202,6 @@ void updateLedStatus(void* pvParameters) {
 }
 
 void otaTask(void* pv) {
-    otaInProgress = true;
     DEBUG_INFO("[OTA] Stopping mesh...");
     mesh.stop();
     esp_task_wdt_deinit();
@@ -329,12 +339,6 @@ void meshInit() {
     DEBUG_INFO("SWITCH: Free heap: %d bytes", ESP.getFreeHeap());
 }
 
-void restartMesh() {
-    DEBUG_ERROR("MESH: Restarting ESP32 due to mesh timeout");
-    vTaskDelay(pdMS_TO_TICKS(100));
-    ESP.restart();
-}
-
 void sendStatusReport(void* pvParameters) {
     while (true) {
         if (otaInProgress) {
@@ -385,12 +389,296 @@ void printNodes() {
     }
 }
 
+String calculateConnectionsHash(const String& jsonStr) {
+    // Simple hash using sum of characters (you can use MD5 for better hash)
+    unsigned long hash = 0;
+    for (unsigned int i = 0; i < jsonStr.length(); i++) {
+        hash = hash * 31 + jsonStr[i];
+    }
+    return String(hash, HEX);
+}
+
+bool saveConnectionsToNVS(const String& jsonStr) {
+    if (!preferences.begin("connections", false)) {
+        DEBUG_ERROR("saveConnectionsToNVS: Failed to open NVS");
+        return false;
+    }
+
+    // Check size limit (NVS has max ~4000 bytes per key)
+    if (jsonStr.length() > 4000) {
+        DEBUG_ERROR("saveConnectionsToNVS: JSON too large (%d bytes)",
+                    jsonStr.length());
+        preferences.end();
+        return false;
+    }
+
+    // Save the JSON string
+    size_t written = preferences.putString("config", jsonStr);
+    if (written == 0) {
+        DEBUG_ERROR("saveConnectionsToNVS: Failed to write config");
+        preferences.end();
+        return false;
+    }
+
+    // Save hash for quick comparison
+    String hash = calculateConnectionsHash(jsonStr);
+    preferences.putString("hash", hash);
+    connectionsHash = hash;
+
+    preferences.end();
+
+    DEBUG_INFO("saveConnectionsToNVS: Saved %d bytes, hash: %s", written,
+               hash.c_str());
+    return true;
+}
+
+String loadConnectionsFromNVS() {
+    if (!preferences.begin("connections", true)) {  // true = read-only
+        DEBUG_ERROR("loadConnectionsFromNVS: Failed to open NVS");
+        return "";
+    }
+
+    String jsonStr = preferences.getString("config", "");
+    String savedHash = preferences.getString("hash", "");
+
+    preferences.end();
+
+    if (jsonStr.length() == 0) {
+        DEBUG_INFO("loadConnectionsFromNVS: No saved connections found");
+        return "";
+    }
+
+    // Verify hash
+    String calculatedHash = calculateConnectionsHash(jsonStr);
+    if (savedHash != calculatedHash) {
+        DEBUG_ERROR(
+            "loadConnectionsFromNVS: Hash mismatch! Data may be corrupted");
+        DEBUG_ERROR("  Saved: %s, Calculated: %s", savedHash.c_str(),
+                    calculatedHash.c_str());
+        return "";
+    }
+
+    connectionsHash = savedHash;
+    DEBUG_INFO("loadConnectionsFromNVS: Loaded %d bytes, hash: %s",
+               jsonStr.length(), savedHash.c_str());
+    DEBUG_INFO("loadConnectionsFromNVS: Connections data: %s", jsonStr.c_str());
+
+    return jsonStr;
+}
+
+void clearConnectionsFromNVS() {
+    if (!preferences.begin("connections", false)) {
+        DEBUG_ERROR("clearConnectionsFromNVS: Failed to open NVS");
+        return;
+    }
+
+    preferences.clear();
+    preferences.end();
+    connectionsHash = "";
+
+    DEBUG_INFO("clearConnectionsFromNVS: Cleared all saved connections");
+}
+
+bool hasConnectionsChanged(const String& newJsonStr) {
+    String newHash = calculateConnectionsHash(newJsonStr);
+    bool changed = (newHash != connectionsHash);
+
+    if (changed) {
+        DEBUG_INFO("hasConnectionsChanged: YES (old: %s, new: %s)",
+                   connectionsHash.c_str(), newHash.c_str());
+    } else {
+        DEBUG_VERBOSE("hasConnectionsChanged: NO (hash: %s)", newHash.c_str());
+    }
+
+    return changed;
+}
+
+void processConnectionsJSON(const String& jsonStr) {
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, jsonStr);
+
+    if (err) {
+        DEBUG_ERROR("receiveConnections: Failed to parse JSON: %s",
+                    err.c_str());
+        return;
+    }
+
+    if (xSemaphoreTake(myConnectionsMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        DEBUG_ERROR("receiveConnections: Failed to acquire mutex");
+        return;
+    }
+
+    // Clear existing connections
+    myConnections.clear();
+
+    String myIdStr = String(deviceId);
+
+    // Check if our device ID exists in the JSON
+    if (doc[myIdStr].isNull()) {
+        xSemaphoreGive(myConnectionsMutex);
+        DEBUG_INFO(
+            "receiveConnections: No connections configured for this device");
+
+        // Save empty config
+        saveConnectionsToNVS("{}");
+        return;
+    }
+
+    JsonObject myConfig = doc[myIdStr].as<JsonObject>();
+
+    // Parse each letter (button) configuration
+    int totalTargets = 0;
+    for (JsonPair letterPair : myConfig) {
+        char letter = letterPair.key().c_str()[0];
+        JsonArray targetsArray = letterPair.value().as<JsonArray>();
+
+        std::vector<std::pair<String, String>> targets;
+        targets.reserve(targetsArray.size());
+
+        for (JsonArray targetPair : targetsArray) {
+            if (targetPair.size() >= 2) {
+                String targetId = targetPair[0].as<String>();
+                String command = targetPair[1].as<String>();
+                targets.emplace_back(targetId, command);
+                totalTargets++;
+
+                DEBUG_VERBOSE("  Button '%c' -> Node %s: %s", letter,
+                              targetId.c_str(), command.c_str());
+            }
+        }
+
+        myConnections[letter] = std::move(targets);
+    }
+
+    xSemaphoreGive(myConnectionsMutex);
+
+    DEBUG_INFO("receiveConnections: Loaded %d buttons, %d total targets",
+               myConnections.size(), totalTargets);
+}
+
+void receiveConnections(const String& jsonStr) {
+    if (!myConnectionsMutex) {
+        DEBUG_ERROR("receiveConnections: Mutex not initialized!");
+        return;
+    }
+
+    processConnectionsJSON(jsonStr);
+
+    // Check if connections actually changed
+    if (!hasConnectionsChanged(jsonStr)) {
+        DEBUG_INFO("receiveConnections: No changes detected, skipping update");
+        return;
+    }
+
+    // Save to NVS
+    if (saveConnectionsToNVS(jsonStr)) {
+        DEBUG_INFO("receiveConnections: Saved to NVS successfully");
+
+        setLedColor(255, 0, 255);  // Magenta flash
+    } else {
+        DEBUG_ERROR("receiveConnections: Failed to save to NVS");
+    }
+}
+
+void loadConnectionsOnBoot() {
+    DEBUG_INFO("loadConnectionsOnBoot: Loading saved connections...");
+
+    String savedJson = loadConnectionsFromNVS();
+
+    if (savedJson.length() == 0) {
+        DEBUG_INFO(
+            "loadConnectionsOnBoot: No saved connections, will wait for config "
+            "from root");
+        return;
+    }
+
+    // Parse and apply saved connections
+    receiveConnections(savedJson);
+
+    DEBUG_INFO("loadConnectionsOnBoot: Restored connections from NVS");
+}
+
+void printConnectionsStats() {
+    if (!preferences.begin("connections", true)) {
+        DEBUG_ERROR("printConnectionsStats: Failed to open NVS");
+        return;
+    }
+
+    String config = preferences.getString("config", "");
+    String hash = preferences.getString("hash", "");
+
+    preferences.end();
+
+    DEBUG_INFO("\n--- Connections NVS Stats ---");
+    DEBUG_INFO("Stored size: %d bytes", config.length());
+    DEBUG_INFO("Stored hash: %s", hash.c_str());
+    DEBUG_INFO("Current hash: %s", connectionsHash.c_str());
+    DEBUG_INFO("Max NVS size: 4000 bytes");
+    DEBUG_INFO("Available: %d bytes", 4000 - config.length());
+
+    if (xSemaphoreTake(myConnectionsMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        DEBUG_INFO("Active buttons: %d", myConnections.size());
+        int totalTargets = 0;
+        for (const auto& conn : myConnections) {
+            totalTargets += conn.second.size();
+        }
+        DEBUG_INFO("Total targets: %d", totalTargets);
+        xSemaphoreGive(myConnectionsMutex);
+    }
+    DEBUG_INFO("---------------------------\n");
+}
+
+String exportConnections() {
+    if (xSemaphoreTake(myConnectionsMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        DEBUG_ERROR("exportConnections: Failed to acquire mutex");
+        return "";
+    }
+
+    JsonDocument doc;
+    String myIdStr = String(deviceId);
+    JsonObject myConfig = doc[myIdStr].to<JsonObject>();
+
+    for (const auto& letterPair : myConnections) {
+        char letter = letterPair.first;
+        JsonArray targetsArray = myConfig[String(letter)].to<JsonArray>();
+
+        for (const auto& target : letterPair.second) {
+            JsonArray targetPair = targetsArray.add<JsonArray>();
+            targetPair.add(target.first);
+            targetPair.add(target.second);
+        }
+    }
+
+    xSemaphoreGive(myConnectionsMutex);
+
+    String jsonStr;
+    serializeJson(doc, jsonStr);
+    return jsonStr;
+}
+
+std::vector<std::pair<String, String>> getTargetsForButton(char button) {
+    std::vector<std::pair<String, String>> result;
+
+    if (!myConnectionsMutex) return result;
+
+    if (xSemaphoreTake(myConnectionsMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        auto it = myConnections.find(button);
+        if (it != myConnections.end()) {
+            result = it->second;
+        }
+        xSemaphoreGive(myConnectionsMutex);
+    }
+
+    return result;
+}
+
 void statusPrint(void* pvParameters) {
     while (true) {
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
+
         DEBUG_INFO("\n--- Status Report ---");
         DEBUG_INFO("Device ID: %u", deviceId);
         DEBUG_INFO("Firmware MD5: %s", fw_md5.c_str());
@@ -399,11 +687,14 @@ void statusPrint(void* pvParameters) {
         DEBUG_INFO("Free Heap: %d bytes", ESP.getFreeHeap());
         DEBUG_INFO("Uptime: %lu seconds", millis() / 1000);
         DEBUG_INFO("WiFi RSSI: %d dBm", WiFi.RSSI());
-        DEBUG_INFO("Time to reset: %d",
-                   RESET_TIMEOUT - (millis() - resetTimer));
         DEBUG_INFO("Dropped messages: %u", stats.meshDropped);
+
+        // Print connections stats
+        printConnectionsStats();
+
         printNodes();
         DEBUG_INFO("-------------------\n");
+
         vTaskDelay(pdMS_TO_TICKS(STATUS_PRINT_INTERVAL));
     }
 }
@@ -414,12 +705,21 @@ void resetTask(void* pvParameters) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
+
         if (mesh.getNodeList().empty()) {
             registeredWithRoot = false;
         } else if (registeredWithRoot) {
             resetTimer = millis();
         }
-        if ((millis() - resetTimer) > RESET_TIMEOUT) restartMesh();
+
+        if (!otaTimerStarted)
+            otaTimer = millis();
+        else if ((millis() - otaTimer) > OTA_START_DELAY) {
+            otaInProgress = true;
+        }
+
+        if ((millis() - resetTimer) > RESET_TIMEOUT) ESP.restart();
+
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
@@ -427,40 +727,68 @@ void resetTask(void* pvParameters) {
 void handleButtonsTask(void* pvParameters) {
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(20));
+
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
+
         unsigned long currentMillis = millis();
+
         for (int i = 0; i < NLIGHTS; i++) {
             int currentState = digitalRead(buttonPins[i]);
+
             if (currentMillis - lastTimeClick[i] < BUTTON_DEBOUNCE_TIME) {
                 continue;
             }
-            // Detect button press (LOW to HIGH transition)
+
             if (currentState == HIGH && lastButtonState[i] == LOW) {
                 lastTimeClick[i] = currentMillis;
                 clicks++;
-                char msg = 'a' + i;
-                DEBUG_VERBOSE("BUTTON: Button %d pressed, sending '%c'", i,
-                              msg);
+
+                char button = 'a' + i;
+                DEBUG_VERBOSE("BUTTON: Button %d pressed ('%c')", i, button);
+
                 if (mesh.getNodeList().empty()) {
-                    DEBUG_ERROR("BUTTON: No mesh connection, message not sent");
-                    setLedColor(255, 0, 0);  // Flash red
+                    DEBUG_ERROR("BUTTON: No mesh connection");
+                    setLedColor(255, 0, 0);
                     vTaskDelay(100 / portTICK_PERIOD_MS);
                     continue;
                 }
-                String message = String(msg);
-                // Use PRIORITY queue for instant response
-                safePush(meshPriorityQueue, std::make_pair(rootId, message),
-                         meshPriorityQueueMutex, stats.meshDropped,
-                         "MESH-PRIORITY");
-                DEBUG_VERBOSE("BUTTON: Sent '%s' to root %u", message.c_str(),
-                              rootId);
+
+                // Get targets from configuration
+                auto targets = getTargetsForButton(button);
+
+                if (targets.empty()) {
+                    DEBUG_VERBOSE(
+                        "BUTTON: No targets configured for button '%c'",
+                        button);
+                    continue;
+                }
+                DEBUG_INFO("BUTTON: Sending to %d targets", targets.size());
+
+                for (const auto& target : targets) {
+                    uint32_t targetId = target.first.toInt();
+                    String command = target.second;
+
+                    DEBUG_VERBOSE("BUTTON: -> Node %u: %s", targetId,
+                                  command.c_str());
+
+                    safePush(meshPriorityQueue,
+                             std::make_pair(targetId, command),
+                             meshPriorityQueueMutex, stats.meshDropped,
+                             "MESH-PRIORITY");
+
+                    safePush(meshMessageQueue, std::make_pair(rootId, command),
+                             meshMessageQueueMutex, stats.meshDropped,
+                             "MESH-MSG");
+                }
+
                 // Flash LED to confirm
-                setLedColor(0, 255, 255);  // Cyan flash
+                setLedColor(0, 255, 255);
                 vTaskDelay(50 / portTICK_PERIOD_MS);
             }
+
             lastButtonState[i] = currentState;
         }
     }
@@ -511,21 +839,31 @@ void meshCallbackTask(void* pvParameters) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
+
         std::pair<uint32_t, String> message;
         if (!safePop(meshCallbackQueue, message, meshCallbackQueueMutex)) {
-            vTaskDelay(pdMS_TO_TICKS(5));  // Reduced from 20ms
+            vTaskDelay(pdMS_TO_TICKS(5));
             continue;
         }
+
         // No artificial delay for processing
         uint32_t from = message.first;
         String msg = message.second;
-        if (msg == "U") {
-            DEBUG_INFO("MESH: Firmware update command received");
-            otaTimer = millis();
-            setLedColor(0, 0, 255);
-            otaInProgress = true;
+
+        if (msg.startsWith("{")) {
+            DEBUG_INFO("MESH: Received connections configuration from %u",
+                       from);
+            receiveConnections(msg);
             continue;
         }
+
+        if (msg == "U") {
+            DEBUG_INFO("MESH: Firmware update command received");
+            otaTimerStarted = true;
+            setLedColor(0, 0, 255);
+            continue;
+        }
+
         if (msg == "Q") {
             DEBUG_VERBOSE("MESH: Registration query received from root");
             rootId = from;
@@ -534,11 +872,13 @@ void meshCallbackTask(void* pvParameters) {
             DEBUG_VERBOSE("MESH: Sent registration 'S' to root %u", rootId);
             continue;
         }
+
         if (msg == "A") {
             DEBUG_INFO("MESH: Registration accepted by root");
             registeredWithRoot = true;
             continue;
         }
+
         DEBUG_ERROR("MESH: Unknown message from %u: %s", from, msg.c_str());
     }
 }
@@ -594,13 +934,16 @@ void setup() {
     meshCallbackQueueMutex = xSemaphoreCreateMutex();
     meshMessageQueueMutex = xSemaphoreCreateMutex();
     meshPriorityQueueMutex = xSemaphoreCreateMutex();
+    myConnectionsMutex = xSemaphoreCreateMutex();
 
     if (!meshCallbackQueueMutex || !meshMessageQueueMutex ||
-        !meshPriorityQueueMutex) {
+        !meshPriorityQueueMutex || !myConnectionsMutex) {
         DEBUG_ERROR("FATAL: Failed to create mutexes!");
         ESP.restart();
     }
     DEBUG_INFO("All mutexes created successfully");
+
+    loadConnectionsOnBoot();
 
     // Initialize NeoPixel
     pixels.begin();
@@ -637,7 +980,8 @@ void setup() {
 
 void loop() {
     static bool otaTaskStarted = false;
-    if (otaInProgress && !otaTaskStarted && millis() - otaTimer > 3000) {
+
+    if (otaInProgress && !otaTaskStarted) {
         otaTaskStarted = true;
         DEBUG_INFO("[OTA] Disconnecting mesh...");
         xTaskCreatePinnedToCore(otaTask, "OTA", 8192, NULL, 5, NULL,

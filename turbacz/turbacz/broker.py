@@ -142,25 +142,18 @@ async def handle_switch_state(payload_str, topic):
     """
     try:
         switch_id = topic.split("/")[-1]
-        light_id = payload_str[0]
+        button_id = payload_str[0]
 
-        logger.debug("Switch ID: %s, Light ID: %s", switch_id, light_id)  # Debug log
-
-        with open("turbacz/data/connections.json", "r", encoding="utf-8") as f:
-            conf = json.load(f)
-            connections = conf["connections"]
-            outputs = connections[switch_id][light_id]
-
-        logger.debug("Outputs: %s", outputs)  # Debug log
-
-        for relay_id, output_id in outputs:
-            logger.debug(
-                "Relay ID: %s, Output ID: %s", relay_id, output_id
-            )  # Debug log
-            if len(payload_str) == 2:
-                state = payload_str[1]
-
-            mqtt.client.publish("/relay/cmd/" + relay_id, str(output_id) + state)
+        logger.debug("Switch ID: %s, Button ID: %s", switch_id, button_id)  # Debug log
+        
+        await ws_manager.broadcast(
+            {
+                "type": "switch_state",
+                "switch_id": switch_id,
+                "button_id": button_id,
+            },
+            "/rcm/ws/",
+        )
 
     except ValueError as e:
         logger.error("Error processing switch state: %s", e)
@@ -183,7 +176,7 @@ async def handle_root_state(payload_str):
 
     try:
         data = json.loads(payload_str)
-        logger.info("Root State Data: %s", data)  # Info log
+        logger.debug("Root State Data: %s", data)  # Debug log
 
     except json.JSONDecodeError:
         logger.error("Error processing root state JSON payload: %s", payload_str)

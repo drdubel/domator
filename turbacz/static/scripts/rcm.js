@@ -82,6 +82,15 @@ function connectWebSocket() {
 
             updateOnlineStatus()
         }
+
+        if (msg.type == "switch_state" && msg.switch_id && msg.button_id) {
+            highlightButton(msg.switch_id, msg.button_id)
+
+            // Auto-clear highlight after 5 seconds
+            setTimeout(() => {
+                clearButtonHighlight(msg.switch_id, msg.button_id)
+            }, 5000)
+        }
     }
 
     ws.onerror = function (error) {
@@ -363,7 +372,44 @@ function bindJsPlumbEvents() {
         console.log("Clicked connection:", connection.sourceId, "->", connection.targetId)
     })
 
+    jsPlumbInstance.bind("dblclick", function (connection, e) {
+        e.preventDefault()
 
+        const sourceId = connection.sourceId
+        const targetId = connection.targetId
+
+        const switchMatch = sourceId.match(/switch-(\d+)-btn-(\w+)/)
+        const relayMatch = targetId.match(/relay-(\d+)-output-(\w+)/)
+
+        if (switchMatch && relayMatch) {
+            const switchId = parseInt(switchMatch[1])
+            const buttonId = switchMatch[2]
+            const relayId = parseInt(relayMatch[1])
+            const outputId = relayMatch[2]
+
+            console.log('Double-clicked connection, removing:', { switchId, buttonId, relayId, outputId })
+
+            postForm('/lights/remove_connection', {
+                switch_id: switchId,
+                button_id: buttonId,
+                relay_id: relayId,
+                output_id: outputId
+            }).then(result => {
+                if (result) {
+                    jsPlumbInstance.deleteConnection(connection)
+
+                    if (connections[switchId] && connections[switchId][buttonId]) {
+                        connections[switchId][buttonId] = connections[switchId][buttonId].filter(
+                            conn => !(conn.relayId === relayId && conn.outputId === outputId)
+                        )
+                    }
+                    console.log('Connection removed successfully')
+                } else {
+                    console.error('Failed to remove connection from API')
+                }
+            })
+        }
+    })
 }
 
 function highlightDevice(deviceId) {
@@ -414,6 +460,42 @@ function clearHighlights() {
     })
 
     highlightedDevice = null
+}
+
+function highlightButton(switchId, buttonId) {
+    const buttonElement = document.getElementById(`switch-${switchId}-btn-${buttonId}`)
+    if (!buttonElement) {
+        console.warn(`Button not found: switch-${switchId}-btn-${buttonId}`)
+        return
+    }
+
+    // Set initial red background
+    buttonElement.style.background = 'rgba(255, 0, 0, 1)'
+    buttonElement.style.transition = 'none'
+
+    // Force reflow to ensure the transition works
+    buttonElement.offsetHeight
+
+    // Start fading to normal blue gradient color over 5 seconds
+    // Using ease-in: starts slow, ends fast
+    requestAnimationFrame(() => {
+        buttonElement.style.transition = 'background 5s ease-in'
+        buttonElement.style.background = 'linear-gradient(135deg, rgba(99, 102, 241, 0.2) 0%, rgba(79, 70, 229, 0.2) 100%)'
+    })
+
+    console.log('Highlighted button:', switchId, buttonId)
+}
+
+function clearButtonHighlight(switchId, buttonId) {
+    const buttonElement = document.getElementById(`switch-${switchId}-btn-${buttonId}`)
+    if (!buttonElement) {
+        console.warn(`Button not found: switch-${switchId}-btn-${buttonId}`)
+        return
+    }
+
+    buttonElement.style.background = ''
+    buttonElement.style.transition = ''
+    console.log('Cleared button highlight:', switchId, buttonId)
 }
 
 function initJsPlumb() {

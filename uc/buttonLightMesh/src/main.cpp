@@ -35,7 +35,7 @@
 #define LOW_HEAP_THRESHOLD 40000
 
 // Debug levels
-#define DEBUG_LEVEL 1  // 0=none, 1=errors only, 2=info, 3=verbose
+#define DEBUG_LEVEL 3  // 0=none, 1=errors only, 2=info, 3=verbose
 
 #if DEBUG_LEVEL >= 1
 #define DEBUG_ERROR(fmt, ...) Serial.printf("[ERROR] " fmt "\n", ##__VA_ARGS__)
@@ -413,7 +413,7 @@ void espnowInit() {
     // Get device MAC and generate ID
     uint8_t mac[6];
     esp_wifi_get_mac(WIFI_IF_STA, mac);
-    deviceId = (uint32_t)ESP.getEfuseMac();
+    deviceId = (mac[2] << 24) | (mac[3] << 16) | (mac[4] << 8) | mac[5];
 
     DEBUG_INFO("Device MAC: %02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1],
                mac[2], mac[3], mac[4], mac[5]);
@@ -652,7 +652,12 @@ void espnowCallbackTask(void* pvParameters) {
             continue;
         }
 
-        if (msg == "Q" && !registeredWithRoot) {
+        if (msg == "Q") {
+            if (registeredWithRoot) {
+                DEBUG_INFO("Re-registration query received from root");
+                continue;
+            }
+
             DEBUG_VERBOSE("Registration query received from root");
             sendESPNowMessage("S", false);
             DEBUG_VERBOSE("Sent registration 'S' to root");

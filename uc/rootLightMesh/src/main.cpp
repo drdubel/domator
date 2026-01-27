@@ -505,7 +505,7 @@ void espnowInit() {
 
     uint8_t mac[6];
     esp_wifi_get_mac(WIFI_IF_STA, mac);
-    deviceId = (uint32_t)ESP.getEfuseMac();
+    deviceId = (mac[2] << 24) | (mac[3] << 16) | (mac[4] << 8) | mac[5];
 
     DEBUG_INFO("Device ID: %u", deviceId);
     DEBUG_INFO("Root MAC: %02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1],

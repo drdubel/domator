@@ -1,48 +1,11 @@
-var wsId = Math.floor(Math.random() * 2000000000)
-var ws = null
 var lights = {}
 var pendingClicks = new Set()
-var reconnectTimeout = null
-var reconnectDelay = 1000
-var maxReconnectDelay = 30000
-var isReconnecting = false
 var namedOutputs = {}
 var sections = {}
 var active_sections = new Set()
 
-
-function getCookie(cname) {
-	let name = cname + "="
-	let decodedCookie = decodeURIComponent(document.cookie)
-	let ca = decodedCookie.split(';')
-	for (let i = 0; i < ca.length; i++) {
-		let c = ca[i]
-		while (c.charAt(0) == ' ') {
-			c = c.substring(1)
-		}
-		if (c.indexOf(name) == 0) {
-			return c.substring(name.length, c.length)
-		}
-	}
-	return ""
-}
-
-function connectWebSocket() {
-	if (isReconnecting) return
-	isReconnecting = true
-
-	console.log('Connecting WebSocket...')
-	auth_token = getCookie("access_token")
-	ws = new WebSocket(`wss://${window.location.host}/lights/ws/` + wsId + `?token=` + auth_token)
-
-	ws.onopen = function () {
-		console.log('WebSocket connected!')
-		isReconnecting = false
-		reconnectDelay = 1000
-		pendingClicks.clear()
-	}
-
-	ws.onmessage = function (event) {
+// Initialize WebSocket manager
+var wsManager = new WebSocketManager('/lights/ws/', function (event) {
 		var msg = JSON.parse(event.data)
 		console.log('Received:', msg)
 
@@ -144,37 +107,17 @@ function connectWebSocket() {
 			lights[msg.relay_id + msg.output_id] = msg.state
 			updateLightUI(msg.relay_id + msg.output_id, msg.state)
 		}
-	}
+})
 
-	ws.onerror = function (error) {
-		console.error('WebSocket error:', error)
-	}
+// Setup WebSocket callbacks
+wsManager.onOpen(function () {
+	pendingClicks.clear()
+})
 
-	ws.onclose = function (event) {
-		console.log('WebSocket disconnected')
-		isReconnecting = false
-
-		if (reconnectTimeout) {
-			clearTimeout(reconnectTimeout)
-		}
-
-		console.log(`Reconnecting in ${reconnectDelay / 1000}s...`)
-		reconnectTimeout = setTimeout(function () {
-			connectWebSocket()
-			reconnectDelay = Math.min(reconnectDelay * 2, maxReconnectDelay)
-		}, reconnectDelay)
-
-	}
-}
-
-connectWebSocket()
-
-setInterval(function () {
-	if (!ws || ws.readyState === WebSocket.CLOSED) {
-		console.log('WebSocket closed, reconnecting...')
-		connectWebSocket()
-	}
-}, 30000)
+// Connect and start connection monitoring
+wsManager.connect()
+wsManager.startConnectionCheck()
+wsManager.setupVisibilityHandler()
 
 function updateLightUI(id, state) {
 	var element = document.getElementById(id)
@@ -190,9 +133,7 @@ function updateLightUI(id, state) {
 }
 
 function changeSwitchState(id) {
-	if (!ws || ws.readyState !== WebSocket.OPEN) {
-		console.log('WebSocket not connected, trying to reconnect...')
-		connectWebSocket()
+	if (!wsManager.isConnected()) {
 		return
 	}
 
@@ -208,12 +149,8 @@ function changeSwitchState(id) {
 	var msg = JSON.stringify({ "relay_id": id.slice(0, -1), "output_id": id.slice(-1), "state": newState })
 	console.log(msg)
 
-	try {
-		ws.send(msg)
-	} catch (e) {
-		console.error('Failed to send:', e)
+	if (!wsManager.send(msg)) {
 		pendingClicks.delete(id)
-		connectWebSocket()
 	}
 
 	setTimeout(function () {
@@ -221,33 +158,7 @@ function changeSwitchState(id) {
 	}, 2000)
 }
 
-var sidebarOpen = false
-function openNav() {
-	if (sidebarOpen) return
-	sidebarOpen = true
-	document.getElementById("sidenav").style.width = "160px"
-	document.getElementById("main").style.marginLeft = "160px"
-	var btn = document.querySelector(".openbtn")
-	if (btn) btn.style.visibility = "hidden"
-}
-
-function closeNav() {
-	if (!sidebarOpen) return
-	sidebarOpen = false
-	document.getElementById("sidenav").style.width = "0"
-	document.getElementById("main").style.marginLeft = "0"
-	var btn = document.querySelector(".openbtn")
-	if (btn) btn.style.visibility = "visible"
-}
-
-document.addEventListener('visibilitychange', function () {
-	if (!document.hidden) {
-		if (!ws || ws.readyState !== WebSocket.OPEN) {
-			console.log('Tab visible again, checking connection...')
-			connectWebSocket()
-		}
-	}
-})
+// Navigation functions are now in common.js
 
 function showChangeSectionModal() {
 	document.getElementById('changeSectionModal').classList.add('active')
@@ -293,7 +204,7 @@ function submitChangeSectionForm() {
 		return
 	}
 
-	ws.send(JSON.stringify({ "type": "change_section", "relay_id": buttonOutput.slice(0, -2), "output_id": buttonOutput.slice(-1), "section": buttonSection }))
+	wsManager.send(JSON.stringify({ "type": "change_section", "relay_id": buttonOutput.slice(0, -2), "output_id": buttonOutput.slice(-1), "section": buttonSection }))
 	closeModal('changeSectionModal')
 }
 
@@ -305,7 +216,7 @@ function submitAddSectionForm() {
 		return
 	}
 
-	ws.send(JSON.stringify({ "type": "add_section", "name": sectionName }))
+	wsManager.send(JSON.stringify({ "type": "add_section", "name": sectionName }))
 	closeModal('addSectionModal')
 }
 

@@ -21,106 +21,45 @@ let startY = 0
 
 const API_BASE_URL = `https://${window.location.host}`
 
-var wsId = Math.floor(Math.random() * 2000000000)
-var ws = null
-var reconnectTimeout = null
-var reconnectDelay = 1000
-var maxReconnectDelay = 30000
-var isReconnecting = false
+// Initialize WebSocket manager
+var wsManager = new WebSocketManager('/rcm/ws/', function (event) {
+    var msg = JSON.parse(event.data)
+    console.log(msg)
 
-function getCookie(cname) {
-    let name = cname + "="
-    let decodedCookie = decodeURIComponent(document.cookie)
-    let ca = decodedCookie.split(';')
-    for (let i = 0; i < ca.length; i++) {
-        let c = ca[i]
-        while (c.charAt(0) == ' ') {
-            c = c.substring(1)
-        }
-        if (c.indexOf(name) == 0) {
-            return c.substring(name.length, c.length)
-        }
-    }
-    return ""
-}
 
-function connectWebSocket() {
-    if (isReconnecting) return
-    isReconnecting = true
-
-    console.log('Connecting WebSocket...')
-    auth_token = getCookie("access_token")
-    ws = new WebSocket(`wss://${window.location.host}/rcm/ws/` + wsId + `?token=` + auth_token)
-
-    ws.onopen = function () {
-        console.log('WebSocket connected!')
-        isReconnecting = false
-        reconnectDelay = 1000
+    if (msg.type == "update") {
+        loadConfiguration()
     }
 
-    ws.onmessage = function (event) {
-        var msg = JSON.parse(event.data)
-        console.log(msg)
-
-
-        if (msg.type == "update") {
-            loadConfiguration()
-        }
-
-        if (msg.type == "light_state") {
-            pendingClicks.delete(`${msg.relay_id}-${msg.output_id}`)
-            lights[`${msg.relay_id}-${msg.output_id}`] = msg.state
-            updateLightUI(msg.relay_id, msg.output_id, msg.state)
-        }
-
-        if (msg.type == "online_status") {
-            online_relays = new Set(msg.online_relays)
-            online_switches = new Set(msg.online_switches)
-
-            console.log('Online relays:', online_relays)
-            console.log('Online switches:', online_switches)
-
-            updateOnlineStatus()
-        }
-
-        if (msg.type == "switch_state" && msg.switch_id && msg.button_id) {
-            highlightButton(msg.switch_id, msg.button_id)
-
-            // Auto-clear highlight after 5 seconds
-            setTimeout(() => {
-                clearButtonHighlight(msg.switch_id, msg.button_id)
-            }, 5000)
-        }
+    if (msg.type == "light_state") {
+        pendingClicks.delete(`${msg.relay_id}-${msg.output_id}`)
+        lights[`${msg.relay_id}-${msg.output_id}`] = msg.state
+        updateLightUI(msg.relay_id, msg.output_id, msg.state)
     }
 
-    ws.onerror = function (error) {
-        console.error('WebSocket error:', error)
+    if (msg.type == "online_status") {
+        online_relays = new Set(msg.online_relays)
+        online_switches = new Set(msg.online_switches)
+
+        console.log('Online relays:', online_relays)
+        console.log('Online switches:', online_switches)
+
+        updateOnlineStatus()
     }
 
-    ws.onclose = function (event) {
-        console.log('WebSocket disconnected')
-        isReconnecting = false
+    if (msg.type == "switch_state" && msg.switch_id && msg.button_id) {
+        highlightButton(msg.switch_id, msg.button_id)
 
-        if (reconnectTimeout) {
-            clearTimeout(reconnectTimeout)
-        }
-
-        console.log(`Reconnecting in ${reconnectDelay / 1000}s...`)
-        reconnectTimeout = setTimeout(function () {
-            connectWebSocket()
-            reconnectDelay = Math.min(reconnectDelay * 2, maxReconnectDelay)
-        }, reconnectDelay)
+        // Auto-clear highlight after 5 seconds
+        setTimeout(() => {
+            clearButtonHighlight(msg.switch_id, msg.button_id)
+        }, 5000)
     }
-}
+})
 
-connectWebSocket()
-
-setInterval(function () {
-    if (!ws || ws.readyState === WebSocket.CLOSED) {
-        console.log('WebSocket closed, reconnecting...')
-        connectWebSocket()
-    }
-}, 30000)
+// Connect and start connection monitoring
+wsManager.connect()
+wsManager.startConnectionCheck()
 
 function showLoading() {
     document.getElementById('loading').classList.add('active')
@@ -260,12 +199,7 @@ async function postForm(endpoint, data) {
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`)
         } else {
-            try {
-                ws.send('{"type": "update"}')
-            } catch (e) {
-                console.error('Failed to send:', e)
-                connectWebSocket()
-            }
+            wsManager.send('{"type": "update"}')
         }
 
         try {
@@ -597,7 +531,7 @@ async function loadConfiguration() {
             hideLoading()
         }, 100); // slightly smaller delay may work
 
-        ws.send('{"type": "get_states"}')
+        wsManager.send('{"type": "get_states"}')
     } catch (error) {
         console.error('Error loading configuration:', error)
         isLoadingConnections = false
@@ -863,9 +797,7 @@ function createConnection(switchId, buttonId, relayId, outputId) {
 }
 
 function changeSwitchState(relay_id, output_id) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-        console.log('WebSocket not connected, trying to reconnect...')
-        connectWebSocket()
+    if (!wsManager.isConnected()) {
         return
     }
 
@@ -880,12 +812,8 @@ function changeSwitchState(relay_id, output_id) {
     var msg = JSON.stringify({ "relay_id": relay_id, "output_id": output_id, "state": newState })
     console.log(msg)
 
-    try {
-        ws.send(msg)
-    } catch (e) {
-        console.error('Failed to send:', e)
+    if (!wsManager.send(msg)) {
         pendingClicks.delete(`${relay_id}-${output_id}`)
-        connectWebSocket()
     }
 
     setTimeout(function () {

@@ -204,8 +204,9 @@ function submitChangeSectionForm() {
 		return
 	}
 
-	wsManager.send(JSON.stringify({ "type": "change_section", "relay_id": buttonOutput.slice(0, -2), "output_id": buttonOutput.slice(-1), "section": buttonSection }))
-	closeModal('changeSectionModal')
+	if (wsManager.send(JSON.stringify({ "type": "change_section", "relay_id": buttonOutput.slice(0, -2), "output_id": buttonOutput.slice(-1), "section": buttonSection }))) {
+		closeModal('changeSectionModal')
+	}
 }
 
 function submitAddSectionForm() {
@@ -216,8 +217,9 @@ function submitAddSectionForm() {
 		return
 	}
 
-	wsManager.send(JSON.stringify({ "type": "add_section", "name": sectionName }))
-	closeModal('addSectionModal')
+	if (wsManager.send(JSON.stringify({ "type": "add_section", "name": sectionName }))) {
+		closeModal('addSectionModal')
+	}
 }
 
 function makeSectionsCollapsible() {

@@ -199,7 +199,7 @@ async function postForm(endpoint, data) {
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`)
         } else {
-            wsManager.send('{"type": "update"}')
+            wsManager.send(JSON.stringify({ "type": "update" }))
         }
 
         try {
@@ -531,7 +531,7 @@ async function loadConfiguration() {
             hideLoading()
         }, 100); // slightly smaller delay may work
 
-        wsManager.send('{"type": "get_states"}')
+        wsManager.send(JSON.stringify({ "type": "get_states" }))
     } catch (error) {
         console.error('Error loading configuration:', error)
         isLoadingConnections = false

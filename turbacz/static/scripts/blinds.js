@@ -29,6 +29,7 @@ $(function () {
 				}
 
 				wsManager.send(JSON.stringify({ "blind": event.target.id, "position": parseInt(999 - ui.value) }))
+			}
 		})
 	})
 })

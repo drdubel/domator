@@ -1,16 +1,16 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
-#include <AsyncTCP.h>
-#include <ESPAsyncWebServer.h>
 #include <HTTPClient.h>
 #include <Preferences.h>
 #include <Update.h>
 #include <WiFi.h>
-#include <WiFiClient.h>
 #include <credentials.h>
-#include <painlessMesh.h>
+#include <esp_now.h>
+#include <esp_wifi.h>
 
+#include <map>
 #include <queue>
+#include <vector>
 
 #include "esp_task_wdt.h"
 
@@ -34,8 +34,8 @@ const byte wifiActivityPin = 255;
 #define CRITICAL_HEAP_THRESHOLD 25000
 #define LOW_HEAP_THRESHOLD 50000
 
-// Minimal debug - only errors and critical events
-#define DEBUG_LEVEL 3  // 0=none, 1=errors only, 2=info, 3=verbose
+// Debug levels
+#define DEBUG_LEVEL 1  // 0=none, 1=errors only, 2=info, 3=verbose
 
 #if DEBUG_LEVEL >= 1
 #define DEBUG_ERROR(fmt, ...) Serial.printf("[ERROR] " fmt "\n", ##__VA_ARGS__)
@@ -56,16 +56,16 @@ const byte wifiActivityPin = 255;
 #define DEBUG_VERBOSE(fmt, ...)
 #endif
 
-// Function declarations
-void receivedCallback(const uint32_t& from, const String& msg);
-void meshInit();
-void onNewConnection(uint32_t nodeId);
-void onDroppedConnection(uint32_t nodeId);
-void performFirmwareUpdate();
+// ESP-NOW message structure
+typedef struct __attribute__((packed)) {
+    uint32_t nodeId;
+    uint8_t msgType;  // 'Q'=query, 'R'=relay registration, 'A'=ack, 'U'=update,
+                      // 'D'=data, 'C'=command
+    char data[200];
+} espnow_message_t;
 
-painlessMesh mesh;
-
-uint32_t rootId = 0;
+uint8_t rootMac[6] = {0};   // Root node MAC address
+uint8_t espnowChannel = 1;  // Current ESP-NOW channel
 uint32_t deviceId = 0;
 uint32_t disconnects = 0;
 uint32_t clicks = 0;
@@ -79,37 +79,43 @@ volatile uint32_t lastPress[NLIGHTS] = {0, 0, 0, 0, 0, 0, 0, 0};
 volatile uint8_t pressed = 0;
 
 // Queues
-std::queue<std::pair<uint32_t, String>> meshCallbackQueue;
-std::queue<std::pair<uint32_t, String>> meshMessageQueue;
-std::queue<std::pair<uint32_t, String>> meshPriorityQueue;
+std::queue<espnow_message_t> espnowCallbackQueue;
+std::queue<std::pair<String, bool>> espnowMessageQueue;  // message, isPriority
 
-// Mutexes for thread safety
-SemaphoreHandle_t meshCallbackQueueMutex = NULL;
-SemaphoreHandle_t meshMessageQueueMutex = NULL;
-SemaphoreHandle_t meshPriorityQueueMutex = NULL;
+// Mutexes
+SemaphoreHandle_t espnowCallbackQueueMutex = NULL;
+SemaphoreHandle_t espnowMessageQueueMutex = NULL;
 SemaphoreHandle_t lightsArrayMutex = NULL;
 SemaphoreHandle_t myConnectionsMutex = NULL;
 
 // Statistics
 struct Statistics {
-    uint32_t meshDropped = 0;
+    uint32_t espnowDropped = 0;
     uint32_t lowHeapEvents = 0;
     uint32_t criticalHeapEvents = 0;
+    uint32_t espnowSendFailed = 0;
+    uint32_t espnowSendSuccess = 0;
 } stats;
 
 // State variables
 bool registeredWithRoot = false;
+bool hasRootMac = false;
 uint32_t resetTimer = 0;
 uint32_t otaTimer = 0;
 bool otaTimerStarted = false;
 volatile bool otaInProgress = false;
+unsigned long lastRootComm = 0;
 
 std::map<char, std::vector<std::pair<String, String>>> myConnections;
 
 Preferences preferences;
 String connectionsHash = "";
 
-// Helper function to safely push to bounded queue
+// Forward declarations
+void performFirmwareUpdate();
+void onESPNowDataSent(const uint8_t* mac_addr, esp_now_send_status_t status);
+void onESPNowDataRecv(const uint8_t* mac_addr, const uint8_t* data, int len);
+
 template <typename T>
 bool safePush(std::queue<T>& q, const T& item, SemaphoreHandle_t mutex,
               uint32_t& dropCounter, const char* queueName) {
@@ -137,7 +143,6 @@ bool safePush(std::queue<T>& q, const T& item, SemaphoreHandle_t mutex,
     return false;
 }
 
-// Helper function to safely pop from queue
 template <typename T>
 bool safePop(std::queue<T>& q, T& item, SemaphoreHandle_t mutex) {
     if (!mutex) return false;
@@ -154,17 +159,16 @@ bool safePop(std::queue<T>& q, T& item, SemaphoreHandle_t mutex) {
     return false;
 }
 
-// Check heap and handle critical memory situations
 bool checkHeapHealth() {
     uint32_t freeHeap = ESP.getFreeHeap();
     if (freeHeap < CRITICAL_HEAP_THRESHOLD) {
         stats.criticalHeapEvents++;
         DEBUG_ERROR("CRITICAL: Low heap %u bytes! Clearing queues...",
                     freeHeap);
-        if (xSemaphoreTake(meshMessageQueueMutex, pdMS_TO_TICKS(100)) ==
+        if (xSemaphoreTake(espnowMessageQueueMutex, pdMS_TO_TICKS(100)) ==
             pdTRUE) {
-            while (!meshMessageQueue.empty()) meshMessageQueue.pop();
-            xSemaphoreGive(meshMessageQueueMutex);
+            while (!espnowMessageQueue.empty()) espnowMessageQueue.pop();
+            xSemaphoreGive(espnowMessageQueueMutex);
         }
         return false;
     } else if (freeHeap < LOW_HEAP_THRESHOLD) {
@@ -179,8 +183,8 @@ void otaTask(void* pv) {
     for (int i = 0; i < NLIGHTS; i++) {
         detachInterrupt(buttons[i]);
     }
-    DEBUG_INFO("[OTA] Stopping mesh...");
-    mesh.stop();
+    DEBUG_INFO("[OTA] Stopping ESP-NOW...");
+    esp_now_deinit();
     esp_task_wdt_deinit();
     vTaskDelay(pdMS_TO_TICKS(2000));
     performFirmwareUpdate();
@@ -194,13 +198,16 @@ void performFirmwareUpdate() {
     const int MAX_RETRIES = 3;
     int attemptCount = 0;
     bool updateSuccess = false;
+
     while (attemptCount < MAX_RETRIES && !updateSuccess) {
         attemptCount++;
         DEBUG_INFO("[OTA] Starting update attempt %d/%d...", attemptCount,
                    MAX_RETRIES);
+
         WiFi.disconnect(true);
         WiFi.mode(WIFI_STA);
         WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
         unsigned long startTime = millis();
         while (WiFi.status() != WL_CONNECTED) {
             if (millis() - startTime > WIFI_CONNECT_TIMEOUT) {
@@ -209,6 +216,7 @@ void performFirmwareUpdate() {
             }
             vTaskDelay(500 / portTICK_PERIOD_MS);
         }
+
         if (WiFi.status() != WL_CONNECTED) {
             if (attemptCount < MAX_RETRIES) {
                 DEBUG_INFO("[OTA] Retrying in 2 seconds...");
@@ -219,6 +227,7 @@ void performFirmwareUpdate() {
                 break;
             }
         }
+
         WiFiClientSecure* client = new WiFiClientSecure();
         if (!client) {
             DEBUG_ERROR("[OTA] Client alloc failed on attempt %d",
@@ -229,9 +238,11 @@ void performFirmwareUpdate() {
             }
             break;
         }
+
         client->setInsecure();
         HTTPClient http;
         http.setTimeout(30000);
+
         if (!http.begin(*client, firmware_url)) {
             DEBUG_ERROR("[OTA] HTTP begin failed on attempt %d", attemptCount);
             delete client;
@@ -241,9 +252,12 @@ void performFirmwareUpdate() {
             }
             break;
         }
+
         int httpCode = http.GET();
+
         if (httpCode == HTTP_CODE_OK) {
             int contentLength = http.getSize();
+
             if (contentLength <= 0 || !Update.begin(contentLength)) {
                 DEBUG_ERROR("[OTA] Invalid size or begin failed on attempt %d",
                             attemptCount);
@@ -255,8 +269,10 @@ void performFirmwareUpdate() {
                 }
                 break;
             }
+
             WiFiClient* stream = http.getStreamPtr();
             size_t written = Update.writeStream(*stream);
+
             if (written != contentLength) {
                 DEBUG_ERROR("[OTA] Write mismatch on attempt %d", attemptCount);
                 Update.abort();
@@ -268,6 +284,7 @@ void performFirmwareUpdate() {
                 }
                 break;
             }
+
             if (Update.end() && Update.isFinished()) {
                 DEBUG_INFO("[OTA] Update successful on attempt %d!",
                            attemptCount);
@@ -298,48 +315,154 @@ void performFirmwareUpdate() {
             }
         }
     }
+
     DEBUG_ERROR("[OTA] All %d update attempts failed. Restarting...",
                 MAX_RETRIES);
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     ESP.restart();
 }
 
-void meshInit() {
-    mesh.setDebugMsgTypes(ERROR | STARTUP | CONNECTION);
-    mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA);
-    mesh.onReceive(&receivedCallback);
-    mesh.onNewConnection(&onNewConnection);
-    mesh.onDroppedConnection(&onDroppedConnection);
-    deviceId = mesh.getNodeId();
-    DEBUG_INFO("RELAY: Device ID: %u", deviceId);
-    DEBUG_VERBOSE("RELAY: Free heap: %d bytes", ESP.getFreeHeap());
+void onESPNowDataSent(const uint8_t* mac_addr, esp_now_send_status_t status) {
+    if (status == ESP_NOW_SEND_SUCCESS) {
+        stats.espnowSendSuccess++;
+        lastRootComm = millis();
+    } else {
+        stats.espnowSendFailed++;
+        DEBUG_VERBOSE("ESP-NOW send failed to root");
+    }
 }
 
-void sendStatusReport(void* pvParameters) {
-    while (true) {
-        if (otaInProgress) {
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            continue;
+void onESPNowDataRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
+    if (len != sizeof(espnow_message_t)) {
+        DEBUG_ERROR("ESP-NOW: Invalid message size: %d", len);
+        return;
+    }
+
+    espnow_message_t msg;
+    memcpy(&msg, data, sizeof(espnow_message_t));
+
+    // Update root MAC if this is from root
+    if (!hasRootMac) {
+        memcpy(rootMac, mac_addr, 6);
+        hasRootMac = true;
+        DEBUG_INFO("ESP-NOW: Learned root MAC: %02X:%02X:%02X:%02X:%02X:%02X",
+                   rootMac[0], rootMac[1], rootMac[2], rootMac[3], rootMac[4],
+                   rootMac[5]);
+    }
+
+    lastRootComm = millis();
+
+    DEBUG_VERBOSE("ESP-NOW RX: [%u] type=%c data=%s", msg.nodeId, msg.msgType,
+                  msg.data);
+
+    if (!checkHeapHealth()) {
+        stats.espnowDropped++;
+        return;
+    }
+
+    safePush(espnowCallbackQueue, msg, espnowCallbackQueueMutex,
+             stats.espnowDropped, "ESPNOW-CB");
+}
+
+void espnowInit() {
+    DEBUG_INFO("Initializing ESP-NOW...");
+
+    WiFi.mode(WIFI_STA);
+    WiFi.disconnect();
+
+    // Scan for WiFi network to find channel
+    DEBUG_INFO("Scanning for WiFi network '%s'...", WIFI_SSID);
+    int n = WiFi.scanNetworks();
+    uint8_t channel = 1;
+    bool found = false;
+
+    for (int i = 0; i < n; i++) {
+        if (WiFi.SSID(i) == String(WIFI_SSID)) {
+            channel = WiFi.channel(i);
+            found = true;
+            DEBUG_INFO("Found network '%s' on channel %d", WIFI_SSID, channel);
+            break;
         }
-        DEBUG_VERBOSE("MESH: Sending status report to root");
-        JsonDocument doc;
-        doc["rssi"] = WiFi.RSSI();
-        doc["uptime"] = millis() / 1000;
-        doc["clicks"] = clicks;
-        doc["disconnects"] = disconnects;
-        doc["parentId"] = 0;
-        doc["deviceId"] = deviceId;
-        doc["freeHeap"] = ESP.getFreeHeap();
-        doc["type"] = "relay";
-        doc["firmware"] = fw_md5;
-        doc["meshDropped"] = stats.meshDropped;
-        doc["lowHeap"] = stats.lowHeapEvents;
-        doc["criticalHeap"] = stats.criticalHeapEvents;
-        String msg;
-        serializeJson(doc, msg);
-        safePush(meshMessageQueue, std::make_pair(rootId, msg),
-                 meshMessageQueueMutex, stats.meshDropped, "MESH-MSG");
-        vTaskDelay(pdMS_TO_TICKS(STATUS_REPORT_INTERVAL));
+    }
+    WiFi.scanDelete();
+
+    if (!found) {
+        DEBUG_ERROR("WiFi network '%s' not found! Using default channel %d",
+                    WIFI_SSID, channel);
+    }
+
+    espnowChannel = channel;
+
+    uint8_t mac[6];
+    esp_wifi_get_mac(WIFI_IF_STA, mac);
+    deviceId = (mac[2] << 24) | (mac[3] << 16) | (mac[4] << 8) | mac[5];
+
+    DEBUG_INFO("Device MAC: %02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1],
+               mac[2], mac[3], mac[4], mac[5]);
+    DEBUG_INFO("Device ID: %u", deviceId);
+
+    esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+    DEBUG_INFO("ESP-NOW using channel %d", channel);
+
+    if (esp_now_init() != ESP_OK) {
+        DEBUG_ERROR("ESP-NOW init failed");
+        return;
+    }
+
+    DEBUG_INFO("ESP-NOW initialized successfully");
+
+    esp_now_register_send_cb(onESPNowDataSent);
+    esp_now_register_recv_cb(onESPNowDataRecv);
+}
+
+bool sendESPNowMessage(const String& message, bool priority = false) {
+    if (!hasRootMac) {
+        DEBUG_ERROR("Cannot send: No root MAC address");
+        return false;
+    }
+
+    if (!esp_now_is_peer_exist(rootMac)) {
+        esp_now_peer_info_t peerInfo = {};
+        memcpy(peerInfo.peer_addr, rootMac, 6);
+        peerInfo.channel = espnowChannel;
+        peerInfo.encrypt = false;
+
+        esp_err_t result = esp_now_add_peer(&peerInfo);
+        if (result != ESP_OK) {
+            DEBUG_ERROR("Failed to add root peer: %d", result);
+            return false;
+        }
+        DEBUG_INFO("Added root as ESP-NOW peer on channel %d", espnowChannel);
+    }
+
+    espnow_message_t msg;
+    msg.nodeId = deviceId;
+
+    if (message == "R") {
+        msg.msgType = 'R';
+    } else if (message.startsWith("{")) {
+        msg.msgType = 'D';
+    } else if (message.length() == 2 && message[0] >= 'A' &&
+               message[0] <= 'H') {
+        msg.msgType = 'C';
+    } else {
+        msg.msgType = 'D';
+    }
+
+    strncpy(msg.data, message.c_str(), sizeof(msg.data) - 1);
+    msg.data[sizeof(msg.data) - 1] = '\0';
+
+    esp_err_t result =
+        esp_now_send(rootMac, (uint8_t*)&msg, sizeof(espnow_message_t));
+
+    if (result == ESP_OK) {
+        DEBUG_VERBOSE("ESP-NOW TX: type=%c data=%s%s", msg.msgType, msg.data,
+                      priority ? " [PRI]" : "");
+        return true;
+    } else {
+        DEBUG_ERROR("ESP-NOW TX failed: %d", result);
+        stats.espnowSendFailed++;
+        return false;
     }
 }
 
@@ -351,73 +474,16 @@ void syncLightStates() {
             message[0] = 'A' + i;
             message[1] = lights[i] ? '1' : '0';
             message[2] = '\0';
-            safePush(meshMessageQueue, std::make_pair(rootId, String(message)),
-                     meshMessageQueueMutex, stats.meshDropped, "MESH-MSG");
+
+            safePush(espnowMessageQueue, std::make_pair(String(message), true),
+                     espnowMessageQueueMutex, stats.espnowDropped,
+                     "ESPNOW-PRI");
         }
         xSemaphoreGive(lightsArrayMutex);
     }
 }
 
-void statusPrintTask(void* pvParameters) {
-    while (true) {
-        if (otaInProgress) {
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            continue;
-        }
-        DEBUG_INFO("\n--- Status Report ---");
-        DEBUG_INFO("Device ID: %u", deviceId);
-        DEBUG_INFO("Root ID: %u", rootId);
-        DEBUG_INFO("Registered: %s", registeredWithRoot ? "Yes" : "No");
-        DEBUG_INFO("Free Heap: %d bytes", ESP.getFreeHeap());
-        DEBUG_INFO("Uptime: %lu seconds", millis() / 1000);
-        DEBUG_INFO("Sketch MD5: %s", fw_md5.c_str());
-        DEBUG_INFO("Dropped messages: %u", stats.meshDropped);
-        if (xSemaphoreTake(lightsArrayMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-            DEBUG_VERBOSE("\nRelay States:");
-            for (int i = 0; i < NLIGHTS; i++) {
-                DEBUG_VERBOSE("  Light %c (Pin %d): %s", 'a' + i, relays[i],
-                              lights[i] ? "ON" : "OFF");
-            }
-            xSemaphoreGive(lightsArrayMutex);
-        }
-        auto nodes = mesh.getNodeList();
-        DEBUG_INFO("\nMesh Network: %u node(s)", nodes.size());
-        for (auto node : nodes) {
-            DEBUG_VERBOSE("  Node: %u%s", node,
-                          (node == rootId) ? " (ROOT)" : "");
-        }
-        DEBUG_INFO("-------------------\n");
-        vTaskDelay(pdMS_TO_TICKS(STATUS_PRINT_INTERVAL));
-    }
-}
-
-void resetTask(void* pvParameters) {
-    while (true) {
-        if (otaInProgress) {
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            continue;
-        }
-
-        if (mesh.getNodeList().empty()) {
-            registeredWithRoot = false;
-        } else if (registeredWithRoot) {
-            resetTimer = millis();
-        }
-
-        if (!otaTimerStarted)
-            otaTimer = millis();
-        else if ((millis() - otaTimer) > OTA_START_DELAY) {
-            otaInProgress = true;
-        }
-
-        if ((millis() - resetTimer) > RESET_TIMEOUT) ESP.restart();
-
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-}
-
 String calculateConnectionsHash(const String& jsonStr) {
-    // Simple hash using sum of characters (you can use MD5 for better hash)
     unsigned long hash = 0;
     for (unsigned int i = 0; i < jsonStr.length(); i++) {
         hash = hash * 31 + jsonStr[i];
@@ -431,7 +497,6 @@ bool saveConnectionsToNVS(const String& jsonStr) {
         return false;
     }
 
-    // Check size limit (NVS has max ~4000 bytes per key)
     if (jsonStr.length() > 4000) {
         DEBUG_ERROR("saveConnectionsToNVS: JSON too large (%d bytes)",
                     jsonStr.length());
@@ -439,7 +504,6 @@ bool saveConnectionsToNVS(const String& jsonStr) {
         return false;
     }
 
-    // Save the JSON string
     size_t written = preferences.putString("config", jsonStr);
     if (written == 0) {
         DEBUG_ERROR("saveConnectionsToNVS: Failed to write config");
@@ -447,21 +511,19 @@ bool saveConnectionsToNVS(const String& jsonStr) {
         return false;
     }
 
-    // Save hash for quick comparison
     String hash = calculateConnectionsHash(jsonStr);
     preferences.putString("hash", hash);
     connectionsHash = hash;
 
     preferences.end();
 
-    DEBUG_INFO("saveConnectionsToNVS: Saved %d bytes, hash: %s", written,
-               hash.c_str());
+    DEBUG_INFO("saveConnectionsToNVS: Saved %d bytes", written);
     return true;
 }
 
 String loadConnectionsFromNVS() {
-    if (!preferences.begin("connections", true)) {  // true = read-only
-        DEBUG_ERROR("loadConnectionsFromNVS: Failed to open NVS");
+    if (!preferences.begin("connections", true)) {
+        DEBUG_INFO("loadConnectionsFromNVS: No saved connections");
         return "";
     }
 
@@ -471,53 +533,24 @@ String loadConnectionsFromNVS() {
     preferences.end();
 
     if (jsonStr.length() == 0) {
-        DEBUG_INFO("loadConnectionsFromNVS: No saved connections found");
         return "";
     }
 
-    // Verify hash
     String calculatedHash = calculateConnectionsHash(jsonStr);
     if (savedHash != calculatedHash) {
-        DEBUG_ERROR(
-            "loadConnectionsFromNVS: Hash mismatch! Data may be corrupted");
-        DEBUG_ERROR("  Saved: %s, Calculated: %s", savedHash.c_str(),
-                    calculatedHash.c_str());
+        DEBUG_ERROR("loadConnectionsFromNVS: Hash mismatch");
         return "";
     }
 
     connectionsHash = savedHash;
-    DEBUG_INFO("loadConnectionsFromNVS: Loaded %d bytes, hash: %s",
-               jsonStr.length(), savedHash.c_str());
-    DEBUG_INFO("loadConnectionsFromNVS: Connections data: %s", jsonStr.c_str());
+    DEBUG_INFO("loadConnectionsFromNVS: Loaded %d bytes", jsonStr.length());
 
     return jsonStr;
 }
 
-void clearConnectionsFromNVS() {
-    if (!preferences.begin("connections", false)) {
-        DEBUG_ERROR("clearConnectionsFromNVS: Failed to open NVS");
-        return;
-    }
-
-    preferences.clear();
-    preferences.end();
-    connectionsHash = "";
-
-    DEBUG_INFO("clearConnectionsFromNVS: Cleared all saved connections");
-}
-
 bool hasConnectionsChanged(const String& newJsonStr) {
     String newHash = calculateConnectionsHash(newJsonStr);
-    bool changed = (newHash != connectionsHash);
-
-    if (changed) {
-        DEBUG_INFO("hasConnectionsChanged: YES (old: %s, new: %s)",
-                   connectionsHash.c_str(), newHash.c_str());
-    } else {
-        DEBUG_VERBOSE("hasConnectionsChanged: NO (hash: %s)", newHash.c_str());
-    }
-
-    return changed;
+    return (newHash != connectionsHash);
 }
 
 void processConnectionsJSON(const String& jsonStr) {
@@ -525,8 +558,7 @@ void processConnectionsJSON(const String& jsonStr) {
     DeserializationError err = deserializeJson(doc, jsonStr);
 
     if (err) {
-        DEBUG_ERROR("receiveConnections: Failed to parse JSON: %s",
-                    err.c_str());
+        DEBUG_ERROR("receiveConnections: Failed to parse JSON");
         return;
     }
 
@@ -535,25 +567,18 @@ void processConnectionsJSON(const String& jsonStr) {
         return;
     }
 
-    // Clear existing connections
     myConnections.clear();
 
     String myIdStr = String(deviceId);
 
-    // Check if our device ID exists in the JSON
     if (doc[myIdStr].isNull()) {
         xSemaphoreGive(myConnectionsMutex);
-        DEBUG_INFO(
-            "receiveConnections: No connections configured for this device");
-
-        // Save empty config
         saveConnectionsToNVS("{}");
         return;
     }
 
     JsonObject myConfig = doc[myIdStr].as<JsonObject>();
 
-    // Parse each letter (button) configuration
     int totalTargets = 0;
     for (JsonPair letterPair : myConfig) {
         char letter = letterPair.key().c_str()[0];
@@ -568,9 +593,6 @@ void processConnectionsJSON(const String& jsonStr) {
                 String command = targetPair[1].as<String>();
                 targets.emplace_back(targetId, command);
                 totalTargets++;
-
-                DEBUG_VERBOSE("  Button '%c' -> Node %s: %s", letter,
-                              targetId.c_str(), command.c_str());
             }
         }
 
@@ -579,7 +601,7 @@ void processConnectionsJSON(const String& jsonStr) {
 
     xSemaphoreGive(myConnectionsMutex);
 
-    DEBUG_INFO("receiveConnections: Loaded %d buttons, %d total targets",
+    DEBUG_INFO("receiveConnections: Loaded %d buttons, %d targets",
                myConnections.size(), totalTargets);
 }
 
@@ -591,17 +613,12 @@ void receiveConnections(const String& jsonStr) {
 
     processConnectionsJSON(jsonStr);
 
-    // Check if connections actually changed
     if (!hasConnectionsChanged(jsonStr)) {
-        DEBUG_INFO("receiveConnections: No changes detected, skipping update");
         return;
     }
 
-    // Save to NVS
     if (saveConnectionsToNVS(jsonStr)) {
-        DEBUG_INFO("receiveConnections: Saved to NVS successfully");
-    } else {
-        DEBUG_ERROR("receiveConnections: Failed to save to NVS");
+        DEBUG_INFO("receiveConnections: Saved to NVS");
     }
 }
 
@@ -611,74 +628,11 @@ void loadConnectionsOnBoot() {
     String savedJson = loadConnectionsFromNVS();
 
     if (savedJson.length() == 0) {
-        DEBUG_INFO(
-            "loadConnectionsOnBoot: No saved connections, will wait for config "
-            "from root");
+        DEBUG_INFO("loadConnectionsOnBoot: No saved connections");
         return;
     }
 
-    // Parse and apply saved connections
     receiveConnections(savedJson);
-
-    DEBUG_INFO("loadConnectionsOnBoot: Restored connections from NVS");
-}
-
-void printConnectionsStats() {
-    if (!preferences.begin("connections", true)) {
-        DEBUG_ERROR("printConnectionsStats: Failed to open NVS");
-        return;
-    }
-
-    String config = preferences.getString("config", "");
-    String hash = preferences.getString("hash", "");
-
-    preferences.end();
-
-    DEBUG_INFO("\n--- Connections NVS Stats ---");
-    DEBUG_INFO("Stored size: %d bytes", config.length());
-    DEBUG_INFO("Stored hash: %s", hash.c_str());
-    DEBUG_INFO("Current hash: %s", connectionsHash.c_str());
-    DEBUG_INFO("Max NVS size: 4000 bytes");
-    DEBUG_INFO("Available: %d bytes", 4000 - config.length());
-
-    if (xSemaphoreTake(myConnectionsMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        DEBUG_INFO("Active buttons: %d", myConnections.size());
-        int totalTargets = 0;
-        for (const auto& conn : myConnections) {
-            totalTargets += conn.second.size();
-        }
-        DEBUG_INFO("Total targets: %d", totalTargets);
-        xSemaphoreGive(myConnectionsMutex);
-    }
-    DEBUG_INFO("---------------------------\n");
-}
-
-String exportConnections() {
-    if (xSemaphoreTake(myConnectionsMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
-        DEBUG_ERROR("exportConnections: Failed to acquire mutex");
-        return "";
-    }
-
-    JsonDocument doc;
-    String myIdStr = String(deviceId);
-    JsonObject myConfig = doc[myIdStr].to<JsonObject>();
-
-    for (const auto& letterPair : myConnections) {
-        char letter = letterPair.first;
-        JsonArray targetsArray = myConfig[String(letter)].to<JsonArray>();
-
-        for (const auto& target : letterPair.second) {
-            JsonArray targetPair = targetsArray.add<JsonArray>();
-            targetPair.add(target.first);
-            targetPair.add(target.second);
-        }
-    }
-
-    xSemaphoreGive(myConnectionsMutex);
-
-    String jsonStr;
-    serializeJson(doc, jsonStr);
-    return jsonStr;
 }
 
 std::vector<std::pair<String, String>> getTargetsForButton(char button) {
@@ -695,6 +649,79 @@ std::vector<std::pair<String, String>> getTargetsForButton(char button) {
     }
 
     return result;
+}
+
+void sendStatusReport(void* pvParameters) {
+    while (true) {
+        if (otaInProgress || !hasRootMac) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        JsonDocument doc;
+        doc["rssi"] = 0;
+        doc["uptime"] = millis() / 1000;
+        doc["clicks"] = clicks;
+        doc["disconnects"] = disconnects;
+        doc["parentId"] = 0;
+        doc["deviceId"] = deviceId;
+        doc["freeHeap"] = ESP.getFreeHeap();
+        doc["type"] = "relay";
+        doc["firmware"] = fw_md5;
+        doc["lowHeap"] = stats.lowHeapEvents;
+
+        String msg;
+        serializeJson(doc, msg);
+
+        safePush(espnowMessageQueue, std::make_pair(msg, false),
+                 espnowMessageQueueMutex, stats.espnowDropped, "ESPNOW-MSG");
+
+        vTaskDelay(pdMS_TO_TICKS(STATUS_REPORT_INTERVAL));
+    }
+}
+
+void statusPrintTask(void* pvParameters) {
+    while (true) {
+        if (otaInProgress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        DEBUG_INFO("\n--- Relay Status ---");
+        DEBUG_INFO("Device ID: %u", deviceId);
+        DEBUG_INFO("Has Root: %s", hasRootMac ? "Yes" : "No");
+        DEBUG_INFO("Registered: %s", registeredWithRoot ? "Yes" : "No");
+        DEBUG_INFO("Free Heap: %d bytes", ESP.getFreeHeap());
+        DEBUG_INFO("Uptime: %lu s", millis() / 1000);
+        DEBUG_INFO("-------------------\n");
+
+        vTaskDelay(pdMS_TO_TICKS(STATUS_PRINT_INTERVAL));
+    }
+}
+
+void resetTask(void* pvParameters) {
+    while (true) {
+        if (otaInProgress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        if (hasRootMac && registeredWithRoot) {
+            if (millis() - lastRootComm > RESET_TIMEOUT) {
+                DEBUG_ERROR("No root comm for %d ms, restarting",
+                            RESET_TIMEOUT);
+                ESP.restart();
+            }
+        }
+
+        if (!otaTimerStarted) {
+            otaTimer = millis();
+        } else if ((millis() - otaTimer) > OTA_START_DELAY) {
+            otaInProgress = true;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
 }
 
 void buttonPressTask(void* pvParameters) {
@@ -716,48 +743,32 @@ void buttonPressTask(void* pvParameters) {
             }
 
             char button = 'a' + i;
-            DEBUG_VERBOSE("BUTTON: Button %d pressed ('%c')", i, button);
 
-            auto targets = getTargetsForButton(button);
+            if (xSemaphoreTake(lightsArrayMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+                lights[i] = buttonState[i] ? HIGH : LOW;
+                digitalWrite(relays[i], lights[i]);
+                clicks++;
 
-            if (targets.empty()) {
-                DEBUG_INFO("RELAY: No targets configured for button %c",
-                           button);
-                continue;
+                char response[3];
+                response[0] = 'A' + i;
+                response[1] = lights[i] ? '1' : '0';
+                response[2] = '\0';
+
+                xSemaphoreGive(lightsArrayMutex);
+
+                safePush(
+                    espnowMessageQueue, std::make_pair(String(response), true),
+                    espnowMessageQueueMutex, stats.espnowDropped, "ESPNOW-PRI");
+
+                DEBUG_INFO("Light %c set to %s by button", button,
+                           lights[i] ? "ON" : "OFF");
             }
 
-            DEBUG_INFO("BUTTON: Sending to %d targets", targets.size());
-
-            for (const auto& target : targets) {
-                uint32_t targetId = target.first.toInt();
-                String command = target.second;
-
-                DEBUG_VERBOSE("  -> Node %u: %s", targetId, command.c_str());
-
-                if (targetId == deviceId) {
-                    uint32_t lightIndex = command[0] - 'a';
-
-                    if (xSemaphoreTake(lightsArrayMutex, pdMS_TO_TICKS(50)) ==
-                        pdTRUE) {
-                        lights[lightIndex] =
-                            buttonState[lightIndex] ? HIGH : LOW;
-                        digitalWrite(relays[lightIndex],
-                                     buttonState[lightIndex] ? HIGH : LOW);
-                        clicks++;
-                        DEBUG_INFO(
-                            "RELAY: Light %c set to %s by local button press",
-                            button, lights[lightIndex] ? "ON" : "OFF");
-                        xSemaphoreGive(lightsArrayMutex);
-                    }
-                } else {
-                    safePush(meshPriorityQueue,
-                             std::make_pair(targetId, command),
-                             meshPriorityQueueMutex, stats.meshDropped,
-                             "MESH-PRIORITY");
-                }
-
-                safePush(meshMessageQueue, std::make_pair(rootId, command),
-                         meshMessageQueueMutex, stats.meshDropped, "MESH-MSG");
+            auto targets = getTargetsForButton(button);
+            if (!targets.empty()) {
+                safePush(
+                    espnowMessageQueue, std::make_pair(String(button), false),
+                    espnowMessageQueueMutex, stats.espnowDropped, "ESPNOW-MSG");
             }
         }
     }
@@ -766,21 +777,17 @@ void buttonPressTask(void* pvParameters) {
 void registerTask(void* pvParameters) {
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(REGISTRATION_RETRY_INTERVAL));
+
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
-        if (!registeredWithRoot) {
-            DEBUG_INFO("MESH: Attempting registration with root...");
+
+        if (!registeredWithRoot && hasRootMac) {
+            DEBUG_INFO("Attempting registration with root...");
             digitalWrite(23, LOW);
-            if (rootId == 0) {
-                DEBUG_ERROR("MESH: Root ID unknown, cannot register");
-                continue;
-            }
-            safePush(meshMessageQueue, std::make_pair(rootId, String("R")),
-                     meshMessageQueueMutex, stats.meshDropped, "MESH-MSG");
-            DEBUG_VERBOSE("MESH: Sent registration 'R' to root %u", rootId);
-        } else {
+            sendESPNowMessage("R", false);
+        } else if (registeredWithRoot) {
             digitalWrite(23, HIGH);
         }
     }
@@ -796,60 +803,32 @@ void IRAM_ATTR buttonISR(void* arg) {
     }
 }
 
-void onDroppedConnection(uint32_t nodeId) {
-    DEBUG_INFO("MESH: Lost connection to node %u", nodeId);
-    if (nodeId == rootId) {
-        DEBUG_ERROR("MESH: Lost connection to root, resetting");
-        disconnects++;
-        registeredWithRoot = false;
-    }
-}
+void processMeshMessage(const espnow_message_t& message) {
+    String msg = String(message.data);
 
-void onNewConnection(uint32_t nodeId) {
-    DEBUG_INFO("MESH: New connection from node %u", nodeId);
-    if (rootId == 0) {
-        DEBUG_ERROR("MESH: Root ID unknown, cannot register");
-        return;
-    }
-    safePush(meshMessageQueue, std::make_pair(rootId, String("R")),
-             meshMessageQueueMutex, stats.meshDropped, "MESH-MSG");
-    DEBUG_VERBOSE("MESH: Sent registration 'R' to root %u", rootId);
-}
-
-void receivedCallback(const uint32_t& from, const String& msg) {
-    if (!checkHeapHealth()) {
-        stats.meshDropped++;
-        return;
-    }
-    DEBUG_VERBOSE("MESH: [%u] %s", from, msg.c_str());
-    safePush(meshCallbackQueue, std::make_pair(from, msg),
-             meshCallbackQueueMutex, stats.meshDropped, "MESH-CB");
-}
-
-void processMeshMessage(const uint32_t& from, const String& msg) {
     if (msg.startsWith("{")) {
-        DEBUG_INFO("MESH: Received connections configuration from %u", from);
+        DEBUG_INFO("Received connections config");
         receiveConnections(msg);
         return;
     }
 
     if (msg == "S") {
-        DEBUG_INFO("MESH: Root %u requesting state sync", from);
+        DEBUG_INFO("Root requesting state sync");
         syncLightStates();
         return;
     }
 
     if (msg == "Q") {
-        DEBUG_INFO("MESH: Registration query received from root");
-        rootId = from;
-        safePush(meshMessageQueue, std::make_pair(rootId, String("R")),
-                 meshMessageQueueMutex, stats.meshDropped, "MESH-MSG");
-        DEBUG_VERBOSE("MESH: Sent registration 'R' to root %u", rootId);
+        // Only respond if NOT registered
+        if (!registeredWithRoot) {
+            DEBUG_INFO("Registration query from root");
+            sendESPNowMessage("R", false);
+        }
         return;
     }
 
     if (msg == "U") {
-        DEBUG_INFO("MESH: Firmware update command received");
+        DEBUG_INFO("Firmware update command received");
         otaTimerStarted = true;
         return;
     }
@@ -858,27 +837,26 @@ void processMeshMessage(const uint32_t& from, const String& msg) {
     if (msg.length() == 2 && msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
         int lightIndex = msg[0] - 'a';
         int newState = msg[1] - '0';
+
         if (newState != 0 && newState != 1) {
-            DEBUG_ERROR("MESH: Invalid state '%c' in message from %u", msg[1],
-                        rootId);
             return;
         }
+
         if (xSemaphoreTake(lightsArrayMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
             lights[lightIndex] = newState;
             digitalWrite(relays[lightIndex], newState ? HIGH : LOW);
             clicks++;
-            DEBUG_INFO("RELAY: Light %c set to %s by root %u", 'a' + lightIndex,
-                       newState ? "ON" : "OFF", rootId);
 
-            // Send confirmation back via priority queue for fast response
             char response[3];
             response[0] = 'A' + lightIndex;
             response[1] = newState ? '1' : '0';
             response[2] = '\0';
+
             xSemaphoreGive(lightsArrayMutex);
-            safePush(
-                meshPriorityQueue, std::make_pair(rootId, String(response)),
-                meshPriorityQueueMutex, stats.meshDropped, "MESH-PRIORITY");
+
+            safePush(espnowMessageQueue, std::make_pair(String(response), true),
+                     espnowMessageQueueMutex, stats.espnowDropped,
+                     "ESPNOW-PRI");
         }
         return;
     }
@@ -886,154 +864,127 @@ void processMeshMessage(const uint32_t& from, const String& msg) {
     // Handle light toggle (e.g., "a", "b")
     if (msg.length() == 1 && msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
         int lightIndex = msg[0] - 'a';
+
         if (xSemaphoreTake(lightsArrayMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
             lights[lightIndex] = !lights[lightIndex];
             digitalWrite(relays[lightIndex], lights[lightIndex] ? HIGH : LOW);
             clicks++;
-            DEBUG_INFO("RELAY: Light %c toggled to %s by root %u",
-                       'a' + lightIndex, lights[lightIndex] ? "ON" : "OFF",
-                       rootId);
 
-            // Send confirmation back via priority queue for fast response
             char response[3];
             response[0] = 'A' + lightIndex;
             response[1] = lights[lightIndex] ? '1' : '0';
             response[2] = '\0';
+
             xSemaphoreGive(lightsArrayMutex);
-            safePush(
-                meshPriorityQueue, std::make_pair(rootId, String(response)),
-                meshPriorityQueueMutex, stats.meshDropped, "MESH-PRIORITY");
+
+            safePush(espnowMessageQueue, std::make_pair(String(response), true),
+                     espnowMessageQueueMutex, stats.espnowDropped,
+                     "ESPNOW-PRI");
         }
         return;
     }
 
     if (msg == "A") {
-        DEBUG_INFO("MESH: Registration accepted by root");
+        DEBUG_INFO("Registration accepted by root");
         registeredWithRoot = true;
+        lastRootComm = millis();
         return;
     }
-
-    DEBUG_ERROR("MESH: Unknown/unhandled message '%s' from %u", msg.c_str(),
-                from);
 }
 
-void meshCallbackTask(void* pvParameters) {
+void espnowCallbackTask(void* pvParameters) {
     while (true) {
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
-        std::pair<uint32_t, String> message;
-        if (!safePop(meshCallbackQueue, message, meshCallbackQueueMutex)) {
-            vTaskDelay(pdMS_TO_TICKS(5));  // Reduced from 20ms
+
+        espnow_message_t message;
+        if (!safePop(espnowCallbackQueue, message, espnowCallbackQueueMutex)) {
+            vTaskDelay(pdMS_TO_TICKS(5));
             continue;
         }
-        // No artificial delay - process immediately
-        uint32_t from = message.first;
-        String msg = message.second;
-        processMeshMessage(from, msg);
+
+        processMeshMessage(message);
     }
 }
 
-void sendMeshMessages(void* pvParameters) {
+void sendESPNowMessages(void* pvParameters) {
     while (true) {
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
 
-        // Check priority queue FIRST for relay state confirmations (instant
-        // response)
-        std::pair<uint32_t, String> message;
-        if (safePop(meshPriorityQueue, message, meshPriorityQueueMutex)) {
-            uint32_t to = message.first;
-            String msg = message.second;
-            mesh.sendSingle(to, msg);
-            DEBUG_VERBOSE("MESH TX PRIORITY: [%u] %s", to, msg.c_str());
-            vTaskDelay(pdMS_TO_TICKS(2));  // Minimal delay
+        std::pair<String, bool> message;
+        if (!safePop(espnowMessageQueue, message, espnowMessageQueueMutex)) {
+            vTaskDelay(pdMS_TO_TICKS(5));
             continue;
         }
 
-        // Then check regular queue
-        if (!safePop(meshMessageQueue, message, meshMessageQueueMutex)) {
-            vTaskDelay(pdMS_TO_TICKS(5));  // Reduced from 20ms
-            continue;
-        }
-        vTaskDelay(pdMS_TO_TICKS(5));  // Reduced rate limiting
-        uint32_t to = message.first;
-        String msg = message.second;
-        mesh.sendSingle(to, msg);
-        DEBUG_VERBOSE("MESH TX: [%u] %s", to, msg.c_str());
+        String msg = message.first;
+        bool priority = message.second;
+
+        sendESPNowMessage(msg, priority);
+
+        vTaskDelay(pdMS_TO_TICKS(priority ? 2 : 5));
     }
 }
 
 void setup() {
     Serial.begin(115200);
     vTaskDelay(1000 / portTICK_PERIOD_MS);
+
     fw_md5 = ESP.getSketchMD5();
-    DEBUG_INFO("\n\n========================================");
-    DEBUG_INFO("ESP32 Mesh Relay Node Starting...");
-    DEBUG_INFO("Chip Model: %s", ESP.getChipModel());
+    DEBUG_INFO("\n========================================");
+    DEBUG_INFO("ESP32 ESP-NOW Relay Node Starting...");
     DEBUG_INFO("Sketch MD5: %s", fw_md5.c_str());
-    DEBUG_INFO("Chip Revision: %d", ESP.getChipRevision());
-    DEBUG_INFO("CPU Frequency: %d MHz", ESP.getCpuFreqMHz());
     DEBUG_INFO("Free Heap: %d bytes", ESP.getFreeHeap());
-    DEBUG_INFO("Flash Size: %d bytes", ESP.getFlashChipSize());
     DEBUG_INFO("========================================\n");
 
-    // CRITICAL: Create mutexes BEFORE meshInit()
     DEBUG_INFO("Creating mutexes...");
-    meshCallbackQueueMutex = xSemaphoreCreateMutex();
-    meshMessageQueueMutex = xSemaphoreCreateMutex();
-    meshPriorityQueueMutex = xSemaphoreCreateMutex();
+    espnowCallbackQueueMutex = xSemaphoreCreateMutex();
+    espnowMessageQueueMutex = xSemaphoreCreateMutex();
     lightsArrayMutex = xSemaphoreCreateMutex();
     myConnectionsMutex = xSemaphoreCreateMutex();
 
-    if (!meshCallbackQueueMutex || !meshMessageQueueMutex ||
-        !meshPriorityQueueMutex || !lightsArrayMutex || !myConnectionsMutex) {
+    if (!espnowCallbackQueueMutex || !espnowMessageQueueMutex ||
+        !lightsArrayMutex || !myConnectionsMutex) {
         DEBUG_ERROR("FATAL: Failed to create mutexes!");
         ESP.restart();
     }
-    DEBUG_INFO("All mutexes created successfully");
 
     loadConnectionsOnBoot();
 
-    // Initialize relay pins
     for (int i = 0; i < NLIGHTS; i++) {
         pinMode(relays[i], OUTPUT);
         digitalWrite(relays[i], LOW);
-        DEBUG_VERBOSE("RELAY: Initialized relay %d (Pin %d)", i, relays[i]);
     }
 
     pinMode(23, OUTPUT);
     digitalWrite(23, LOW);
 
-    // Initialize mesh
-    meshInit();
+    espnowInit();
 
-    // Initialize button interrupts
     for (int i = 0; i < NLIGHTS; i++) {
         pinMode(buttons[i], INPUT_PULLDOWN);
         attachInterruptArg(digitalPinToInterrupt(buttons[i]), buttonISR,
                            (void*)i, CHANGE);
     }
 
-    // Create tasks with optimized priorities
     DEBUG_INFO("Creating tasks...");
-    xTaskCreatePinnedToCore(statusPrintTask, "StatusPrint", 4096, NULL, 1, NULL,
+    xTaskCreatePinnedToCore(statusPrintTask, "Status", 4096, NULL, 1, NULL, 1);
+    xTaskCreatePinnedToCore(sendStatusReport, "StatusRpt", 8192, NULL, 1, NULL,
                             1);
-    xTaskCreatePinnedToCore(sendStatusReport, "StatusReport", 8192, NULL, 1,
-                            NULL, 1);
     xTaskCreatePinnedToCore(registerTask, "Register", 4096, NULL, 2, NULL, 1);
-    xTaskCreatePinnedToCore(buttonPressTask, "ButtonPress", 4096, NULL, 2, NULL,
-                            1);
+    xTaskCreatePinnedToCore(buttonPressTask, "Button", 4096, NULL, 3, NULL, 1);
     xTaskCreatePinnedToCore(resetTask, "Reset", 4096, NULL, 1, NULL, 1);
-    xTaskCreatePinnedToCore(meshCallbackTask, "MeshCallbackTask", 8192, NULL, 4,
-                            NULL, 0);
-    xTaskCreatePinnedToCore(sendMeshMessages, "SendMeshMessages", 8192, NULL, 3,
-                            NULL, 0);  // Higher priority
+    xTaskCreatePinnedToCore(espnowCallbackTask, "ESPNowCB", 8192, NULL, 4, NULL,
+                            0);
+    xTaskCreatePinnedToCore(sendESPNowMessages, "ESPNowTX", 8192, NULL, 4, NULL,
+                            0);
 
-    DEBUG_INFO("RELAY: Setup complete, waiting for mesh connections...");
+    DEBUG_INFO("Setup complete");
 }
 
 void loop() {
@@ -1041,14 +992,9 @@ void loop() {
 
     if (otaInProgress && !otaTaskStarted) {
         otaTaskStarted = true;
-        DEBUG_INFO("[OTA] Disconnecting mesh...");
-        xTaskCreatePinnedToCore(otaTask, "OTA", 8192, NULL, 5, NULL,
-                                0);  // Increased stack size
+        DEBUG_INFO("[OTA] Starting OTA task...");
+        xTaskCreatePinnedToCore(otaTask, "OTA", 8192, NULL, 5, NULL, 0);
     }
-    if (otaInProgress) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    } else {
-        mesh.update();
-        vTaskDelay(pdMS_TO_TICKS(1));
-    }
+
+    vTaskDelay(pdMS_TO_TICKS(10));
 }

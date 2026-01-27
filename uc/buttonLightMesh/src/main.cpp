@@ -2,7 +2,6 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
-#include <Preferences.h>
 #include <Update.h>
 #include <WiFi.h>
 #include <credentials.h>
@@ -36,7 +35,7 @@
 #define LOW_HEAP_THRESHOLD 40000
 
 // Debug levels
-#define DEBUG_LEVEL 3  // 0=none, 1=errors only, 2=info, 3=verbose
+#define DEBUG_LEVEL 1  // 0=none, 1=errors only, 2=info, 3=verbose
 
 #if DEBUG_LEVEL >= 1
 #define DEBUG_ERROR(fmt, ...) Serial.printf("[ERROR] " fmt "\n", ##__VA_ARGS__)
@@ -81,7 +80,6 @@ std::queue<std::pair<String, bool>> espnowMessageQueue;  // message, isPriority
 // Mutexes
 SemaphoreHandle_t espnowCallbackQueueMutex = NULL;
 SemaphoreHandle_t espnowMessageQueueMutex = NULL;
-SemaphoreHandle_t myConnectionsMutex = NULL;
 
 // Statistics
 struct Statistics {
@@ -91,11 +89,6 @@ struct Statistics {
     uint32_t espnowSendFailed = 0;
     uint32_t espnowSendSuccess = 0;
 } stats;
-
-std::map<char, std::vector<std::pair<String, String>>> myConnections;
-
-Preferences preferences;
-String connectionsHash = "";
 
 const int buttonPins[NLIGHTS] = {A0, A1, A3, A4, A5, 6, 7};
 uint32_t lastTimeClick[NLIGHTS] = {0};

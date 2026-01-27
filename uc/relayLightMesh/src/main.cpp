@@ -1,7 +1,6 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
-#include <Preferences.h>
 #include <Update.h>
 #include <WiFi.h>
 #include <credentials.h>
@@ -85,7 +84,6 @@ std::queue<std::pair<String, bool>> espnowMessageQueue;  // message, isPriority
 SemaphoreHandle_t espnowCallbackQueueMutex = NULL;
 SemaphoreHandle_t espnowMessageQueueMutex = NULL;
 SemaphoreHandle_t lightsArrayMutex = NULL;
-SemaphoreHandle_t myConnectionsMutex = NULL;
 
 // Statistics
 struct Statistics {
@@ -103,11 +101,6 @@ uint32_t otaTimer = 0;
 bool otaTimerStarted = false;
 volatile bool otaInProgress = false;
 unsigned long lastRootComm = 0;
-
-std::map<char, std::vector<std::pair<String, String>>> myConnections;
-
-Preferences preferences;
-String connectionsHash = "";
 
 // Forward declarations
 void performFirmwareUpdate();
@@ -604,12 +597,6 @@ void IRAM_ATTR buttonISR(void* arg) {
 void processMeshMessage(const espnow_message_t& message) {
     String msg = String(message.data);
 
-    if (msg.startsWith("{")) {
-        DEBUG_INFO("Received connections config");
-        receiveConnections(msg);
-        return;
-    }
-
     if (msg == "S") {
         DEBUG_INFO("Root requesting state sync");
         syncLightStates();
@@ -744,15 +731,12 @@ void setup() {
     espnowCallbackQueueMutex = xSemaphoreCreateMutex();
     espnowMessageQueueMutex = xSemaphoreCreateMutex();
     lightsArrayMutex = xSemaphoreCreateMutex();
-    myConnectionsMutex = xSemaphoreCreateMutex();
 
     if (!espnowCallbackQueueMutex || !espnowMessageQueueMutex ||
-        !lightsArrayMutex || !myConnectionsMutex) {
+        !lightsArrayMutex) {
         DEBUG_ERROR("FATAL: Failed to create mutexes!");
         ESP.restart();
     }
-
-    loadConnectionsOnBoot();
 
     for (int i = 0; i < NLIGHTS; i++) {
         pinMode(relays[i], OUTPUT);

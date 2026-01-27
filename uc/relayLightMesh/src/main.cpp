@@ -26,7 +26,6 @@ const byte wifiActivityPin = 255;
 #define REGISTRATION_RETRY_INTERVAL 10000
 #define STATUS_REPORT_INTERVAL 15000
 #define BUTTON_DEBOUNCE_TIME 1000
-#define RESET_TIMEOUT 300000
 #define OTA_START_DELAY 5000
 
 // Queue size limits
@@ -100,7 +99,6 @@ struct Statistics {
 // State variables
 bool registeredWithRoot = false;
 bool hasRootMac = false;
-uint32_t resetTimer = 0;
 uint32_t otaTimer = 0;
 bool otaTimerStarted = false;
 volatile bool otaInProgress = false;
@@ -699,31 +697,6 @@ void statusPrintTask(void* pvParameters) {
     }
 }
 
-void resetTask(void* pvParameters) {
-    while (true) {
-        if (otaInProgress) {
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            continue;
-        }
-
-        if (hasRootMac && registeredWithRoot) {
-            if (millis() - lastRootComm > RESET_TIMEOUT) {
-                DEBUG_ERROR("No root comm for %d ms, restarting",
-                            RESET_TIMEOUT);
-                ESP.restart();
-            }
-        }
-
-        if (!otaTimerStarted) {
-            otaTimer = millis();
-        } else if ((millis() - otaTimer) > OTA_START_DELAY) {
-            otaInProgress = true;
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-}
-
 void buttonPressTask(void* pvParameters) {
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(20));
@@ -978,7 +951,6 @@ void setup() {
                             1);
     xTaskCreatePinnedToCore(registerTask, "Register", 4096, NULL, 2, NULL, 1);
     xTaskCreatePinnedToCore(buttonPressTask, "Button", 4096, NULL, 3, NULL, 1);
-    xTaskCreatePinnedToCore(resetTask, "Reset", 4096, NULL, 1, NULL, 1);
     xTaskCreatePinnedToCore(espnowCallbackTask, "ESPNowCB", 8192, NULL, 4, NULL,
                             0);
     xTaskCreatePinnedToCore(sendESPNowMessages, "ESPNowTX", 8192, NULL, 4, NULL,

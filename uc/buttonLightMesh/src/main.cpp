@@ -492,202 +492,6 @@ bool sendESPNowMessage(const String& message, bool priority = false) {
     }
 }
 
-String calculateConnectionsHash(const String& jsonStr) {
-    unsigned long hash = 0;
-    for (unsigned int i = 0; i < jsonStr.length(); i++) {
-        hash = hash * 31 + jsonStr[i];
-    }
-    return String(hash, HEX);
-}
-
-bool saveConnectionsToNVS(const String& jsonStr) {
-    if (!preferences.begin("connections", false)) {
-        DEBUG_ERROR("saveConnectionsToNVS: Failed to open NVS");
-        return false;
-    }
-
-    if (jsonStr.length() > 4000) {
-        DEBUG_ERROR("saveConnectionsToNVS: JSON too large (%d bytes)",
-                    jsonStr.length());
-        preferences.end();
-        return false;
-    }
-
-    size_t written = preferences.putString("config", jsonStr);
-    if (written == 0) {
-        DEBUG_ERROR("saveConnectionsToNVS: Failed to write config");
-        preferences.end();
-        return false;
-    }
-
-    String hash = calculateConnectionsHash(jsonStr);
-    preferences.putString("hash", hash);
-    connectionsHash = hash;
-
-    preferences.end();
-
-    DEBUG_INFO("saveConnectionsToNVS: Saved %d bytes, hash: %s", written,
-               hash.c_str());
-    return true;
-}
-
-String loadConnectionsFromNVS() {
-    if (!preferences.begin("connections", true)) {
-        DEBUG_ERROR("loadConnectionsFromNVS: Failed to open NVS");
-        return "";
-    }
-
-    String jsonStr = preferences.getString("config", "");
-    String savedHash = preferences.getString("hash", "");
-
-    preferences.end();
-
-    if (jsonStr.length() == 0) {
-        DEBUG_INFO("loadConnectionsFromNVS: No saved connections found");
-        return "";
-    }
-
-    String calculatedHash = calculateConnectionsHash(jsonStr);
-    if (savedHash != calculatedHash) {
-        DEBUG_ERROR(
-            "loadConnectionsFromNVS: Hash mismatch! Data may be corrupted");
-        return "";
-    }
-
-    connectionsHash = savedHash;
-    DEBUG_INFO("loadConnectionsFromNVS: Loaded %d bytes, hash: %s",
-               jsonStr.length(), savedHash.c_str());
-
-    return jsonStr;
-}
-
-bool hasConnectionsChanged(const String& newJsonStr) {
-    String newHash = calculateConnectionsHash(newJsonStr);
-    bool changed = (newHash != connectionsHash);
-
-    if (changed) {
-        DEBUG_INFO("hasConnectionsChanged: YES (old: %s, new: %s)",
-                   connectionsHash.c_str(), newHash.c_str());
-    } else {
-        DEBUG_VERBOSE("hasConnectionsChanged: NO (hash: %s)", newHash.c_str());
-    }
-
-    return changed;
-}
-
-void processConnectionsJSON(const String& jsonStr) {
-    JsonDocument doc;
-    DeserializationError err = deserializeJson(doc, jsonStr);
-
-    if (err) {
-        DEBUG_ERROR("receiveConnections: Failed to parse JSON: %s",
-                    err.c_str());
-        return;
-    }
-
-    if (xSemaphoreTake(myConnectionsMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
-        DEBUG_ERROR("receiveConnections: Failed to acquire mutex");
-        return;
-    }
-
-    myConnections.clear();
-
-    String myIdStr = String(deviceId);
-
-    if (doc[myIdStr].isNull()) {
-        xSemaphoreGive(myConnectionsMutex);
-        DEBUG_INFO(
-            "receiveConnections: No connections configured for this device");
-        saveConnectionsToNVS("{}");
-        return;
-    }
-
-    JsonObject myConfig = doc[myIdStr].as<JsonObject>();
-
-    int totalTargets = 0;
-    for (JsonPair letterPair : myConfig) {
-        char letter = letterPair.key().c_str()[0];
-        JsonArray targetsArray = letterPair.value().as<JsonArray>();
-
-        std::vector<std::pair<String, String>> targets;
-        targets.reserve(targetsArray.size());
-
-        for (JsonArray targetPair : targetsArray) {
-            if (targetPair.size() >= 2) {
-                String targetId = targetPair[0].as<String>();
-                String command = targetPair[1].as<String>();
-                targets.emplace_back(targetId, command);
-                totalTargets++;
-
-                DEBUG_VERBOSE("  Button '%c' -> Node %s: %s", letter,
-                              targetId.c_str(), command.c_str());
-            }
-        }
-
-        myConnections[letter] = std::move(targets);
-    }
-
-    xSemaphoreGive(myConnectionsMutex);
-
-    DEBUG_INFO("receiveConnections: Loaded %d buttons, %d total targets",
-               myConnections.size(), totalTargets);
-}
-
-void receiveConnections(const String& jsonStr) {
-    if (!myConnectionsMutex) {
-        DEBUG_ERROR("receiveConnections: Mutex not initialized!");
-        return;
-    }
-
-    processConnectionsJSON(jsonStr);
-
-    if (!hasConnectionsChanged(jsonStr)) {
-        DEBUG_INFO("receiveConnections: No changes detected, skipping update");
-        return;
-    }
-
-    if (saveConnectionsToNVS(jsonStr)) {
-        DEBUG_INFO("receiveConnections: Saved to NVS successfully");
-        setLedColor(255, 0, 255);  // Magenta flash
-        vTaskDelay(100);
-    } else {
-        DEBUG_ERROR("receiveConnections: Failed to save to NVS");
-    }
-}
-
-void loadConnectionsOnBoot() {
-    DEBUG_INFO("loadConnectionsOnBoot: Loading saved connections...");
-
-    String savedJson = loadConnectionsFromNVS();
-
-    if (savedJson.length() == 0) {
-        DEBUG_INFO(
-            "loadConnectionsOnBoot: No saved connections, will wait for config "
-            "from root");
-        return;
-    }
-
-    receiveConnections(savedJson);
-
-    DEBUG_INFO("loadConnectionsOnBoot: Restored connections from NVS");
-}
-
-std::vector<std::pair<String, String>> getTargetsForButton(char button) {
-    std::vector<std::pair<String, String>> result;
-
-    if (!myConnectionsMutex) return result;
-
-    if (xSemaphoreTake(myConnectionsMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        auto it = myConnections.find(button);
-        if (it != myConnections.end()) {
-            result = it->second;
-        }
-        xSemaphoreGive(myConnectionsMutex);
-    }
-
-    return result;
-}
-
 void sendStatusReport(void* pvParameters) {
     while (true) {
         if (otaInProgress || !hasRootMac) {
@@ -800,17 +604,6 @@ void handleButtonsTask(void* pvParameters) {
                     continue;
                 }
 
-                auto targets = getTargetsForButton(button);
-
-                if (targets.empty()) {
-                    DEBUG_VERBOSE(
-                        "BUTTON: No targets configured for button '%c'",
-                        button);
-                    continue;
-                }
-
-                DEBUG_INFO("BUTTON: Sending to %d targets", targets.size());
-
                 // Send button press to root immediately
                 String buttonMsg = String(button);
                 safePush(espnowMessageQueue, std::make_pair(buttonMsg, true),
@@ -858,12 +651,6 @@ void espnowCallbackTask(void* pvParameters) {
         }
 
         String msg = String(message.data);
-
-        if (msg.startsWith("{")) {
-            DEBUG_INFO("Received connections configuration");
-            receiveConnections(msg);
-            continue;
-        }
 
         if (msg == "U") {
             DEBUG_INFO("Firmware update command received");
@@ -932,16 +719,12 @@ void setup() {
     DEBUG_INFO("Creating mutexes...");
     espnowCallbackQueueMutex = xSemaphoreCreateMutex();
     espnowMessageQueueMutex = xSemaphoreCreateMutex();
-    myConnectionsMutex = xSemaphoreCreateMutex();
 
-    if (!espnowCallbackQueueMutex || !espnowMessageQueueMutex ||
-        !myConnectionsMutex) {
+    if (!espnowCallbackQueueMutex || !espnowMessageQueueMutex) {
         DEBUG_ERROR("FATAL: Failed to create mutexes!");
         ESP.restart();
     }
     DEBUG_INFO("All mutexes created successfully");
-
-    loadConnectionsOnBoot();
 
     // Initialize NeoPixel
     pixels.begin();

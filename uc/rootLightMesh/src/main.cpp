@@ -717,6 +717,7 @@ void handleUpdateMessage(const String& topic) {
                 continue;
             }
 
+            DEBUG_INFO("Sending update to node %u", nodeId);
             xSemaphoreGive(peersMapMutex);
             safePush(espnowMessageQueue, std::make_pair(nodeId, String("U")),
                      espnowMessageQueueMutex, stats.espnowDropped,

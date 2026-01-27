@@ -40,6 +40,8 @@ class WebSocketManager {
 		this.onOpenCallback = null
 		this.onCloseCallback = null
 		this.onErrorCallback = null
+		this.connectionCheckInterval = null
+		this.visibilityHandlerBound = false
 	}
 
 	/**
@@ -147,7 +149,12 @@ class WebSocketManager {
 	 * Start periodic connection check
 	 */
 	startConnectionCheck(interval = 30000) {
-		setInterval(() => {
+		// Clear any existing interval first
+		if (this.connectionCheckInterval) {
+			clearInterval(this.connectionCheckInterval)
+		}
+		
+		this.connectionCheckInterval = setInterval(() => {
 			if (!this.ws || this.ws.readyState === WebSocket.CLOSED) {
 				console.log('WebSocket closed, reconnecting...')
 				this.connect()
@@ -159,6 +166,10 @@ class WebSocketManager {
 	 * Setup visibility change handler to reconnect when tab becomes visible
 	 */
 	setupVisibilityHandler() {
+		// Only add the listener once
+		if (this.visibilityHandlerBound) return
+		this.visibilityHandlerBound = true
+		
 		document.addEventListener('visibilitychange', () => {
 			if (!document.hidden) {
 				if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {

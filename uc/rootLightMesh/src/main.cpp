@@ -57,7 +57,7 @@
 #endif
 
 const int mqtt_port = 1883;
-uint32_t device_id;
+uint32_t deviceId;
 
 // ESP-NOW message structure
 typedef struct __attribute__((packed)) {
@@ -406,7 +406,7 @@ void mqttConnect() {
 
     int retries = 0;
     while (!mqttClient.connected() && retries < MQTT_CONNECT_TIMEOUT) {
-        String clientId = String(device_id);
+        String clientId = String(deviceId);
         if (mqttClient.connect(clientId.c_str(), MQTT_USER, MQTT_PASSWORD)) {
             DEBUG_INFO("MQTT connected");
             mqttClient.subscribe("/switch/cmd/+");
@@ -505,9 +505,9 @@ void espnowInit() {
 
     uint8_t mac[6];
     esp_wifi_get_mac(WIFI_IF_STA, mac);
-    device_id = (mac[2] << 24) | (mac[3] << 16) | (mac[4] << 8) | mac[5];
+    deviceId = (uint32_t)ESP.getEfuseMac();
 
-    DEBUG_INFO("Device ID: %u", device_id);
+    DEBUG_INFO("Device ID: %u", deviceId);
     DEBUG_INFO("Root MAC: %02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1],
                mac[2], mac[3], mac[4], mac[5]);
 }
@@ -542,7 +542,7 @@ void sendESPNowMessage(uint32_t nodeId, const String& message,
     }
 
     espnow_message_t msg;
-    msg.nodeId = device_id;
+    msg.nodeId = deviceId;
     msg.msgType = 'D';
 
     if (message == "Q") {
@@ -661,8 +661,8 @@ void statusReport(void* pvParameters) {
         doc["rssi"] = WiFi.RSSI();
         doc["uptime"] = millis() / 1000;
         doc["freeHeap"] = ESP.getFreeHeap();
-        doc["deviceId"] = device_id;
-        doc["parentId"] = device_id;
+        doc["deviceId"] = deviceId;
+        doc["parentId"] = deviceId;
         doc["type"] = "root";
         doc["firmware"] = fw_md5;
         doc["clicks"] = stats.buttonPresses;
@@ -972,7 +972,7 @@ void espnowCallbackTask(void* pvParameters) {
         if (isValidJson(msg)) {
             JsonDocument doc;
             deserializeJson(doc, msg.c_str());
-            doc["parentId"] = device_id;
+            doc["parentId"] = deviceId;
 
             String newMsg;
             serializeJson(doc, newMsg);
@@ -1007,7 +1007,7 @@ void broadcastDiscovery(void* pvParameters) {
         }
 
         espnow_message_t msg;
-        msg.nodeId = device_id;
+        msg.nodeId = deviceId;
         msg.msgType = 'Q';
         strcpy(msg.data, "Q");
 

@@ -420,7 +420,7 @@ void espnowInit() {
     // Get device MAC and generate ID
     uint8_t mac[6];
     esp_wifi_get_mac(WIFI_IF_STA, mac);
-    device_id = (uint32_t)ESP.getEfuseMac();
+    deviceId = (uint32_t)ESP.getEfuseMac();
 
     DEBUG_INFO("Device MAC: %02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1],
                mac[2], mac[3], mac[4], mac[5]);

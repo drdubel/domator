@@ -35,7 +35,7 @@
 #define LOW_HEAP_THRESHOLD 40000
 
 // Debug levels
-#define DEBUG_LEVEL 3  // 0=none, 1=errors only, 2=info, 3=verbose
+#define DEBUG_LEVEL 1  // 0=none, 1=errors only, 2=info, 3=verbose
 
 #if DEBUG_LEVEL >= 1
 #define DEBUG_ERROR(fmt, ...) Serial.printf("[ERROR] " fmt "\n", ##__VA_ARGS__)

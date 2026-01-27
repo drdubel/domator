@@ -35,7 +35,7 @@
 #define ESPNOW_CHANNEL 1
 #define MAX_ESPNOW_PEERS 20
 
-#define DEBUG_LEVEL 2
+#define DEBUG_LEVEL 1
 
 #if DEBUG_LEVEL >= 1
 #define DEBUG_ERROR(fmt, ...) Serial.printf("[ERROR] " fmt "\n", ##__VA_ARGS__)

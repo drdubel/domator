@@ -548,7 +548,7 @@ void buttonPressTask(void* pvParameters) {
                 clicks++;
 
                 char response[3];
-                response[0] = 'A' + i;
+                response[0] = 'a' + i;
                 response[1] = lights[i] ? '1' : '0';
                 response[2] = '\0';
 

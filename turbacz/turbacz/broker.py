@@ -242,9 +242,6 @@ async def handle_root_state(payload_str):
     metric_node = f"node_info,id={data['deviceId']},name={data['name']}{labels} uptime={data['uptime']},clicks={data['clicks']},free_heap={data['freeHeap']},disconnects={data['disconnects']}"
     metric_mesh = f"mesh_node,id={data['deviceId']},name={data['name']},parent={data['parentId']},parent_name={data['parent_name']},firmware={data['firmware']},type={data['type']}{labels} rssi={data['rssi']}"
 
-    if data["type"] == "root":
-        metric_node += f",mqtt_dropped={data['mqttDropped']}"
-
     logger.debug(metric_node)  # Debug log
     logger.debug(metric_mesh)  # Debug log
 

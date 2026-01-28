@@ -145,7 +145,7 @@ async def handle_switch_state(payload_str, topic):
         button_id = payload_str[0]
 
         logger.debug("Switch ID: %s, Button ID: %s", switch_id, button_id)  # Debug log
-        
+
         await ws_manager.broadcast(
             {
                 "type": "switch_state",
@@ -184,9 +184,7 @@ async def handle_root_state(payload_str):
 
     url = f"{config.monitoring.metrics}/api/v2/write"
     if config.monitoring.labels:
-        labels = "," + ",".join(
-            f"{key}={value}" for key, value in config.monitoring.labels.items()
-        )
+        labels = "," + ",".join(f"{key}={value}" for key, value in config.monitoring.labels.items())
     else:
         labels = ""
 
@@ -230,10 +228,7 @@ async def handle_root_state(payload_str):
     elif data["parentId"] in switches:
         parent_name = switches[data["parentId"]][0]
 
-    elif (
-        data["parentId"] == data["deviceId"]
-        or data["parentId"] == connection_manager.connection_manager.rootId
-    ):
+    elif data["parentId"] == data["deviceId"] or data["parentId"] == connection_manager.connection_manager.rootId:
         parent_name = "root"
 
     else:
@@ -248,7 +243,7 @@ async def handle_root_state(payload_str):
     metric_mesh = f"mesh_node,id={data['deviceId']},name={data['name']},parent={data['parentId']},parent_name={data['parent_name']},firmware={data['firmware']},type={data['type']}{labels} rssi={data['rssi']}"
 
     if data["type"] == "root":
-        metric_node += f",mqtt_dropped={data['mqttDropped']},mesh_dropped={data['meshDropped']},low_heap={data['lowHeap']},critical_heap={data['criticalHeap']}"
+        metric_node += f",mqtt_dropped={data['mqttDropped']}"
 
     logger.debug(metric_node)  # Debug log
     logger.debug(metric_mesh)  # Debug log
@@ -256,12 +251,8 @@ async def handle_root_state(payload_str):
     async with httpx.AsyncClient() as client:
         response = await client.post(url, content=metric_node)
         if response.status_code != 204:
-            logger.error(
-                "Failed to write metric for %s: %s", data["deviceId"], response.text
-            )
+            logger.error("Failed to write metric for %s: %s", data["deviceId"], response.text)
 
         response = await client.post(url, content=metric_mesh)
         if response.status_code != 204:
-            logger.error(
-                "Failed to write metric for %s: %s", data["deviceId"], response.text
-            )
+            logger.error("Failed to write metric for %s: %s", data["deviceId"], response.text)

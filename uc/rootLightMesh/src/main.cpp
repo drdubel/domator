@@ -573,6 +573,56 @@ void sendESPNowMessage(uint32_t nodeId, const String& message,
     }
 }
 
+void handleSwitchMessage(const uint32_t& from, const char button,
+                         int state = -1) {
+    DEBUG_INFO("Button '%c' from switch %u", button, from);
+
+    stats.buttonPresses++;
+
+    // Publish to MQTT
+    String mqttTopic = "/switch/state/" + String(from);
+    safePush(mqttMessageQueue, std::make_pair(mqttTopic, String(button)),
+             mqttMessageQueueMutex, stats.mqttDropped, "MQTT-MSG");
+
+    // Route to target relays
+    if (xSemaphoreTake(connectionsMapMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        String fromIdStr = String(from);
+        auto nodeIt = connections.find(fromIdStr);
+
+        if (nodeIt != connections.end()) {
+            auto buttonIt = nodeIt->second.find(button);
+
+            if (buttonIt != nodeIt->second.end()) {
+                DEBUG_INFO("  Routing to %d targets:", buttonIt->second.size());
+
+                for (const auto& target : buttonIt->second) {
+                    uint32_t targetNodeId = target.first.toInt();
+                    String command = target.second;
+                    if (state != -1) {
+                        command += String(state);
+                    }
+
+                    DEBUG_INFO("    → %u: %s", targetNodeId, command.c_str());
+                    stats.commandsRouted++;
+
+                    xSemaphoreGive(connectionsMapMutex);
+                    safePush(espnowPriorityQueue,
+                             std::make_pair(targetNodeId, command),
+                             espnowPriorityQueueMutex, stats.espnowDropped,
+                             "ESPNOW-PRI");
+                    xSemaphoreTake(connectionsMapMutex, pdMS_TO_TICKS(100));
+                }
+            } else {
+                DEBUG_INFO("  No targets for button '%c'", button);
+            }
+        } else {
+            DEBUG_INFO("  No config for switch %u", from);
+        }
+
+        xSemaphoreGive(connectionsMapMutex);
+    }
+}
+
 void handleRelayMessage(const uint32_t& from, const String& msg) {
     if (WiFi.status() != WL_CONNECTED || !mqttClient.connected()) {
         return;
@@ -910,55 +960,13 @@ void espnowCallbackTask(void* pvParameters) {
         }
 
         // **BUTTON PRESS ROUTING** - This is the key part!
-        if (msg.length() == 1 && msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
+        if (msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
             char button = msg[0];
-            stats.buttonPresses++;
 
-            DEBUG_INFO("Button '%c' from switch %u", button, from);
-
-            // Publish to MQTT
-            String mqttTopic = "/switch/state/" + String(from);
-            safePush(mqttMessageQueue, std::make_pair(mqttTopic, msg),
-                     mqttMessageQueueMutex, stats.mqttDropped, "MQTT-MSG");
-
-            // Route to target relays
-            if (xSemaphoreTake(connectionsMapMutex, pdMS_TO_TICKS(100)) ==
-                pdTRUE) {
-                String fromIdStr = String(from);
-                auto nodeIt = connections.find(fromIdStr);
-
-                if (nodeIt != connections.end()) {
-                    auto buttonIt = nodeIt->second.find(button);
-
-                    if (buttonIt != nodeIt->second.end()) {
-                        DEBUG_INFO("  Routing to %d targets:",
-                                   buttonIt->second.size());
-
-                        for (const auto& target : buttonIt->second) {
-                            uint32_t targetNodeId = target.first.toInt();
-                            String command = target.second;
-
-                            DEBUG_INFO("    → %u: %s", targetNodeId,
-                                       command.c_str());
-                            stats.commandsRouted++;
-
-                            xSemaphoreGive(connectionsMapMutex);
-                            safePush(espnowPriorityQueue,
-                                     std::make_pair(targetNodeId, command),
-                                     espnowPriorityQueueMutex,
-                                     stats.espnowDropped, "ESPNOW-PRI");
-                            xSemaphoreTake(connectionsMapMutex,
-                                           pdMS_TO_TICKS(100));
-                        }
-                    } else {
-                        DEBUG_INFO("  No targets for button '%c'", button);
-                    }
-                } else {
-                    DEBUG_INFO("  No config for switch %u", from);
-                }
-
-                xSemaphoreGive(connectionsMapMutex);
-            }
+            if (msg.length() == 2)
+                handleSwitchMessage(from, button, msg[1] - '0');
+            else
+                handleSwitchMessage(from, button);
 
             continue;
         }

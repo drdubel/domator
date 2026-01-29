@@ -161,16 +161,16 @@ function initPanning() {
         // Only pan if clicking on wrapper/canvas background (not on devices)
         if (e.target === wrapper || e.target === canvas) {
             isPanning = true
-            startX = e.clientX - panX * zoomLevel
-            startY = e.clientY - panY * zoomLevel
+            startX = e.clientX - panX
+            startY = e.clientY - panY
             wrapper.classList.add('grabbing')
         }
     })
 
     const throttledPan = throttle((clientX, clientY) => {
         if (isPanning) {
-            panX = (clientX - startX) / zoomLevel
-            panY = (clientY - startY) / zoomLevel
+            panX = clientX - startX
+            panY = clientY - startY
             updateZoom(false) // Update visual only, don't repaint jsPlumb
             updateZoomWithRepaint() // Debounced repaint for when panning slows/stops
         }
@@ -197,8 +197,8 @@ function initPanning() {
         if (e.touches.length === 1 && (e.target === wrapper || e.target === canvas)) {
             isPanning = true
             const touch = e.touches[0]
-            startX = touch.clientX - panX * zoomLevel
-            startY = touch.clientY - panY * zoomLevel
+            startX = touch.clientX - panX
+            startY = touch.clientY - panY
             wrapper.classList.add('grabbing')
             e.preventDefault()
         }

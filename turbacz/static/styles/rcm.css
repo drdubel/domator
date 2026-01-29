@@ -143,6 +143,16 @@ body {
     color: white;
 }
 
+.btn-update {
+    background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+    color: white;
+}
+
+.btn-update-root {
+    background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);
+    color: white;
+}
+
 .zoom-controls {
     display: flex;
     gap: 0.5rem;
@@ -195,6 +205,10 @@ body {
     overflow: visible;
     cursor: grab;
     position: relative;
+    touch-action: none;
+    /* Prevent default touch behaviors */
+    -webkit-user-select: none;
+    user-select: none;
 }
 
 #canvas-wrapper.grabbing {
@@ -294,6 +308,27 @@ body {
 .delete-btn:hover {
     background: #dc2626;
     transform: scale(1.1) rotate(90deg);
+}
+
+.update-btn {
+    background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+    color: white;
+    border: none;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 1rem;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.update-btn:hover {
+    background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+    transform: scale(1.1) rotate(180deg);
 }
 
 .device-name {
@@ -642,5 +677,77 @@ body {
 
     50% {
         opacity: 0.5;
+    }
+}
+
+/* Mobile Optimizations */
+@media (max-width: 768px) {
+    .header {
+        padding: 0.75rem 1rem;
+        flex-direction: column;
+        gap: 1rem;
+    }
+
+    .header-title h1 {
+        font-size: 1.25rem;
+    }
+
+    #toolbar {
+        width: 100%;
+        justify-content: flex-start;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+    }
+
+    .toolbar-btn {
+        padding: 0.5rem 1rem;
+        font-size: 0.75rem;
+        white-space: nowrap;
+    }
+
+    .device-box {
+        min-width: 240px;
+        padding: 1rem;
+    }
+
+    .device-name {
+        font-size: 1rem;
+    }
+
+    .button-item,
+    .output-item {
+        padding: 0.75rem;
+        font-size: 0.875rem;
+    }
+
+    .modal-content {
+        min-width: 90%;
+        padding: 1.5rem;
+    }
+
+    .zoom-controls {
+        padding: 0.375rem;
+    }
+
+    .zoom-btn {
+        width: 32px;
+        height: 32px;
+        font-size: 1rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .logo {
+        width: 32px;
+        height: 32px;
+        font-size: 1.25rem;
+    }
+
+    .toolbar-btn span {
+        display: none;
+    }
+
+    .device-box {
+        min-width: 200px;
     }
 }

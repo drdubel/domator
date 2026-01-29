@@ -128,7 +128,7 @@ const updateZoomWithRepaint = debounce(() => {
         jsPlumbInstance.setZoom(zoomLevel)
         jsPlumbInstance.repaintEverything()
     }
-}, 100)
+}, 50)
 
 function zoomIn() {
     zoomAtPoint(1.1, window.innerWidth / 2, window.innerHeight / 2)
@@ -167,22 +167,55 @@ function initPanning() {
         }
     })
 
-    const throttledPan = throttle((e) => {
+    const throttledPan = throttle((clientX, clientY) => {
         if (isPanning) {
-            panX = (e.clientX - startX) / zoomLevel
-            panY = (e.clientY - startY) / zoomLevel
+            panX = (clientX - startX) / zoomLevel
+            panY = (clientY - startY) / zoomLevel
             updateZoom(false) // Update visual only, don't repaint jsPlumb
             updateZoomWithRepaint() // Debounced repaint for when panning slows/stops
         }
-    }, 16) // ~60fps
+    }, 8) // Higher fps for smoother movement
 
-    document.addEventListener('mousemove', throttledPan)
+    document.addEventListener('mousemove', (e) => {
+        throttledPan(e.clientX, e.clientY)
+    })
 
     document.addEventListener('mouseup', () => {
         if (isPanning) {
             isPanning = false
             wrapper.classList.remove('grabbing')
             // Final repaint when panning ends
+            if (jsPlumbInstance) {
+                jsPlumbInstance.setZoom(zoomLevel)
+                jsPlumbInstance.repaintEverything()
+            }
+        }
+    })
+
+    // Touch support for mobile
+    wrapper.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 1 && (e.target === wrapper || e.target === canvas)) {
+            isPanning = true
+            const touch = e.touches[0]
+            startX = touch.clientX - panX * zoomLevel
+            startY = touch.clientY - panY * zoomLevel
+            wrapper.classList.add('grabbing')
+            e.preventDefault()
+        }
+    }, { passive: false })
+
+    document.addEventListener('touchmove', (e) => {
+        if (isPanning && e.touches.length === 1) {
+            const touch = e.touches[0]
+            throttledPan(touch.clientX, touch.clientY)
+            e.preventDefault()
+        }
+    }, { passive: false })
+
+    document.addEventListener('touchend', () => {
+        if (isPanning) {
+            isPanning = false
+            wrapper.classList.remove('grabbing')
             if (jsPlumbInstance) {
                 jsPlumbInstance.setZoom(zoomLevel)
                 jsPlumbInstance.repaintEverything()
@@ -205,6 +238,44 @@ function initPanning() {
         throttledZoom(e)
     }, { passive: false })
     resetZoom()
+}
+
+// Save/Load device positions
+function saveDevicePositions() {
+    const positions = {}
+
+    for (let switchId in switches) {
+        const element = document.getElementById(`switch-${switchId}`)
+        if (element) {
+            positions[`switch-${switchId}`] = {
+                x: parseInt(element.style.left),
+                y: parseInt(element.style.top)
+            }
+        }
+    }
+
+    for (let relayId in relays) {
+        const element = document.getElementById(`relay-${relayId}`)
+        if (element) {
+            positions[`relay-${relayId}`] = {
+                x: parseInt(element.style.left),
+                y: parseInt(element.style.top)
+            }
+        }
+    }
+
+    localStorage.setItem('rcm_device_positions', JSON.stringify(positions))
+    console.log('Device positions saved')
+}
+
+function loadDevicePositions() {
+    const saved = localStorage.getItem('rcm_device_positions')
+    return saved ? JSON.parse(saved) : {}
+}
+
+function getSavedPosition(deviceId, defaultX, defaultY) {
+    const positions = loadDevicePositions()
+    return positions[deviceId] || { x: defaultX, y: defaultY }
 }
 
 async function fetchAPI(endpoint) {
@@ -509,6 +580,55 @@ function highlightButton(switchId, buttonId) {
     console.log('Highlighted button:', switchId, buttonId)
 }
 
+function updateDevice(deviceId, deviceType) {
+    if (!wsManager.isConnected()) {
+        alert('Not connected to server')
+        return
+    }
+
+    const msg = JSON.stringify({
+        type: 'update_device',
+        device_id: deviceId,
+        device_type: deviceType
+    })
+
+    console.log('Sending update request:', msg)
+    wsManager.send(msg)
+}
+
+function updateAllRelays() {
+    if (!wsManager.isConnected()) {
+        alert('Not connected to server')
+        return
+    }
+
+    const msg = JSON.stringify({ type: 'update_all_relays' })
+    console.log('Updating all relays')
+    wsManager.send(msg)
+}
+
+function updateAllSwitches() {
+    if (!wsManager.isConnected()) {
+        alert('Not connected to server')
+        return
+    }
+
+    const msg = JSON.stringify({ type: 'update_all_switches' })
+    console.log('Updating all switches')
+    wsManager.send(msg)
+}
+
+function updateRoot() {
+    if (!wsManager.isConnected()) {
+        alert('Not connected to server')
+        return
+    }
+
+    const msg = JSON.stringify({ type: 'update_root' })
+    console.log('Updating root')
+    wsManager.send(msg)
+}
+
 function clearButtonHighlight(switchId, buttonId) {
     const buttonElement = document.getElementById(`switch-${switchId}-btn-${buttonId}`)
     if (!buttonElement) {
@@ -693,11 +813,13 @@ function getDemoConnections() {
 }
 
 function createSwitch(switchId, switchName, buttonCount, x, y) {
+    const savedPos = getSavedPosition(`switch-${switchId}`, x, y)
+
     const switchDiv = document.createElement('div')
     switchDiv.id = `switch-${switchId}`
     switchDiv.className = 'device-box switch-box'
-    switchDiv.style.left = `${x}px`
-    switchDiv.style.top = `${y}px`
+    switchDiv.style.left = `${savedPos.x}px`
+    switchDiv.style.top = `${savedPos.y}px`
 
     let buttonsHTML = ''
     for (let i = 1; i <= buttonCount; i++) {
@@ -719,7 +841,10 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
                     ${statusDot}
                     <span class="device-id" onclick="event.stopPropagation(); copyIdToClipboard(${switchId}, this)">ID: ${switchId}</span>
                     </span>
-                    <button class="delete-btn" onclick="event.stopPropagation(); deleteSwitch(${switchId})">✕</button>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <button class="update-btn" onclick="event.stopPropagation(); updateDevice(${switchId}, 'switch')" title="Update Device">⟳</button>
+                        <button class="delete-btn" onclick="event.stopPropagation(); deleteSwitch(${switchId})">✕</button>
+                    </div>
                 </div>
                 <div class="device-name" onclick="event.stopPropagation(); editDeviceName('switch', ${switchId})">${switchName}</div>
                 ${buttonsHTML}
@@ -732,7 +857,10 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
     })
 
     jsPlumbInstance.draggable(switchDiv, {
-        containment: false
+        containment: false,
+        stop: function () {
+            saveDevicePositions()
+        }
     })
 
     for (let i = 1; i <= buttonCount; i++) {
@@ -785,11 +913,13 @@ function copyIdToClipboard(id, element) {
 }
 
 function createRelay(relayId, relayName, outputs, x, y) {
+    const savedPos = getSavedPosition(`relay-${relayId}`, x, y)
+
     const relayDiv = document.createElement('div')
     relayDiv.id = `relay-${relayId}`
     relayDiv.className = 'device-box relay-box'
-    relayDiv.style.left = `${x}px`
-    relayDiv.style.top = `${y}px`
+    relayDiv.style.left = `${savedPos.x}px`
+    relayDiv.style.top = `${savedPos.y}px`
 
     let outputsHTML = ''
     for (let i = 1; i <= 8; i++) {
@@ -815,7 +945,10 @@ function createRelay(relayId, relayName, outputs, x, y) {
                     ${statusDot}
                     <span class="device-id" onclick="event.stopPropagation(); copyIdToClipboard(${relayId}, this)">ID: ${relayId}</span>
                     </span>
-                    <button class="delete-btn" onclick="event.stopPropagation(); deleteRelay(${relayId})">✕</button>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <button class="update-btn" onclick="event.stopPropagation(); updateDevice(${relayId}, 'relay')" title="Update Device">⟳</button>
+                        <button class="delete-btn" onclick="event.stopPropagation(); deleteRelay(${relayId})">✕</button>
+                    </div>
                 </div>
                 <div class="device-name" onclick="event.stopPropagation(); editDeviceName('relay', ${relayId})">${relayName}</div>
                 ${outputsHTML}
@@ -828,7 +961,10 @@ function createRelay(relayId, relayName, outputs, x, y) {
     })
 
     jsPlumbInstance.draggable(relayDiv, {
-        containment: false
+        containment: false,
+        stop: function () {
+            saveDevicePositions()
+        }
     })
 
     for (let i = 1; i <= 8; i++) {

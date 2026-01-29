@@ -946,6 +946,8 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
     if (savedColor) {
         switchDiv.style.borderLeftColor = savedColor
     }
+
+    let buttonsHTML = ''
     for (let i = 1; i <= buttonCount; i++) {
         buttonsHTML += `
                     <div class="button-item" id="switch-${switchId}-btn-${String.fromCharCode(96 + i)}">

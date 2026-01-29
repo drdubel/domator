@@ -317,7 +317,9 @@ function initPanning() {
         e.preventDefault()
         throttledZoom(e)
     }, { passive: false })
-    resetZoom()
+
+    // Apply initial zoom/pan (either saved or default)
+    updateZoom()
 }
 
 // Save/Load canvas view

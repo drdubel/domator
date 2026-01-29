@@ -16,9 +16,40 @@ let cachedElements = {}
 let hiddenDevices = new Set() // Track hidden devices
 
 // Zoom and Pan
-let zoomLevel = 0.4
-let panX = -11000  // Center canvas at device spawn area (25000, 25000)
-let panY = -12500
+function loadCanvasView() {
+    const saved = localStorage.getItem('rcm_canvas_view')
+    if (saved) {
+        const view = JSON.parse(saved)
+        return {
+            zoomLevel: view.zoomLevel || 0.4,
+            panX: view.panX !== undefined ? view.panX : getDefaultPanX(),
+            panY: view.panY !== undefined ? view.panY : getDefaultPanY()
+        }
+    }
+    return { zoomLevel: 0.4, panX: getDefaultPanX(), panY: getDefaultPanY() }
+}
+
+function getDefaultPanX() {
+    const deviceCenterX = 25000 // Center of device spawn area
+    const viewportCenterX = window.innerWidth / 2
+    const defaultZoom = 0.4
+    // Calculate panX so that deviceCenterX appears at viewport center
+    // Formula: (deviceCenterX + panX) * zoom = viewportCenterX
+    return (viewportCenterX / defaultZoom) - deviceCenterX
+}
+
+function getDefaultPanY() {
+    const deviceCenterY = 25000 // Center of device spawn area
+    const viewportCenterY = (window.innerHeight - 90) / 2 // Subtract header height
+    const defaultZoom = 0.4
+    // Calculate panY so that deviceCenterY appears at viewport center
+    return (viewportCenterY / defaultZoom) - deviceCenterY
+}
+
+const initialView = loadCanvasView()
+let zoomLevel = initialView.zoomLevel
+let panX = initialView.panX  // Center canvas at device spawn area (25000, 25000)
+let panY = initialView.panY
 let isPanning = false
 let startX = 0
 let startY = 0
@@ -97,9 +128,10 @@ function hideLoading() {
 
 function resetZoom() {
     zoomLevel = 0.4
-    panX = -11000
-    panY = -12500
+    panX = getDefaultPanX()
+    panY = getDefaultPanY()
     updateZoom()
+    saveCanvasView()
 }
 
 function updateZoom(repaintJsPlumb = true) {
@@ -152,6 +184,7 @@ function zoomAtPoint(factor, centerX, centerY) {
     panX = centerX - (centerX - panX) * (zoomLevel / prevScale)
     panY = centerY - (centerY - panY) * (zoomLevel / prevScale)
     updateZoom()
+    saveCanvasView()
 }
 
 
@@ -192,6 +225,7 @@ function initPanning() {
                 jsPlumbInstance.setZoom(zoomLevel)
                 jsPlumbInstance.repaintEverything()
             }
+            saveCanvasView()
         }
     })
 
@@ -223,6 +257,10 @@ function initPanning() {
                 jsPlumbInstance.setZoom(zoomLevel)
                 jsPlumbInstance.repaintEverything()
             }
+            saveCanvasView()
+        }
+        if (isPinching) {
+            saveCanvasView()
         }
         isPinching = false
         lastPinchDistance = 0
@@ -280,6 +318,16 @@ function initPanning() {
         throttledZoom(e)
     }, { passive: false })
     resetZoom()
+}
+
+// Save/Load canvas view
+function saveCanvasView() {
+    localStorage.setItem('rcm_canvas_view', JSON.stringify({
+        zoomLevel: zoomLevel,
+        panX: panX,
+        panY: panY
+    }))
+    console.log('Canvas view saved')
 }
 
 // Save/Load device positions

@@ -13,6 +13,7 @@ let isLoadingConnections = false
 let connectionLookupMap = {} // Maps device IDs to their connections for fast lookup
 let zoomUpdateScheduled = false
 let cachedElements = {}
+let hiddenDevices = new Set() // Track hidden devices
 
 // Zoom and Pan
 let zoomLevel = 0.5
@@ -300,6 +301,52 @@ function loadDeviceColors() {
 function getSavedColor(deviceId) {
     const colors = loadDeviceColors()
     return colors[deviceId] || null
+}
+
+// Hide/Show devices
+function saveHiddenDevices() {
+    localStorage.setItem('rcm_hidden_devices', JSON.stringify([...hiddenDevices]))
+    console.log('Hidden devices saved')
+}
+
+function loadHiddenDevices() {
+    const saved = localStorage.getItem('rcm_hidden_devices')
+    return saved ? new Set(JSON.parse(saved)) : new Set()
+}
+
+function hideDevice(deviceId, deviceType) {
+    hiddenDevices.add(`${deviceType}-${deviceId}`)
+
+    const element = document.getElementById(`${deviceType}-${deviceId}`)
+    if (element) {
+        element.style.display = 'none'
+    }
+
+    // Hide connections
+    const deviceConnections = connectionLookupMap[`${deviceType}-${deviceId}`] || []
+    deviceConnections.forEach(conn => {
+        conn.setVisible(false)
+    })
+
+    saveHiddenDevices()
+}
+
+function showAllHiddenDevices() {
+    hiddenDevices.forEach(deviceKey => {
+        const element = document.getElementById(deviceKey)
+        if (element) {
+            element.style.display = 'block'
+        }
+
+        // Show connections
+        const deviceConnections = connectionLookupMap[deviceKey] || []
+        deviceConnections.forEach(conn => {
+            conn.setVisible(true)
+        })
+    })
+
+    hiddenDevices.clear()
+    saveHiddenDevices()
 }
 
 function showColorPicker(switchId) {
@@ -637,26 +684,46 @@ function highlightDevice(deviceId) {
     element.classList.add('highlighted')
     highlightedDevice = deviceId
 
+    // Dim all other devices
+    document.querySelectorAll('.device-box').forEach(el => {
+        if (el.id !== deviceId) {
+            el.style.opacity = '0.3'
+        }
+    })
+
     // Use lookup map for faster connection finding
     const deviceConnections = connectionLookupMap[deviceId] || []
+
+    // Dim all connections first
+    const allConnections = jsPlumbInstance.getAllConnections()
+    allConnections.forEach(conn => {
+        conn.canvas.style.opacity = '0.2'
+    })
 
     deviceConnections.forEach(conn => {
         const sourceId = conn.sourceId
         const targetId = conn.targetId
 
         conn.setPaintStyle({ stroke: '#ef4444', strokeWidth: 5 })
+        conn.canvas.style.opacity = '1'
 
         if (sourceId.startsWith(deviceId)) {
             const targetMatch = targetId.match(/^(relay-\d+|switch-\d+)/)
             if (targetMatch) {
                 const targetElement = document.getElementById(targetMatch[1])
-                if (targetElement) targetElement.classList.add('highlighted')
+                if (targetElement) {
+                    targetElement.classList.add('highlighted')
+                    targetElement.style.opacity = '1'
+                }
             }
         } else {
             const sourceMatch = sourceId.match(/^(relay-\d+|switch-\d+)/)
             if (sourceMatch) {
                 const sourceElement = document.getElementById(sourceMatch[1])
-                if (sourceElement) sourceElement.classList.add('highlighted')
+                if (sourceElement) {
+                    sourceElement.classList.add('highlighted')
+                    sourceElement.style.opacity = '1'
+                }
             }
         }
     })
@@ -667,6 +734,11 @@ function highlightDevice(deviceId) {
 function clearHighlights() {
     document.querySelectorAll('.device-box.highlighted').forEach(el => {
         el.classList.remove('highlighted')
+    })
+
+    // Restore full opacity to all devices
+    document.querySelectorAll('.device-box').forEach(el => {
+        el.style.opacity = '1'
     })
 
     const allConnections = jsPlumbInstance.getAllConnections()
@@ -684,6 +756,7 @@ function clearHighlights() {
         }
 
         conn.setPaintStyle({ stroke: color, strokeWidth: 3 })
+        conn.canvas.style.opacity = '1'
     })
 
     highlightedDevice = null
@@ -834,6 +907,7 @@ async function loadConfiguration() {
     connections = {}
     connectionLookupMap = {}
     cachedElements = { canvas, zoomLevel: cachedElements.zoomLevel }
+    hiddenDevices = loadHiddenDevices()
 
     try {
         const [relaysData, outputsData, switchesData, connectionsData] = await Promise.all([
@@ -880,6 +954,19 @@ async function loadConfiguration() {
             bindJsPlumbEvents()
             isLoadingConnections = false
             hideLoading()
+
+            // Apply hidden state
+            hiddenDevices.forEach(deviceKey => {
+                const element = document.getElementById(deviceKey)
+                if (element) {
+                    element.style.display = 'none'
+                }
+
+                const deviceConnections = connectionLookupMap[deviceKey] || []
+                deviceConnections.forEach(conn => {
+                    conn.setVisible(false)
+                })
+            })
         }, 100)
 
         wsManager.send(JSON.stringify({ "type": "get_states" }))
@@ -980,6 +1067,7 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
                     <span class="device-id" onclick="event.stopPropagation(); copyIdToClipboard(${switchId}, this)">ID: ${switchId}</span>
                     </span>
                     <div style="display: flex; gap: 0.5rem;">
+                        <button class="hide-btn" onclick="event.stopPropagation(); hideDevice(${switchId}, 'switch')" title="Hide Device">👁️</button>
                         <button class="update-btn update-btn-switch" onclick="event.stopPropagation(); updateDevice(${switchId}, 'switch')" title="Update Device">⟳</button>
                         <button class="delete-btn" onclick="event.stopPropagation(); deleteSwitch(${switchId})">✕</button>
                     </div>
@@ -1092,6 +1180,7 @@ function createRelay(relayId, relayName, outputs, x, y) {
                     <span class="device-id" onclick="event.stopPropagation(); copyIdToClipboard(${relayId}, this)">ID: ${relayId}</span>
                     </span>
                     <div style="display: flex; gap: 0.5rem;">
+                        <button class="hide-btn" onclick="event.stopPropagation(); hideDevice(${relayId}, 'relay')" title="Hide Device">👁️</button>
                         <button class="update-btn update-btn-relay" onclick="event.stopPropagation(); updateDevice(${relayId}, 'relay')" title="Update Device">⟳</button>
                         <button class="delete-btn" onclick="event.stopPropagation(); deleteRelay(${relayId})">✕</button>
                     </div>

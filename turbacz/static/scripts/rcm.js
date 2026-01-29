@@ -1180,13 +1180,22 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
                     </div>
                 </div>
                 <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
-                    <div class="device-name" style="flex: 1; margin-bottom: 0;" onclick="event.stopPropagation(); editDeviceName('switch', ${switchId})">${switchName}</div>
+                    <div class="device-name device-name-switch-${switchId}" style="flex: 1; margin-bottom: 0; cursor: pointer;">${switchName}</div>
                     <button class="color-btn" onclick="event.stopPropagation(); showColorPicker(${switchId})" title="Change Color">🎨</button>
                 </div>
                 ${buttonsHTML}
             `
 
     document.getElementById('canvas').appendChild(switchDiv)
+
+    // Add click and touch handler for device name edit
+    const deviceNameElement = switchDiv.querySelector(`.device-name-switch-${switchId}`)
+    if (deviceNameElement) {
+        addClickAndTouchHandler(deviceNameElement, (e) => {
+            e.stopPropagation()
+            editDeviceName('switch', switchId)
+        })
+    }
 
     let isDragging = false
     let dragStartTime = 0
@@ -1288,8 +1297,8 @@ function createRelay(relayId, relayName, outputs, x, y) {
         }
         outputsHTML += `
                     <div class="output-item" id="relay-${relayId}-output-${String.fromCharCode(96 + i)}">
-                        <span><img class="item-icon" src="/static/data/img/off.png" alt="switch" onclick="changeSwitchState(${relayId}, '${String.fromCharCode(96 + i)}')"></span>
-                        <span class="output-name" onclick="event.stopPropagation(); editOutputName(${relayId}, '${String.fromCharCode(96 + i)}')">${outputName}</span>
+                        <span><img class="item-icon light-bulb-${relayId}-${String.fromCharCode(96 + i)}" src="/static/data/img/off.png" alt="switch" style="cursor: pointer;"></span>
+                        <span class="output-name output-name-${relayId}-${String.fromCharCode(96 + i)}" style="cursor: pointer;">${outputName}</span>
                     </div>
                 `
     }
@@ -1310,11 +1319,43 @@ function createRelay(relayId, relayName, outputs, x, y) {
                         <button class="delete-btn" onclick="event.stopPropagation(); deleteRelay(${relayId})">✕</button>
                     </div>
                 </div>
-                <div class="device-name" onclick="event.stopPropagation(); editDeviceName('relay', ${relayId})">${relayName}</div>
+                <div class="device-name device-name-relay-${relayId}" style="cursor: pointer;">${relayName}</div>
                 ${outputsHTML}
             `
 
     document.getElementById('canvas').appendChild(relayDiv)
+
+    // Add click and touch handlers for light bulbs and output names
+    for (let i = 1; i <= 8; i++) {
+        const outputId = String.fromCharCode(96 + i)
+
+        // Light bulb toggle
+        const bulbElement = relayDiv.querySelector(`.light-bulb-${relayId}-${outputId}`)
+        if (bulbElement) {
+            addClickAndTouchHandler(bulbElement, (e) => {
+                e.stopPropagation()
+                changeSwitchState(relayId, outputId)
+            })
+        }
+
+        // Output name edit
+        const nameElement = relayDiv.querySelector(`.output-name-${relayId}-${outputId}`)
+        if (nameElement) {
+            addClickAndTouchHandler(nameElement, (e) => {
+                e.stopPropagation()
+                editOutputName(relayId, outputId)
+            })
+        }
+    }
+
+    // Device name edit
+    const deviceNameElement = relayDiv.querySelector(`.device-name-relay-${relayId}`)
+    if (deviceNameElement) {
+        addClickAndTouchHandler(deviceNameElement, (e) => {
+            e.stopPropagation()
+            editDeviceName('relay', relayId)
+        })
+    }
 
     let isDragging = false
     let dragStartTime = 0
@@ -1422,6 +1463,25 @@ function createConnection(switchId, buttonId, relayId, outputId) {
         connectionLookupMap[switchDeviceId].push(conn)
         connectionLookupMap[relayDeviceId].push(conn)
     }
+}
+
+// Helper function to add both click and touch support
+function addClickAndTouchHandler(element, handler) {
+    let touchHandled = false
+
+    element.addEventListener('touchend', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        touchHandled = true
+        handler(e)
+        setTimeout(() => { touchHandled = false }, 300)
+    }, { passive: false })
+
+    element.addEventListener('click', (e) => {
+        if (!touchHandled) {
+            handler(e)
+        }
+    })
 }
 
 function changeSwitchState(relay_id, output_id) {

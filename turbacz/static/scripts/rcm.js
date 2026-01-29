@@ -93,7 +93,7 @@ function hideLoading() {
 }
 
 function resetZoom() {
-    zoomLevel = 0.7
+    zoomLevel = 0.5
     panX = -300
     panY = -900
     updateZoom()
@@ -276,6 +276,126 @@ function loadDevicePositions() {
 function getSavedPosition(deviceId, defaultX, defaultY) {
     const positions = loadDevicePositions()
     return positions[deviceId] || { x: defaultX, y: defaultY }
+}
+
+// Color management
+function saveDeviceColors() {
+    const colors = {}
+
+    for (let switchId in switches) {
+        if (switches[switchId].color) {
+            colors[`switch-${switchId}`] = switches[switchId].color
+        }
+    }
+
+    localStorage.setItem('rcm_device_colors', JSON.stringify(colors))
+    console.log('Device colors saved')
+}
+
+function loadDeviceColors() {
+    const saved = localStorage.getItem('rcm_device_colors')
+    return saved ? JSON.parse(saved) : {}
+}
+
+function getSavedColor(deviceId) {
+    const colors = loadDeviceColors()
+    return colors[deviceId] || null
+}
+
+function showColorPicker(switchId) {
+    const colors = [
+        '#6366f1', // Default blue
+        '#ef4444', // Red
+        '#f59e0b', // Orange
+        '#10b981', // Green
+        '#8b5cf6', // Purple
+        '#ec4899', // Pink
+        '#06b6d4', // Cyan
+        '#f97316', // Orange-red
+        '#84cc16', // Lime
+        '#a855f7', // Violet
+        '#14b8a6', // Teal
+        '#f43f5e'  // Rose
+    ]
+
+    const colorButtons = colors.map(color =>
+        `<button class="color-choice" style="background: ${color}; width: 48px; height: 48px; border: 2px solid #334155; border-radius: 8px; cursor: pointer; margin: 4px; transition: transform 0.2s;" onclick="setDeviceColor(${switchId}, '${color}')" onmouseover="this.style.transform='scale(1.15)'" onmouseout="this.style.transform='scale(1)'"></button>`
+    ).join('')
+
+    const modal = document.createElement('div')
+    modal.id = 'colorPickerModal'
+    modal.className = 'modal active'
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">Choose Switch Color</div>
+            <div style="display: flex; flex-wrap: wrap; justify-content: center; padding: 1rem;">
+                ${colorButtons}
+            </div>
+            <div class="modal-buttons">
+                <button class="modal-btn cancel" onclick="closeColorPicker()">Cancel</button>
+            </div>
+        </div>
+    `
+    document.body.appendChild(modal)
+}
+
+function closeColorPicker() {
+    const modal = document.getElementById('colorPickerModal')
+    if (modal) modal.remove()
+}
+
+function setDeviceColor(switchId, color) {
+    switches[switchId].color = color
+
+    // Update switch visual
+    const switchElement = document.getElementById(`switch-${switchId}`)
+    if (switchElement) {
+        switchElement.style.borderLeftColor = color
+
+        // Update all buttons in the switch
+        const buttons = switchElement.querySelectorAll('.button-item')
+        buttons.forEach(btn => {
+            btn.style.background = `linear-gradient(135deg, ${color}33 0%, ${color}55 100%)`
+            btn.style.borderColor = `${color}66`
+        })
+    }
+
+    // Update connection colors
+    const deviceId = `switch-${switchId}`
+    const deviceConnections = connectionLookupMap[deviceId] || []
+
+    deviceConnections.forEach(conn => {
+        conn.setPaintStyle({ stroke: color, strokeWidth: 3 })
+    })
+
+    saveDeviceColors()
+    closeColorPicker()
+}
+
+function applyDeviceColor(switchId) {
+    const color = switches[switchId].color
+    if (!color) return
+
+    const switchElement = document.getElementById(`switch-${switchId}`)
+    if (!switchElement) return
+
+    switchElement.style.borderLeftColor = color
+
+    const buttons = switchElement.querySelectorAll('.button-item')
+    buttons.forEach(btn => {
+        btn.style.background = `linear-gradient(135deg, ${color}33 0%, ${color}55 100%)`
+        btn.style.borderColor = `${color}66`
+    })
+
+    // Update connection colors
+    setTimeout(() => {
+        const deviceId = `switch-${switchId}`
+        const deviceConnections = connectionLookupMap[deviceId] || []
+
+        deviceConnections.forEach(conn => {
+            conn.setPaintStyle({ stroke: color, strokeWidth: 3 })
+        })
+    }, 150)
 }
 
 async function fetchAPI(endpoint) {
@@ -814,6 +934,7 @@ function getDemoConnections() {
 
 function createSwitch(switchId, switchName, buttonCount, x, y) {
     const savedPos = getSavedPosition(`switch-${switchId}`, x, y)
+    const savedColor = getSavedColor(`switch-${switchId}`)
 
     const switchDiv = document.createElement('div')
     switchDiv.id = `switch-${switchId}`
@@ -821,7 +942,9 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
     switchDiv.style.left = `${savedPos.x}px`
     switchDiv.style.top = `${savedPos.y}px`
 
-    let buttonsHTML = ''
+    if (savedColor) {
+        switchDiv.style.borderLeftColor = savedColor
+    }
     for (let i = 1; i <= buttonCount; i++) {
         buttonsHTML += `
                     <div class="button-item" id="switch-${switchId}-btn-${String.fromCharCode(96 + i)}">
@@ -842,6 +965,7 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
                     <span class="device-id" onclick="event.stopPropagation(); copyIdToClipboard(${switchId}, this)">ID: ${switchId}</span>
                     </span>
                     <div style="display: flex; gap: 0.5rem;">
+                        <button class="color-btn" onclick="event.stopPropagation(); showColorPicker(${switchId})" title="Change Color">🎨</button>
                         <button class="update-btn update-btn-switch" onclick="event.stopPropagation(); updateDevice(${switchId}, 'switch')" title="Update Device">⟳</button>
                         <button class="delete-btn" onclick="event.stopPropagation(); deleteSwitch(${switchId})">✕</button>
                     </div>
@@ -875,7 +999,12 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
         })
     }
 
-    switches[switchId] = { name: switchName, buttonCount, element: switchDiv }
+    switches[switchId] = { name: switchName, buttonCount, element: switchDiv, color: savedColor }
+
+    // Apply saved color after DOM is ready
+    if (savedColor) {
+        applyDeviceColor(switchId)
+    }
 }
 
 function copyIdToClipboard(id, element) {

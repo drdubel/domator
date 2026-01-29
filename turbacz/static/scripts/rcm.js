@@ -17,8 +17,8 @@ let hiddenDevices = new Set() // Track hidden devices
 
 // Zoom and Pan
 let zoomLevel = 0.5
-let panX = -12000  // Center canvas at device spawn area (25000, 25000)
-let panY = -12000
+let panX = -9000  // Center canvas at device spawn area (25000, 25000)
+let panY = -10000
 let isPanning = false
 let startX = 0
 let startY = 0
@@ -97,8 +97,8 @@ function hideLoading() {
 
 function resetZoom() {
     zoomLevel = 0.5
-    panX = -12000
-    panY = -12000
+    panX = -9000
+    panY = -10000
     updateZoom()
 }
 

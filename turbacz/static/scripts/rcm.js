@@ -980,12 +980,14 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
                     <span class="device-id" onclick="event.stopPropagation(); copyIdToClipboard(${switchId}, this)">ID: ${switchId}</span>
                     </span>
                     <div style="display: flex; gap: 0.5rem;">
-                        <button class="color-btn" onclick="event.stopPropagation(); showColorPicker(${switchId})" title="Change Color">🎨</button>
                         <button class="update-btn update-btn-switch" onclick="event.stopPropagation(); updateDevice(${switchId}, 'switch')" title="Update Device">⟳</button>
                         <button class="delete-btn" onclick="event.stopPropagation(); deleteSwitch(${switchId})">✕</button>
                     </div>
                 </div>
-                <div class="device-name" onclick="event.stopPropagation(); editDeviceName('switch', ${switchId})">${switchName}</div>
+                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
+                    <div class="device-name" style="flex: 1; margin-bottom: 0;" onclick="event.stopPropagation(); editDeviceName('switch', ${switchId})">${switchName}</div>
+                    <button class="color-btn" onclick="event.stopPropagation(); showColorPicker(${switchId})" title="Change Color">🎨</button>
+                </div>
                 ${buttonsHTML}
             `
 

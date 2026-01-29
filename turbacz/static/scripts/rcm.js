@@ -203,24 +203,21 @@ function initPanning() {
         }
     })
 
-    const throttledPan = throttle((clientX, clientY) => {
-        if (isPanning) {
-            panX = clientX - startX
-            panY = clientY - startY
-            updateZoom(false) // Update visual only, don't repaint jsPlumb
-            updateZoomWithRepaint() // Debounced repaint for when panning slows/stops
-        }
-    }, 16) // Throttle at ~60fps for smoother performance
-
     document.addEventListener('mousemove', (e) => {
-        throttledPan(e.clientX, e.clientY)
+        if (isPanning) {
+            panX = e.clientX - startX
+            panY = e.clientY - startY
+            // Only update CSS transform - no jsPlumb operations
+            const canvas = cachedElements.canvas || document.getElementById('canvas')
+            canvas.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`
+        }
     })
 
     document.addEventListener('mouseup', () => {
         if (isPanning) {
             isPanning = false
             wrapper.classList.remove('grabbing')
-            // Final repaint when panning ends
+            // Only NOW do we repaint jsPlumb once
             if (jsPlumbInstance) {
                 jsPlumbInstance.setZoom(zoomLevel)
                 jsPlumbInstance.repaintEverything()
@@ -244,7 +241,11 @@ function initPanning() {
     document.addEventListener('touchmove', (e) => {
         if (isPanning && e.touches.length === 1) {
             const touch = e.touches[0]
-            throttledPan(touch.clientX, touch.clientY)
+            panX = touch.clientX - startX
+            panY = touch.clientY - startY
+            // Only update CSS transform - no jsPlumb operations
+            const canvas = cachedElements.canvas || document.getElementById('canvas')
+            canvas.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`
             e.preventDefault()
         }
     }, { passive: false })
@@ -253,6 +254,7 @@ function initPanning() {
         if (isPanning) {
             isPanning = false
             wrapper.classList.remove('grabbing')
+            // Only NOW do we repaint jsPlumb once
             if (jsPlumbInstance) {
                 jsPlumbInstance.setZoom(zoomLevel)
                 jsPlumbInstance.repaintEverything()

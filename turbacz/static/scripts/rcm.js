@@ -34,8 +34,8 @@ function getDefaultPanX() {
     const viewportCenterX = window.innerWidth / 2
     const defaultZoom = 0.4
     // Calculate panX so that deviceCenterX appears at viewport center
-    // Formula: (deviceCenterX + panX) * zoom = viewportCenterX
-    return (viewportCenterX / defaultZoom) - deviceCenterX
+    // Formula: deviceCenterX * zoom + panX = viewportCenterX
+    return viewportCenterX - (deviceCenterX * defaultZoom)
 }
 
 function getDefaultPanY() {
@@ -43,7 +43,7 @@ function getDefaultPanY() {
     const viewportCenterY = (window.innerHeight - 90) / 2 // Subtract header height
     const defaultZoom = 0.4
     // Calculate panY so that deviceCenterY appears at viewport center
-    return (viewportCenterY / defaultZoom) - deviceCenterY
+    return viewportCenterY - (deviceCenterY * defaultZoom)
 }
 
 const initialView = loadCanvasView()

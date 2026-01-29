@@ -127,126 +127,87 @@ function hideLoading() {
     document.getElementById('loading').classList.remove('active')
 }
 
-// ============ PAN/ZOOM SYSTEM - GPU ACCELERATED ============
+// =================== OPTIMIZED PAN/ZOOM SYSTEM ===================
 
-// Debounced jsPlumb sync (for continuous interactions like wheel/pinch)
-let jsPlumbSyncTimeout = null
-const debouncedSyncJsPlumb = () => {
-    clearTimeout(jsPlumbSyncTimeout)
-    jsPlumbSyncTimeout = setTimeout(() => {
-        if (jsPlumbInstance) {
-            jsPlumbInstance.setZoom(zoomLevel)
-            jsPlumbInstance.repaintEverything()
-        }
-    }, 150) // 150ms debounce - smooth for continuous interactions
-}
-
-// Apply visual transform only (GPU accelerated, instant feedback)
+// ------------------- GPU TRANSFORM -------------------
 function applyVisualTransform() {
     if (!canvasElement) canvasElement = document.getElementById('canvas')
     if (!zoomLevelElement) zoomLevelElement = document.getElementById('zoomLevel')
-
-    // Update CSS transform (GPU accelerated, no reflow)
     canvasElement.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`
-
-    // Update zoom display live
     zoomLevelElement.innerText = `${Math.round(zoomLevel * 100)}%`
 }
 
-// Immediate jsPlumb sync (for discrete interactions like pan end)
+// ------------------- JSPLUMB SYNC -------------------
 function syncJsPlumb() {
-    clearTimeout(jsPlumbSyncTimeout) // Cancel any pending debounced sync
-    if (jsPlumbInstance) {
-        jsPlumbInstance.setZoom(zoomLevel)
-        jsPlumbInstance.repaintEverything()
-    }
+    if (!jsPlumbInstance) return
+    jsPlumbInstance.setZoom(zoomLevel)
+    jsPlumbInstance.repaintEverything()
 }
 
-// Reset to default view
+// ------------------- DEBOUNCED SYNC -------------------
+let syncTimeout = null
+function debouncedSyncJsPlumb() {
+    clearTimeout(syncTimeout)
+    syncTimeout = setTimeout(syncJsPlumb, 120) // only after interaction ends
+}
+
+// ------------------- ZOOM AT POINT -------------------
+function zoomAtPoint(factor, centerX, centerY, commit = false) {
+    const prevScale = zoomLevel
+    zoomLevel *= factor
+    zoomLevel = Math.min(Math.max(zoomLevel, 0.2), 3)
+
+    panX = centerX - (centerX - panX) * (zoomLevel / prevScale)
+    panY = centerY - (centerY - panY) * (zoomLevel / prevScale)
+
+    applyVisualTransform()
+    if (commit) syncJsPlumb()
+    else debouncedSyncJsPlumb()
+}
+
+// ------------------- RESET / BUTTON ZOOM -------------------
 function resetZoom() {
     zoomLevel = 0.4
     panX = getDefaultPanX()
     panY = getDefaultPanY()
     applyVisualTransform()
-    syncJsPlumb() // Immediate sync for button click
+    syncJsPlumb()
     saveCanvasView()
 }
+function zoomIn() { zoomAtPoint(1.1, window.innerWidth / 2, window.innerHeight / 2, true) }
+function zoomOut() { zoomAtPoint(0.9, window.innerWidth / 2, window.innerHeight / 2, true) }
 
-// Zoom in/out from center (button clicks)
-function zoomIn() {
-    zoomAtPoint(1.1, window.innerWidth / 2, window.innerHeight / 2, true)
-}
-
-function zoomOut() {
-    zoomAtPoint(0.9, window.innerWidth / 2, window.innerHeight / 2, true)
-}
-
-// Zoom at specific point - unified function for all zoom interactions
-// @param immediate - if true, sync jsPlumb immediately; if false, debounce it
-function zoomAtPoint(factor, centerX, centerY, immediate = false) {
-    const prevScale = zoomLevel
-    zoomLevel *= factor
-
-    // Clamp zoom
-    zoomLevel = Math.min(Math.max(zoomLevel, 0.2), 3)
-
-    // Adjust pan so zoom is centered at point
-    panX = centerX - (centerX - panX) * (zoomLevel / prevScale)
-    panY = centerY - (centerY - panY) * (zoomLevel / prevScale)
-
-    // Always update visual immediately (GPU accelerated)
-    applyVisualTransform()
-
-    // Sync jsPlumb based on interaction type
-    if (immediate) {
-        syncJsPlumb() // Immediate for buttons
-        saveCanvasView()
-    } else {
-        debouncedSyncJsPlumb() // Debounced for wheel/pinch
-    }
-}
-
-
-// ============ EVENT HANDLERS - MOUSE, TOUCH, PINCH ============
-
-function initPanning() {
+// ------------------- INIT PANNING / ZOOM -------------------
+function initPanZoom() {
     const wrapper = document.getElementById('canvas-wrapper')
-    const canvas = document.getElementById('canvas')
-
-    // Cache DOM elements
-    canvasElement = canvas
+    canvasElement = document.getElementById('canvas')
     zoomLevelElement = document.getElementById('zoomLevel')
 
-    // ===== MOUSE PANNING =====
-    wrapper.addEventListener('mousedown', (e) => {
-        if (e.target === wrapper || e.target === canvas) {
-            isPanning = true
-            startX = e.clientX - panX
-            startY = e.clientY - panY
-            wrapper.classList.add('grabbing')
-        }
+    // ----------------- MOUSE PANNING -----------------
+    wrapper.addEventListener('mousedown', e => {
+        if (e.target !== wrapper && e.target !== canvasElement) return
+        isPanning = true
+        startX = e.clientX - panX
+        startY = e.clientY - panY
+        wrapper.classList.add('grabbing')
     })
-
-    document.addEventListener('mousemove', (e) => {
-        if (isPanning) {
-            panX = e.clientX - startX
-            panY = e.clientY - startY
-            applyVisualTransform() // GPU only, instant
-        }
+    document.addEventListener('mousemove', e => {
+        if (!isPanning) return
+        panX = e.clientX - startX
+        panY = e.clientY - startY
+        applyVisualTransform()
     })
-
     document.addEventListener('mouseup', () => {
-        if (isPanning) {
-            isPanning = false
-            wrapper.classList.remove('grabbing')
-            syncJsPlumb() // Immediate sync on pan end
-            saveCanvasView()
-        }
+        if (!isPanning) return
+        isPanning = false
+        wrapper.classList.remove('grabbing')
+        syncJsPlumb()
+        saveCanvasView()
     })
 
-    // ===== TOUCH PANNING (1 FINGER) =====
-    wrapper.addEventListener('touchstart', (e) => {
-        if (e.touches.length === 1 && (e.target === wrapper || e.target === canvas)) {
+    // ----------------- TOUCH PANNING -----------------
+    wrapper.addEventListener('touchstart', e => {
+        if (e.touches.length === 1 && (e.target === wrapper || e.target === canvasElement)) {
             isPanning = true
             const touch = e.touches[0]
             startX = touch.clientX - panX
@@ -254,89 +215,67 @@ function initPanning() {
             wrapper.classList.add('grabbing')
             e.preventDefault()
         }
+        if (e.touches.length === 2) { // pinch start
+            isPinching = true
+            isPanning = false
+            wrapper.classList.remove('grabbing')
+            const t1 = e.touches[0], t2 = e.touches[1]
+            lastPinchDistance = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY)
+            e.preventDefault()
+        }
     }, { passive: false })
 
-    document.addEventListener('touchmove', (e) => {
+    document.addEventListener('touchmove', e => {
         if (isPanning && e.touches.length === 1) {
             const touch = e.touches[0]
             panX = touch.clientX - startX
             panY = touch.clientY - startY
-            applyVisualTransform() // GPU only, instant
+            applyVisualTransform()
             e.preventDefault()
         }
-    }, { passive: false })
-
-    document.addEventListener('touchend', () => {
-        if (isPanning) {
-            isPanning = false
-            wrapper.classList.remove('grabbing')
-            syncJsPlumb() // Immediate sync on pan end
-            saveCanvasView()
-        }
-        if (isPinching) {
-            isPinching = false
-            lastPinchDistance = 0
-            // Debounced sync completes naturally, then save
-            setTimeout(() => saveCanvasView(), 200)
-        }
-    })
-
-    // ===== PINCH ZOOM (2 FINGERS) =====
-    wrapper.addEventListener('touchstart', (e) => {
-        if (e.touches.length === 2) {
-            isPinching = true
-            isPanning = false
-            wrapper.classList.remove('grabbing')
-            const touch1 = e.touches[0]
-            const touch2 = e.touches[1]
-            const dx = touch2.clientX - touch1.clientX
-            const dy = touch2.clientY - touch1.clientY
-            lastPinchDistance = Math.sqrt(dx * dx + dy * dy)
-            e.preventDefault()
-        }
-    }, { passive: false })
-
-    wrapper.addEventListener('touchmove', (e) => {
         if (isPinching && e.touches.length === 2) {
-            const touch1 = e.touches[0]
-            const touch2 = e.touches[1]
-            const dx = touch2.clientX - touch1.clientX
-            const dy = touch2.clientY - touch1.clientY
-            const distance = Math.sqrt(dx * dx + dy * dy)
-
+            const t1 = e.touches[0], t2 = e.touches[1]
+            const distance = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY)
             if (lastPinchDistance > 0) {
-                const pinchCenter = {
-                    x: (touch1.clientX + touch2.clientX) / 2,
-                    y: (touch1.clientY + touch2.clientY) / 2
+                const center = {
+                    x: (t1.clientX + t2.clientX) / 2,
+                    y: (t1.clientY + t2.clientY) / 2
                 }
-
-                const zoomFactor = distance / lastPinchDistance
-                zoomAtPoint(zoomFactor, pinchCenter.x, pinchCenter.y, false) // Debounced
+                const factor = distance / lastPinchDistance
+                zoomAtPoint(factor, center.x, center.y, false)
             }
-
             lastPinchDistance = distance
             e.preventDefault()
         }
     }, { passive: false })
 
-    // ===== MOUSE WHEEL ZOOM =====
-    const wheelHandler = (e) => {
+    document.addEventListener('touchend', e => {
+        if (isPanning) {
+            isPanning = false
+            wrapper.classList.remove('grabbing')
+            syncJsPlumb()
+            saveCanvasView()
+        }
+        if (isPinching) {
+            isPinching = false
+            lastPinchDistance = 0
+            debouncedSyncJsPlumb()
+            setTimeout(saveCanvasView, 150)
+        }
+    })
+
+    // ----------------- MOUSE WHEEL ZOOM -----------------
+    const wheelHandler = e => {
         const rect = wrapper.getBoundingClientRect()
         const centerX = e.clientX - rect.left
         const centerY = e.clientY - rect.top
-        const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9
-        zoomAtPoint(zoomFactor, centerX, centerY, false) // Debounced for smooth continuous zoom
-    }
-
-    // Throttle wheel events to ~60fps max
-    const throttledWheel = throttle(wheelHandler, 16)
-
-    wrapper.addEventListener('wheel', (e) => {
+        const factor = e.deltaY < 0 ? 1.1 : 0.9
+        zoomAtPoint(factor, centerX, centerY, false)
         e.preventDefault()
-        throttledWheel(e)
-    }, { passive: false })
+    }
+    wrapper.addEventListener('wheel', throttle(wheelHandler, 16), { passive: false })
 
-    // Apply initial view
+    // ----------------- INITIAL VIEW -----------------
     applyVisualTransform()
     syncJsPlumb()
 }

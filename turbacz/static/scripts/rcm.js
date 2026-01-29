@@ -178,7 +178,7 @@ function zoomIn() { zoomAtPoint(1.1, window.innerWidth / 2, window.innerHeight /
 function zoomOut() { zoomAtPoint(0.9, window.innerWidth / 2, window.innerHeight / 2, true) }
 
 // ------------------- INIT PANNING / ZOOM -------------------
-function initPanZoom() {
+function initPanning() {
     const wrapper = document.getElementById('canvas-wrapper')
     canvasElement = document.getElementById('canvas')
     zoomLevelElement = document.getElementById('zoomLevel')

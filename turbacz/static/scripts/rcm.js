@@ -1226,10 +1226,39 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
 
     let isDragging = false
     let dragStartTime = 0
+    let touchStartPos = null
 
     switchDiv.addEventListener('mousedown', function () {
         isDragging = false
         dragStartTime = Date.now()
+    })
+
+    switchDiv.addEventListener('touchstart', function (e) {
+        isDragging = false
+        dragStartTime = Date.now()
+        if (e.touches.length === 1) {
+            touchStartPos = {
+                x: e.touches[0].clientX,
+                y: e.touches[0].clientY
+            }
+        }
+    })
+
+    switchDiv.addEventListener('touchend', function (e) {
+        // Check if it was a tap (not a drag) and quick
+        if (!isDragging && (Date.now() - dragStartTime) < 200) {
+            // Verify minimal movement (tap, not swipe)
+            if (touchStartPos && e.changedTouches.length > 0) {
+                const touch = e.changedTouches[0]
+                const dx = Math.abs(touch.clientX - touchStartPos.x)
+                const dy = Math.abs(touch.clientY - touchStartPos.y)
+                if (dx < 10 && dy < 10) {
+                    highlightDevice(`switch-${switchId}`)
+                    e.preventDefault()
+                }
+            }
+        }
+        touchStartPos = null
     })
 
     switchDiv.addEventListener('click', function (e) {
@@ -1386,10 +1415,39 @@ function createRelay(relayId, relayName, outputs, x, y) {
 
     let isDragging = false
     let dragStartTime = 0
+    let touchStartPos = null
 
     relayDiv.addEventListener('mousedown', function () {
         isDragging = false
         dragStartTime = Date.now()
+    })
+
+    relayDiv.addEventListener('touchstart', function (e) {
+        isDragging = false
+        dragStartTime = Date.now()
+        if (e.touches.length === 1) {
+            touchStartPos = {
+                x: e.touches[0].clientX,
+                y: e.touches[0].clientY
+            }
+        }
+    })
+
+    relayDiv.addEventListener('touchend', function (e) {
+        // Check if it was a tap (not a drag) and quick
+        if (!isDragging && (Date.now() - dragStartTime) < 200) {
+            // Verify minimal movement (tap, not swipe)
+            if (touchStartPos && e.changedTouches.length > 0) {
+                const touch = e.changedTouches[0]
+                const dx = Math.abs(touch.clientX - touchStartPos.x)
+                const dy = Math.abs(touch.clientY - touchStartPos.y)
+                if (dx < 10 && dy < 10) {
+                    highlightDevice(`relay-${relayId}`)
+                    e.preventDefault()
+                }
+            }
+        }
+        touchStartPos = null
     })
 
     relayDiv.addEventListener('click', function (e) {

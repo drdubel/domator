@@ -15,7 +15,7 @@ let zoomUpdateScheduled = false
 let cachedElements = {}
 let hiddenDevices = new Set() // Track hidden devices
 
-// Zoom and Pan
+// Zoom and Pan System - GPU Accelerated
 function loadCanvasView() {
     const saved = localStorage.getItem('rcm_canvas_view')
     if (saved) {
@@ -30,31 +30,32 @@ function loadCanvasView() {
 }
 
 function getDefaultPanX() {
-    const deviceCenterX = 25000 // Center of device spawn area
+    const deviceCenterX = 25000
     const viewportCenterX = window.innerWidth / 2
     const defaultZoom = 0.4
-    // Calculate panX so that deviceCenterX appears at viewport center
-    // Formula: deviceCenterX * zoom + panX = viewportCenterX
     return viewportCenterX - (deviceCenterX * defaultZoom)
 }
 
 function getDefaultPanY() {
-    const deviceCenterY = 25000 // Center of device spawn area
-    const viewportCenterY = (window.innerHeight - 90) / 2 // Subtract header height
+    const deviceCenterY = 25000
+    const viewportCenterY = (window.innerHeight - 90) / 2
     const defaultZoom = 0.4
-    // Calculate panY so that deviceCenterY appears at viewport center
     return viewportCenterY - (deviceCenterY * defaultZoom)
 }
 
 const initialView = loadCanvasView()
 let zoomLevel = initialView.zoomLevel
-let panX = initialView.panX  // Center canvas at device spawn area (25000, 25000)
+let panX = initialView.panX
 let panY = initialView.panY
 let isPanning = false
+let isPinching = false
 let startX = 0
 let startY = 0
-let isPinching = false
 let lastPinchDistance = 0
+
+// Cached DOM elements
+let canvasElement = null
+let zoomLevelElement = null
 
 const API_BASE_URL = `https://${window.location.host}`
 
@@ -126,45 +127,39 @@ function hideLoading() {
     document.getElementById('loading').classList.remove('active')
 }
 
-function resetZoom() {
-    zoomLevel = 0.4
-    panX = getDefaultPanX()
-    panY = getDefaultPanY()
-    updateZoom()
-    saveCanvasView()
+// ============ PAN/ZOOM SYSTEM - GPU ACCELERATED ============
+
+// Apply visual transform only (GPU accelerated, no jsPlumb)
+function applyVisualTransform() {
+    if (!canvasElement) canvasElement = document.getElementById('canvas')
+    if (!zoomLevelElement) zoomLevelElement = document.getElementById('zoomLevel')
+
+    // Update CSS transform (GPU accelerated)
+    canvasElement.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`
+
+    // Update zoom display
+    zoomLevelElement.innerText = `${Math.round(zoomLevel * 100)}%`
 }
 
-function updateZoom(repaintJsPlumb = true) {
-    if (zoomUpdateScheduled) return
-
-    zoomUpdateScheduled = true
-    requestAnimationFrame(() => {
-        const canvas = cachedElements.canvas || document.getElementById('canvas')
-        const zoomLevelEl = cachedElements.zoomLevel || document.getElementById('zoomLevel')
-
-        if (!cachedElements.canvas) cachedElements.canvas = canvas
-        if (!cachedElements.zoomLevel) cachedElements.zoomLevel = zoomLevelEl
-
-        zoomLevelEl.innerText = `${Math.round(zoomLevel * 100)}%`
-        canvas.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`
-
-        if (jsPlumbInstance && repaintJsPlumb) {
-            jsPlumbInstance.setZoom(zoomLevel)
-            jsPlumbInstance.repaintEverything()
-        }
-
-        zoomUpdateScheduled = false
-    })
-}
-
-// Debounced version that includes jsPlumb repaint
-const updateZoomWithRepaint = debounce(() => {
+// Sync jsPlumb with current transform (expensive, call once per interaction)
+function syncJsPlumb() {
     if (jsPlumbInstance) {
         jsPlumbInstance.setZoom(zoomLevel)
         jsPlumbInstance.repaintEverything()
     }
-}, 100) // Increase debounce to 100ms for better performance during panning
+}
 
+// Reset to default view
+function resetZoom() {
+    zoomLevel = 0.4
+    panX = getDefaultPanX()
+    panY = getDefaultPanY()
+    applyVisualTransform()
+    syncJsPlumb()
+    saveCanvasView()
+}
+
+// Zoom in/out from center
 function zoomIn() {
     zoomAtPoint(1.1, window.innerWidth / 2, window.innerHeight / 2)
 }
@@ -173,28 +168,36 @@ function zoomOut() {
     zoomAtPoint(0.9, window.innerWidth / 2, window.innerHeight / 2)
 }
 
+// Zoom at specific point (for wheel and pinch)
 function zoomAtPoint(factor, centerX, centerY) {
     const prevScale = zoomLevel
     zoomLevel *= factor
 
-    // clamp zoom
+    // Clamp zoom
     zoomLevel = Math.min(Math.max(zoomLevel, 0.2), 3)
 
-    // adjust pan so zoom is centered
+    // Adjust pan so zoom is centered at point
     panX = centerX - (centerX - panX) * (zoomLevel / prevScale)
     panY = centerY - (centerY - panY) * (zoomLevel / prevScale)
-    updateZoom()
+
+    applyVisualTransform()
+    syncJsPlumb()
     saveCanvasView()
 }
 
 
-// Pan functions
+// ============ EVENT HANDLERS - MOUSE, TOUCH, PINCH ============
+
 function initPanning() {
     const wrapper = document.getElementById('canvas-wrapper')
     const canvas = document.getElementById('canvas')
 
+    // Cache elements
+    canvasElement = canvas
+    zoomLevelElement = document.getElementById('zoomLevel')
+
+    // ===== MOUSE PANNING =====
     wrapper.addEventListener('mousedown', (e) => {
-        // Only pan if clicking on wrapper/canvas background (not on devices)
         if (e.target === wrapper || e.target === canvas) {
             isPanning = true
             startX = e.clientX - panX
@@ -207,9 +210,7 @@ function initPanning() {
         if (isPanning) {
             panX = e.clientX - startX
             panY = e.clientY - startY
-            // Only update CSS transform - no jsPlumb operations
-            const canvas = cachedElements.canvas || document.getElementById('canvas')
-            canvas.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`
+            applyVisualTransform()  // GPU only, no jsPlumb
         }
     })
 
@@ -217,16 +218,12 @@ function initPanning() {
         if (isPanning) {
             isPanning = false
             wrapper.classList.remove('grabbing')
-            // Only NOW do we repaint jsPlumb once
-            if (jsPlumbInstance) {
-                jsPlumbInstance.setZoom(zoomLevel)
-                jsPlumbInstance.repaintEverything()
-            }
+            syncJsPlumb()  // Single repaint at end
             saveCanvasView()
         }
     })
 
-    // Touch support for mobile
+    // ===== TOUCH PANNING (1 FINGER) =====
     wrapper.addEventListener('touchstart', (e) => {
         if (e.touches.length === 1 && (e.target === wrapper || e.target === canvas)) {
             isPanning = true
@@ -243,9 +240,7 @@ function initPanning() {
             const touch = e.touches[0]
             panX = touch.clientX - startX
             panY = touch.clientY - startY
-            // Only update CSS transform - no jsPlumb operations
-            const canvas = cachedElements.canvas || document.getElementById('canvas')
-            canvas.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`
+            applyVisualTransform()  // GPU only, no jsPlumb
             e.preventDefault()
         }
     }, { passive: false })
@@ -254,21 +249,18 @@ function initPanning() {
         if (isPanning) {
             isPanning = false
             wrapper.classList.remove('grabbing')
-            // Only NOW do we repaint jsPlumb once
-            if (jsPlumbInstance) {
-                jsPlumbInstance.setZoom(zoomLevel)
-                jsPlumbInstance.repaintEverything()
-            }
+            syncJsPlumb()  // Single repaint at end
             saveCanvasView()
         }
         if (isPinching) {
+            isPinching = false
+            lastPinchDistance = 0
+            syncJsPlumb()  // Single repaint at end
             saveCanvasView()
         }
-        isPinching = false
-        lastPinchDistance = 0
     })
 
-    // Pinch zoom support for touch screens
+    // ===== PINCH ZOOM (2 FINGERS) =====
     wrapper.addEventListener('touchstart', (e) => {
         if (e.touches.length === 2) {
             isPinching = true
@@ -297,7 +289,17 @@ function initPanning() {
                 }
 
                 const zoomFactor = distance / lastPinchDistance
-                zoomAtPoint(zoomFactor, pinchCenter.x, pinchCenter.y)
+                const prevScale = zoomLevel
+                zoomLevel *= zoomFactor
+
+                // Clamp zoom
+                zoomLevel = Math.min(Math.max(zoomLevel, 0.2), 3)
+
+                // Adjust pan to zoom at pinch center
+                panX = pinchCenter.x - (pinchCenter.x - panX) * (zoomLevel / prevScale)
+                panY = pinchCenter.y - (pinchCenter.y - panY) * (zoomLevel / prevScale)
+
+                applyVisualTransform()  // GPU only, no jsPlumb during pinch
             }
 
             lastPinchDistance = distance
@@ -305,23 +307,23 @@ function initPanning() {
         }
     }, { passive: false })
 
-    // Zoom with mouse wheel (throttled for performance)
-    const throttledZoom = throttle((e) => {
+    // ===== MOUSE WHEEL ZOOM =====
+    const wheelHandler = throttle((e) => {
         const rect = wrapper.getBoundingClientRect()
-        const centerX = rect.width / 2
-        const centerY = rect.height / 2
-
+        const centerX = e.clientX - rect.left
+        const centerY = e.clientY - rect.top
         const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9
         zoomAtPoint(zoomFactor, centerX, centerY)
-    }, 16) // ~60fps
+    }, 16)  // 60fps throttle
 
     wrapper.addEventListener('wheel', (e) => {
         e.preventDefault()
-        throttledZoom(e)
+        wheelHandler(e)
     }, { passive: false })
 
-    // Apply initial zoom/pan (either saved or default)
-    updateZoom()
+    // Apply initial view
+    applyVisualTransform()
+    syncJsPlumb()
 }
 
 // Save/Load canvas view

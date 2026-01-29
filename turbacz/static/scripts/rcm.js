@@ -279,6 +279,15 @@ function getSavedPosition(deviceId, defaultX, defaultY) {
     return positions[deviceId] || { x: defaultX, y: defaultY }
 }
 
+function resetAllPositions() {
+    if (!confirm('Reset all device positions to default? This will center all devices on the canvas.')) return
+
+    localStorage.removeItem('rcm_device_positions')
+
+    // Reload configuration to apply default positions
+    loadConfiguration()
+}
+
 // Color management
 function saveDeviceColors() {
     const colors = {}
@@ -352,6 +361,11 @@ function showAllHiddenDevices() {
 
     hiddenDevices.clear()
     saveHiddenDevices()
+
+    // Repaint to fix connection line positions immediately
+    if (jsPlumbInstance) {
+        jsPlumbInstance.repaintEverything()
+    }
 }
 
 function showColorPicker(switchId) {
@@ -927,21 +941,21 @@ async function loadConfiguration() {
         const switches_config = switchesData || getDemoSwitches()
         const connections_config = connectionsData || getDemoConnections()
 
-        // create relays
-        let relayX = 2500, relayY = 1500
+        // create relays (centered on canvas by default)
+        let relayX = 25000, relayY = 25000
         for (let [relayId, relayName] of Object.entries(relays_config)) {
             createRelay(parseInt(relayId), relayName, outputs_config[relayId] || {}, relayX, relayY)
             relayY += 770
-            if (relayY > 4000) { relayY = 1500; relayX += 350; }
+            if (relayY > 29000) { relayY = 25000; relayX += 350; }
         }
 
-        // create switches
-        let switchX = 1000, switchY = 1500
+        // create switches (centered on canvas by default)
+        let switchX = 23500, switchY = 25000
         for (let [switchId, switchData] of Object.entries(switches_config)) {
             const [switchName, buttonCount] = switchData
             createSwitch(parseInt(switchId), switchName, buttonCount, switchX, switchY)
             switchY += buttonCount * 72 + 185
-            if (switchY > 4000) { switchY = 1500; switchX += 500; }
+            if (switchY > 29000) { switchY = 25000; switchX += 500; }
         }
 
         // Create connections after elements exist (batched for performance)

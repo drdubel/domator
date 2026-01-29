@@ -163,7 +163,7 @@ const updateZoomWithRepaint = debounce(() => {
         jsPlumbInstance.setZoom(zoomLevel)
         jsPlumbInstance.repaintEverything()
     }
-}, 30)
+}, 100) // Increase debounce to 100ms for better performance during panning
 
 function zoomIn() {
     zoomAtPoint(1.1, window.innerWidth / 2, window.innerHeight / 2)
@@ -210,7 +210,7 @@ function initPanning() {
             updateZoom(false) // Update visual only, don't repaint jsPlumb
             updateZoomWithRepaint() // Debounced repaint for when panning slows/stops
         }
-    }, 0) // No throttle - instant response with RAF
+    }, 16) // Throttle at ~60fps for smoother performance
 
     document.addEventListener('mousemove', (e) => {
         throttledPan(e.clientX, e.clientY)
@@ -469,7 +469,19 @@ function showColorPicker(switchId) {
         '#84cc16', // Lime
         '#a855f7', // Violet
         '#14b8a6', // Teal
-        '#f43f5e'  // Rose
+        '#f43f5e', // Rose
+        '#facc15', // Yellow
+        '#fb923c', // Light orange
+        '#4ade80', // Light green
+        '#2dd4bf', // Light teal
+        '#c084fc', // Light purple
+        '#f472b6', // Light pink
+        '#fb7185', // Watermelon
+        '#fbbf24', // Amber
+        '#22d3ee', // Sky blue
+        '#a3e635', // Lime green
+        '#fca5a5', // Coral
+        '#d8b4fe'  // Lavender
     ]
 
     const colorButtons = colors.map(color =>
@@ -876,6 +888,12 @@ function highlightButton(switchId, buttonId) {
         return
     }
 
+    // Get the custom color if set, otherwise use default blue
+    let targetColor = '#6366f1' // default blue
+    if (switches[switchId] && switches[switchId].color) {
+        targetColor = switches[switchId].color
+    }
+
     // Set initial red background
     buttonElement.style.background = 'rgba(255, 0, 0, 1)'
     buttonElement.style.transition = 'none'
@@ -883,11 +901,16 @@ function highlightButton(switchId, buttonId) {
     // Force reflow to ensure the transition works
     buttonElement.offsetHeight
 
-    // Start fading to normal blue gradient color over 5 seconds
+    // Convert hex color to rgba for gradient
+    const r = parseInt(targetColor.slice(1, 3), 16)
+    const g = parseInt(targetColor.slice(3, 5), 16)
+    const b = parseInt(targetColor.slice(5, 7), 16)
+
+    // Start fading to the switch's custom color over 5 seconds
     // Using ease-in: starts slow, ends fast
     requestAnimationFrame(() => {
         buttonElement.style.transition = 'background 5s ease-in'
-        buttonElement.style.background = 'linear-gradient(135deg, rgba(99, 102, 241, 0.2) 0%, rgba(79, 70, 229, 0.2) 100%)'
+        buttonElement.style.background = `linear-gradient(135deg, rgba(${r}, ${g}, ${b}, 0.2) 0%, rgba(${r}, ${g}, ${b}, 0.33) 100%)`
     })
 
     console.log('Highlighted button:', switchId, buttonId)

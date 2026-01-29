@@ -10,6 +10,9 @@ var pendingClicks = new Set()
 let currentEditTarget = null
 let highlightedDevice = null
 let isLoadingConnections = false
+let connectionLookupMap = {} // Maps device IDs to their connections for fast lookup
+let zoomUpdateScheduled = false
+let cachedElements = {}
 
 // Zoom and Pan
 let zoomLevel = 0.7
@@ -20,6 +23,26 @@ let startX = 0
 let startY = 0
 
 const API_BASE_URL = `https://${window.location.host}`
+
+// Performance utilities
+function throttle(func, delay) {
+    let lastCall = 0
+    return function (...args) {
+        const now = Date.now()
+        if (now - lastCall >= delay) {
+            lastCall = now
+            return func.apply(this, args)
+        }
+    }
+}
+
+function debounce(func, delay) {
+    let timeoutId
+    return function (...args) {
+        clearTimeout(timeoutId)
+        timeoutId = setTimeout(() => func.apply(this, args), delay)
+    }
+}
 
 // Initialize WebSocket manager
 var wsManager = new WebSocketManager('/rcm/ws/', function (event) {
@@ -77,15 +100,26 @@ function resetZoom() {
 }
 
 function updateZoom() {
-    const canvas = document.getElementById('canvas')
-    document.getElementById('zoomLevel').innerText = `${Math.round(zoomLevel * 100)}%`
+    if (zoomUpdateScheduled) return
 
-    canvas.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`
+    zoomUpdateScheduled = true
+    requestAnimationFrame(() => {
+        const canvas = cachedElements.canvas || document.getElementById('canvas')
+        const zoomLevelEl = cachedElements.zoomLevel || document.getElementById('zoomLevel')
 
-    if (jsPlumbInstance) {
-        jsPlumbInstance.setZoom(zoomLevel); // ← critical
-        jsPlumbInstance.repaintEverything()
-    }
+        if (!cachedElements.canvas) cachedElements.canvas = canvas
+        if (!cachedElements.zoomLevel) cachedElements.zoomLevel = zoomLevelEl
+
+        zoomLevelEl.innerText = `${Math.round(zoomLevel * 100)}%`
+        canvas.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`
+
+        if (jsPlumbInstance) {
+            jsPlumbInstance.setZoom(zoomLevel)
+            jsPlumbInstance.repaintEverything()
+        }
+
+        zoomUpdateScheduled = false
+    })
 }
 
 function zoomIn() {
@@ -138,16 +172,19 @@ function initPanning() {
         wrapper.classList.remove('grabbing')
     })
 
-    // Zoom with mouse wheel
-    wrapper.addEventListener('wheel', (e) => {
-        e.preventDefault()
-
+    // Zoom with mouse wheel (throttled for performance)
+    const throttledZoom = throttle((e) => {
         const rect = wrapper.getBoundingClientRect()
         const centerX = rect.width / 2
         const centerY = rect.height / 2
 
         const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9
         zoomAtPoint(zoomFactor, centerX, centerY)
+    }, 16) // ~60fps
+
+    wrapper.addEventListener('wheel', (e) => {
+        e.preventDefault()
+        throttledZoom(e)
     }, { passive: false })
     resetZoom()
 }
@@ -253,6 +290,15 @@ function bindJsPlumbEvents() {
                             outputId,
                             connection: info.connection
                         })
+
+                        // Update lookup map
+                        const switchDeviceId = `switch-${switchId}`
+                        const relayDeviceId = `relay-${relayId}`
+                        if (!connectionLookupMap[switchDeviceId]) connectionLookupMap[switchDeviceId] = []
+                        if (!connectionLookupMap[relayDeviceId]) connectionLookupMap[relayDeviceId] = []
+                        connectionLookupMap[switchDeviceId].push(info.connection)
+                        connectionLookupMap[relayDeviceId].push(info.connection)
+
                         console.log('Connection saved successfully')
                     } else {
                         console.error('Failed to save connection')
@@ -291,6 +337,21 @@ function bindJsPlumbEvents() {
                                 conn => !(conn.relayId === relayId && conn.outputId === outputId)
                             )
                         }
+
+                        // Update lookup map
+                        const switchDeviceId = `switch-${switchId}`
+                        const relayDeviceId = `relay-${relayId}`
+                        if (connectionLookupMap[switchDeviceId]) {
+                            connectionLookupMap[switchDeviceId] = connectionLookupMap[switchDeviceId].filter(
+                                c => !(c.sourceId === sourceId && c.targetId === targetId)
+                            )
+                        }
+                        if (connectionLookupMap[relayDeviceId]) {
+                            connectionLookupMap[relayDeviceId] = connectionLookupMap[relayDeviceId].filter(
+                                c => !(c.sourceId === sourceId && c.targetId === targetId)
+                            )
+                        }
+
                         console.log('Connection removed successfully')
                     } else {
                         console.error('Failed to remove connection from API')
@@ -337,6 +398,17 @@ function bindJsPlumbEvents() {
                             conn => !(conn.relayId === relayId && conn.outputId === outputId)
                         )
                     }
+
+                    // Update lookup map
+                    const switchDeviceId = `switch-${switchId}`
+                    const relayDeviceId = `relay-${relayId}`
+                    if (connectionLookupMap[switchDeviceId]) {
+                        connectionLookupMap[switchDeviceId] = connectionLookupMap[switchDeviceId].filter(c => c !== connection)
+                    }
+                    if (connectionLookupMap[relayDeviceId]) {
+                        connectionLookupMap[relayDeviceId] = connectionLookupMap[relayDeviceId].filter(c => c !== connection)
+                    }
+
                     console.log('Connection removed successfully')
                 } else {
                     console.error('Failed to remove connection from API')
@@ -355,27 +427,26 @@ function highlightDevice(deviceId) {
     element.classList.add('highlighted')
     highlightedDevice = deviceId
 
-    const allConnections = jsPlumbInstance.getAllConnections()
+    // Use lookup map for faster connection finding
+    const deviceConnections = connectionLookupMap[deviceId] || []
 
-    allConnections.forEach(conn => {
+    deviceConnections.forEach(conn => {
         const sourceId = conn.sourceId
         const targetId = conn.targetId
 
-        if (sourceId.startsWith(deviceId) || targetId.startsWith(deviceId)) {
-            conn.setPaintStyle({ stroke: '#ef4444', strokeWidth: 5 })
+        conn.setPaintStyle({ stroke: '#ef4444', strokeWidth: 5 })
 
-            if (sourceId.startsWith(deviceId)) {
-                const targetMatch = targetId.match(/^(relay-\d+|switch-\d+)/)
-                if (targetMatch) {
-                    const targetElement = document.getElementById(targetMatch[1])
-                    if (targetElement) targetElement.classList.add('highlighted')
-                }
-            } else {
-                const sourceMatch = sourceId.match(/^(relay-\d+|switch-\d+)/)
-                if (sourceMatch) {
-                    const sourceElement = document.getElementById(sourceMatch[1])
-                    if (sourceElement) sourceElement.classList.add('highlighted')
-                }
+        if (sourceId.startsWith(deviceId)) {
+            const targetMatch = targetId.match(/^(relay-\d+|switch-\d+)/)
+            if (targetMatch) {
+                const targetElement = document.getElementById(targetMatch[1])
+                if (targetElement) targetElement.classList.add('highlighted')
+            }
+        } else {
+            const sourceMatch = sourceId.match(/^(relay-\d+|switch-\d+)/)
+            if (sourceMatch) {
+                const sourceElement = document.getElementById(sourceMatch[1])
+                if (sourceElement) sourceElement.classList.add('highlighted')
             }
         }
     })
@@ -474,17 +545,24 @@ async function loadConfiguration() {
     showLoading()
     isLoadingConnections = true
 
-    // Remove all connections & endpoints
-    jsPlumbInstance.deleteEveryConnection()
-    jsPlumbInstance.deleteEveryEndpoint()
+    // Suspend drawing for better performance
+    if (jsPlumbInstance) {
+        jsPlumbInstance.batch(() => {
+            jsPlumbInstance.deleteEveryConnection()
+            jsPlumbInstance.deleteEveryEndpoint()
+        })
+    }
 
     // Clear canvas
-    const canvas = document.getElementById('canvas')
+    const canvas = cachedElements.canvas || document.getElementById('canvas')
     canvas.innerHTML = ''
+    if (!cachedElements.canvas) cachedElements.canvas = canvas
 
     switches = {}
     relays = {}
     connections = {}
+    connectionLookupMap = {}
+    cachedElements = { canvas, zoomLevel: cachedElements.zoomLevel }
 
     try {
         const [relaysData, outputsData, switchesData, connectionsData] = await Promise.all([
@@ -516,20 +594,22 @@ async function loadConfiguration() {
             if (switchY > 4000) { switchY = 1500; switchX += 500; }
         }
 
-        // Create connections after elements exist
+        // Create connections after elements exist (batched for performance)
         setTimeout(() => {
-            for (let [switchId, buttons] of Object.entries(connections_config)) {
-                for (let [buttonId, targets] of Object.entries(buttons)) {
-                    for (let [relayId, outputId] of targets) {
-                        createConnection(parseInt(switchId), buttonId, parseInt(relayId), outputId)
+            jsPlumbInstance.batch(() => {
+                for (let [switchId, buttons] of Object.entries(connections_config)) {
+                    for (let [buttonId, targets] of Object.entries(buttons)) {
+                        for (let [relayId, outputId] of targets) {
+                            createConnection(parseInt(switchId), buttonId, parseInt(relayId), outputId)
+                        }
                     }
                 }
-            }
+            })
 
             bindJsPlumbEvents()
             isLoadingConnections = false
             hideLoading()
-        }, 100); // slightly smaller delay may work
+        }, 100)
 
         wsManager.send(JSON.stringify({ "type": "get_states" }))
     } catch (error) {
@@ -793,6 +873,16 @@ function createConnection(switchId, buttonId, relayId, outputId) {
         if (!connections[switchId]) connections[switchId] = {}
         if (!connections[switchId][buttonId]) connections[switchId][buttonId] = []
         connections[switchId][buttonId].push({ relayId, outputId, connection: conn })
+
+        // Update lookup map for fast highlighting
+        const switchDeviceId = `switch-${switchId}`
+        const relayDeviceId = `relay-${relayId}`
+
+        if (!connectionLookupMap[switchDeviceId]) connectionLookupMap[switchDeviceId] = []
+        if (!connectionLookupMap[relayDeviceId]) connectionLookupMap[relayDeviceId] = []
+
+        connectionLookupMap[switchDeviceId].push(conn)
+        connectionLookupMap[relayDeviceId].push(conn)
     }
 }
 
@@ -951,6 +1041,7 @@ async function deleteSwitch(switchId) {
 
         delete switches[switchId]
         delete connections[switchId]
+        delete connectionLookupMap[`switch-${switchId}`]
 
         if (highlightedDevice === `switch-${switchId}`) {
             clearHighlights()
@@ -973,6 +1064,7 @@ async function deleteRelay(relayId) {
         }
 
         delete relays[relayId]
+        delete connectionLookupMap[`relay-${relayId}`]
 
         if (highlightedDevice === `relay-${relayId}`) {
             clearHighlights()
@@ -1101,8 +1193,11 @@ async function clearAllConnections() {
 
     await Promise.all(removePromises)
 
-    jsPlumbInstance.deleteEveryConnection()
+    jsPlumbInstance.batch(() => {
+        jsPlumbInstance.deleteEveryConnection()
+    })
     connections = {}
+    connectionLookupMap = {}
 
     hideLoading()
     console.log('All connections cleared')

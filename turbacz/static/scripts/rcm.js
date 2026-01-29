@@ -99,7 +99,7 @@ function resetZoom() {
     updateZoom()
 }
 
-function updateZoom() {
+function updateZoom(repaintJsPlumb = true) {
     if (zoomUpdateScheduled) return
 
     zoomUpdateScheduled = true
@@ -113,7 +113,7 @@ function updateZoom() {
         zoomLevelEl.innerText = `${Math.round(zoomLevel * 100)}%`
         canvas.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`
 
-        if (jsPlumbInstance) {
+        if (jsPlumbInstance && repaintJsPlumb) {
             jsPlumbInstance.setZoom(zoomLevel)
             jsPlumbInstance.repaintEverything()
         }
@@ -121,6 +121,14 @@ function updateZoom() {
         zoomUpdateScheduled = false
     })
 }
+
+// Debounced version that includes jsPlumb repaint
+const updateZoomWithRepaint = debounce(() => {
+    if (jsPlumbInstance) {
+        jsPlumbInstance.setZoom(zoomLevel)
+        jsPlumbInstance.repaintEverything()
+    }
+}, 100)
 
 function zoomIn() {
     zoomAtPoint(1.1, window.innerWidth / 2, window.innerHeight / 2)
@@ -159,17 +167,27 @@ function initPanning() {
         }
     })
 
-    document.addEventListener('mousemove', (e) => {
+    const throttledPan = throttle((e) => {
         if (isPanning) {
             panX = (e.clientX - startX) / zoomLevel
             panY = (e.clientY - startY) / zoomLevel
-            updateZoom()
+            updateZoom(false) // Update visual only, don't repaint jsPlumb
+            updateZoomWithRepaint() // Debounced repaint for when panning slows/stops
         }
-    })
+    }, 16) // ~60fps
+
+    document.addEventListener('mousemove', throttledPan)
 
     document.addEventListener('mouseup', () => {
-        isPanning = false
-        wrapper.classList.remove('grabbing')
+        if (isPanning) {
+            isPanning = false
+            wrapper.classList.remove('grabbing')
+            // Final repaint when panning ends
+            if (jsPlumbInstance) {
+                jsPlumbInstance.setZoom(zoomLevel)
+                jsPlumbInstance.repaintEverything()
+            }
+        }
     })
 
     // Zoom with mouse wheel (throttled for performance)

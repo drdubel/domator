@@ -97,8 +97,8 @@ function hideLoading() {
 
 function resetZoom() {
     zoomLevel = 0.5
-    panX = -300
-    panY = -900
+    panX = -12000
+    panY = -12000
     updateZoom()
 }
 

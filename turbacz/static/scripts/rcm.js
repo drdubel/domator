@@ -17,11 +17,13 @@ let hiddenDevices = new Set() // Track hidden devices
 
 // Zoom and Pan
 let zoomLevel = 0.5
-let panX = -300
-let panY = -900
+let panX = -12000  // Center canvas at device spawn area (25000, 25000)
+let panY = -12000
 let isPanning = false
 let startX = 0
 let startY = 0
+let isPinching = false
+let lastPinchDistance = 0
 
 const API_BASE_URL = `https://${window.location.host}`
 
@@ -222,7 +224,46 @@ function initPanning() {
                 jsPlumbInstance.repaintEverything()
             }
         }
+        isPinching = false
+        lastPinchDistance = 0
     })
+
+    // Pinch zoom support for touch screens
+    wrapper.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 2) {
+            isPinching = true
+            isPanning = false
+            const touch1 = e.touches[0]
+            const touch2 = e.touches[1]
+            const dx = touch2.clientX - touch1.clientX
+            const dy = touch2.clientY - touch1.clientY
+            lastPinchDistance = Math.sqrt(dx * dx + dy * dy)
+            e.preventDefault()
+        }
+    }, { passive: false })
+
+    wrapper.addEventListener('touchmove', (e) => {
+        if (isPinching && e.touches.length === 2) {
+            const touch1 = e.touches[0]
+            const touch2 = e.touches[1]
+            const dx = touch2.clientX - touch1.clientX
+            const dy = touch2.clientY - touch1.clientY
+            const distance = Math.sqrt(dx * dx + dy * dy)
+
+            if (lastPinchDistance > 0) {
+                const pinchCenter = {
+                    x: (touch1.clientX + touch2.clientX) / 2,
+                    y: (touch1.clientY + touch2.clientY) / 2
+                }
+
+                const zoomFactor = distance / lastPinchDistance
+                zoomAtPoint(zoomFactor, pinchCenter.x, pinchCenter.y)
+            }
+
+            lastPinchDistance = distance
+            e.preventDefault()
+        }
+    }, { passive: false })
 
     // Zoom with mouse wheel (throttled for performance)
     const throttledZoom = throttle((e) => {
@@ -337,8 +378,6 @@ function hideDevice(deviceId, deviceType) {
         conn.setVisible(false)
     })
 
-    saveHiddenDevices()
-
     // Repaint to remove endpoint dots immediately
     if (jsPlumbInstance) {
         jsPlumbInstance.repaintEverything()
@@ -360,7 +399,6 @@ function showAllHiddenDevices() {
     })
 
     hiddenDevices.clear()
-    saveHiddenDevices()
 
     // Repaint to fix connection line positions immediately
     if (jsPlumbInstance) {
@@ -926,7 +964,7 @@ async function loadConfiguration() {
     connections = {}
     connectionLookupMap = {}
     cachedElements = { canvas, zoomLevel: cachedElements.zoomLevel }
-    hiddenDevices = loadHiddenDevices()
+    hiddenDevices = new Set()  // Don't persist hidden devices across reloads
 
     try {
         const [relaysData, outputsData, switchesData, connectionsData] = await Promise.all([

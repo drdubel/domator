@@ -311,7 +311,6 @@ body {
 }
 
 .update-btn {
-    background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
     color: white;
     border: none;
     width: 32px;
@@ -319,15 +318,30 @@ body {
     border-radius: 8px;
     cursor: pointer;
     font-weight: bold;
-    font-size: 1rem;
+    font-size: 1.125rem;
+    line-height: 1;
     transition: all 0.2s;
     display: flex;
     align-items: center;
     justify-content: center;
+    padding: 0;
 }
 
-.update-btn:hover {
-    background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+.update-btn-switch {
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+}
+
+.update-btn-switch:hover {
+    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+    transform: scale(1.1) rotate(180deg);
+}
+
+.update-btn-relay {
+    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+}
+
+.update-btn-relay:hover {
+    background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
     transform: scale(1.1) rotate(180deg);
 }
 

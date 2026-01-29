@@ -15,7 +15,7 @@ let zoomUpdateScheduled = false
 let cachedElements = {}
 
 // Zoom and Pan
-let zoomLevel = 0.7
+let zoomLevel = 0.5
 let panX = -300
 let panY = -900
 let isPanning = false
@@ -128,7 +128,7 @@ const updateZoomWithRepaint = debounce(() => {
         jsPlumbInstance.setZoom(zoomLevel)
         jsPlumbInstance.repaintEverything()
     }
-}, 50)
+}, 30)
 
 function zoomIn() {
     zoomAtPoint(1.1, window.innerWidth / 2, window.innerHeight / 2)
@@ -174,7 +174,7 @@ function initPanning() {
             updateZoom(false) // Update visual only, don't repaint jsPlumb
             updateZoomWithRepaint() // Debounced repaint for when panning slows/stops
         }
-    }, 8) // Higher fps for smoother movement
+    }, 0) // No throttle - instant response with RAF
 
     document.addEventListener('mousemove', (e) => {
         throttledPan(e.clientX, e.clientY)
@@ -842,7 +842,7 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
                     <span class="device-id" onclick="event.stopPropagation(); copyIdToClipboard(${switchId}, this)">ID: ${switchId}</span>
                     </span>
                     <div style="display: flex; gap: 0.5rem;">
-                        <button class="update-btn" onclick="event.stopPropagation(); updateDevice(${switchId}, 'switch')" title="Update Device">⟳</button>
+                        <button class="update-btn update-btn-switch" onclick="event.stopPropagation(); updateDevice(${switchId}, 'switch')" title="Update Device">⟳</button>
                         <button class="delete-btn" onclick="event.stopPropagation(); deleteSwitch(${switchId})">✕</button>
                     </div>
                 </div>
@@ -946,7 +946,7 @@ function createRelay(relayId, relayName, outputs, x, y) {
                     <span class="device-id" onclick="event.stopPropagation(); copyIdToClipboard(${relayId}, this)">ID: ${relayId}</span>
                     </span>
                     <div style="display: flex; gap: 0.5rem;">
-                        <button class="update-btn" onclick="event.stopPropagation(); updateDevice(${relayId}, 'relay')" title="Update Device">⟳</button>
+                        <button class="update-btn update-btn-relay" onclick="event.stopPropagation(); updateDevice(${relayId}, 'relay')" title="Update Device">⟳</button>
                         <button class="delete-btn" onclick="event.stopPropagation(); deleteRelay(${relayId})">✕</button>
                     </div>
                 </div>

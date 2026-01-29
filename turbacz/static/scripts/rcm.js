@@ -373,8 +373,9 @@ function setDeviceColor(switchId, color) {
 }
 
 function applyDeviceColor(switchId) {
+    if (!switches[switchId] || !switches[switchId].color) return
+
     const color = switches[switchId].color
-    if (!color) return
 
     const switchElement = document.getElementById(`switch-${switchId}`)
     if (!switchElement) return
@@ -1196,7 +1197,13 @@ function changeSwitchState(relay_id, output_id) {
 
 function updateLightUI(relay_id, output_id, state) {
     console.log('Updating UI for', `relay-${relay_id}-output-${output_id}`, 'to', state)
-    var element = document.getElementById(`relay-${relay_id}-output-${output_id}`).querySelector('img')
+    var outputElement = document.getElementById(`relay-${relay_id}-output-${output_id}`)
+    if (!outputElement) {
+        console.warn('Output element not found:', `relay-${relay_id}-output-${output_id}`)
+        return
+    }
+
+    var element = outputElement.querySelector('img')
     if (!element) return
 
     if (state === 1) {

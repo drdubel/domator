@@ -329,6 +329,11 @@ function hideDevice(deviceId, deviceType) {
     })
 
     saveHiddenDevices()
+
+    // Repaint to remove endpoint dots immediately
+    if (jsPlumbInstance) {
+        jsPlumbInstance.repaintEverything()
+    }
 }
 
 function showAllHiddenDevices() {
@@ -1081,14 +1086,32 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
 
     document.getElementById('canvas').appendChild(switchDiv)
 
-    switchDiv.addEventListener('click', function () {
-        highlightDevice(`switch-${switchId}`)
+    let isDragging = false
+    let dragStartTime = 0
+
+    switchDiv.addEventListener('mousedown', function () {
+        isDragging = false
+        dragStartTime = Date.now()
+    })
+
+    switchDiv.addEventListener('click', function (e) {
+        // Only highlight if not dragging and click was quick
+        if (!isDragging && (Date.now() - dragStartTime) < 200) {
+            highlightDevice(`switch-${switchId}`)
+        }
     })
 
     jsPlumbInstance.draggable(switchDiv, {
         containment: false,
+        start: function () {
+            isDragging = true
+        },
         stop: function () {
             saveDevicePositions()
+            // Reset drag state after a short delay
+            setTimeout(() => {
+                isDragging = false
+            }, 100)
         }
     })
 
@@ -1191,14 +1214,32 @@ function createRelay(relayId, relayName, outputs, x, y) {
 
     document.getElementById('canvas').appendChild(relayDiv)
 
-    relayDiv.addEventListener('click', function () {
-        highlightDevice(`relay-${relayId}`)
+    let isDragging = false
+    let dragStartTime = 0
+
+    relayDiv.addEventListener('mousedown', function () {
+        isDragging = false
+        dragStartTime = Date.now()
+    })
+
+    relayDiv.addEventListener('click', function (e) {
+        // Only highlight if not dragging and click was quick
+        if (!isDragging && (Date.now() - dragStartTime) < 200) {
+            highlightDevice(`relay-${relayId}`)
+        }
     })
 
     jsPlumbInstance.draggable(relayDiv, {
         containment: false,
+        start: function () {
+            isDragging = true
+        },
         stop: function () {
             saveDevicePositions()
+            // Reset drag state after a short delay
+            setTimeout(() => {
+                isDragging = false
+            }, 100)
         }
     })
 

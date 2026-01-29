@@ -671,7 +671,19 @@ function clearHighlights() {
 
     const allConnections = jsPlumbInstance.getAllConnections()
     allConnections.forEach(conn => {
-        conn.setPaintStyle({ stroke: '#6366f1', strokeWidth: 3 })
+        // Get the source switch ID to check for custom color
+        const sourceId = conn.sourceId
+        const switchMatch = sourceId.match(/switch-(\d+)-btn/)
+
+        let color = '#6366f1' // default blue
+        if (switchMatch) {
+            const switchId = parseInt(switchMatch[1])
+            if (switches[switchId] && switches[switchId].color) {
+                color = switches[switchId].color
+            }
+        }
+
+        conn.setPaintStyle({ stroke: color, strokeWidth: 3 })
     })
 
     highlightedDevice = null
@@ -1148,10 +1160,16 @@ function createConnection(switchId, buttonId, relayId, outputId) {
 
     console.log('Creating connection from loaded data:', { switchId, buttonId, relayId, outputId })
 
+    // Check if switch has custom color
+    let connectionColor = '#6366f1' // default blue
+    if (switches[switchId] && switches[switchId].color) {
+        connectionColor = switches[switchId].color
+    }
+
     const conn = jsPlumbInstance.connect({
         source: sourceElement,
         target: targetElement,
-        paintStyle: { stroke: '#6366f1', strokeWidth: 3 },
+        paintStyle: { stroke: connectionColor, strokeWidth: 3 },
         endpoint: ["Dot", { radius: 8 }]
     })
 

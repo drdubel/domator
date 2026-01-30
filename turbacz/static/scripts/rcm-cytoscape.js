@@ -9,6 +9,7 @@ let online_relays = new Set();
 let online_switches = new Set();
 let up_to_date_devices = {};
 let lights = {};
+let pendingClicks = new Set();
 let highlightedDevice = null;
 
 const API_BASE_URL = `https://${window.location.host}`;
@@ -23,6 +24,7 @@ var wsManager = new WebSocketManager('/rcm/ws/', function (event) {
     }
 
     if (msg.type == "light_state") {
+        pendingClicks.delete(`${msg.relay_id}-${msg.output_id}`);
         lights[`${msg.relay_id}-${msg.output_id}`] = msg.state;
         updateLightUI(msg.relay_id, msg.output_id, msg.state);
     }
@@ -41,6 +43,8 @@ var wsManager = new WebSocketManager('/rcm/ws/', function (event) {
 
     if (msg.type == "switch_state" && msg.switch_id && msg.button_id) {
         highlightButton(msg.switch_id, msg.button_id);
+
+        // Auto-clear highlight after 5 seconds
         setTimeout(() => {
             clearButtonHighlight(msg.switch_id, msg.button_id);
         }, 5000);
@@ -238,11 +242,7 @@ async function loadConfiguration() {
             }
         }
 
-        // Get light states
-        const lightsData = await fetchAPI('/lights/get_lights');
-        if (lightsData) lights = lightsData;
-
-        console.log('Loaded:', { switches, relays, connections, lights });
+        console.log('Loaded:', { switches, relays, connections });
 
         // Rebuild Cytoscape graph
         if (cy) {
@@ -520,15 +520,15 @@ function initCytoscape(containerId) {
     // Calculate and set proper heights for container nodes
     cy.nodes('[type="switch"]').forEach(node => {
         const switchId = node.data('deviceId');
-        const buttonCount = mockSwitches[switchId]?.buttonCount || 0;
-        const height = 80 + (buttonCount * 30) + 20;
+        const buttonCount = switches[switchId]?.buttonCount || 0;
+        const height = 80 + (buttonCount * 45) + 20;
         node.data('height', height);
     });
 
     cy.nodes('[type="relay"]').forEach(node => {
         const relayId = node.data('deviceId');
-        const outputCount = Object.keys(mockRelays[relayId]?.outputs || {}).length;
-        const height = 80 + (outputCount * 30) + 20;
+        const outputCount = Object.keys(relays[relayId]?.outputs || {}).length;
+        const height = 80 + (outputCount * 45) + 20;
         node.data('height', height);
     });
 

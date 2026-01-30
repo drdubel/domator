@@ -171,9 +171,25 @@ function syncJsPlumb() {
 
 // ------------------- DEBOUNCED SYNC -------------------
 let syncTimeout = null
-function debouncedSyncJsPlumb() {
+function debouncedSyncJsPlumb(delay = 300) {
     clearTimeout(syncTimeout)
-    syncTimeout = setTimeout(syncJsPlumb, 120) // only after interaction ends
+    syncTimeout = setTimeout(syncJsPlumb, delay)
+}
+
+function disableJsPlumbDuringPan() {
+    if (jsPlumbInstance) {
+        canvasElement.querySelectorAll('.jtk-connector, .jtk-endpoint').forEach(el => {
+            el.style.visibility = 'hidden'
+        })
+    }
+}
+
+function enableJsPlumbAfterPan() {
+    if (jsPlumbInstance) {
+        canvasElement.querySelectorAll('.jtk-connector, .jtk-endpoint').forEach(el => {
+            el.style.visibility = 'visible'
+        })
+    }
 }
 
 // ------------------- ZOOM AT POINT -------------------
@@ -220,6 +236,7 @@ function initPanning() {
         startX = e.clientX - panX
         startY = e.clientY - panY
         wrapper.classList.add('grabbing')
+        disableJsPlumbDuringPan()
     })
     document.addEventListener('mousemove', e => {
         if (!isPanning) return
@@ -231,7 +248,8 @@ function initPanning() {
         if (!isPanning) return
         isPanning = false
         wrapper.classList.remove('grabbing')
-        syncJsPlumb()
+        enableJsPlumbAfterPan()
+        debouncedSyncJsPlumb(300)
         saveCanvasView()
     })
 
@@ -243,6 +261,7 @@ function initPanning() {
             startX = touch.clientX - panX
             startY = touch.clientY - panY
             wrapper.classList.add('grabbing')
+            disableJsPlumbDuringPan()
             e.preventDefault()
         }
         if (e.touches.length === 2) { // pinch start
@@ -283,7 +302,8 @@ function initPanning() {
         if (isPanning) {
             isPanning = false
             wrapper.classList.remove('grabbing')
-            syncJsPlumb()
+            enableJsPlumbAfterPan()
+            debouncedSyncJsPlumb(300)
             saveCanvasView()
         }
         if (isPinching) {

@@ -700,15 +700,12 @@ function updateOverlayPosition(node, overlay) {
     const width = 280;
     const height = node.data('height');
 
-    // Scale inversely with zoom - cards get smaller as you zoom out
-    const scale = 1 / zoom;
-    const scaledWidth = width * scale;
-    const scaledHeight = height * scale;
-
-    overlay.style.left = `${pos.x - scaledWidth / 2}px`;
-    overlay.style.top = `${pos.y - scaledHeight / 2}px`;
+    // Don't scale the cards - they should stay the same size regardless of zoom
+    // Just position them at the rendered position
+    overlay.style.left = `${pos.x - width / 2}px`;
+    overlay.style.top = `${pos.y - height / 2}px`;
     overlay.style.width = `${width}px`;
-    overlay.style.transform = `scale(${scale})`;
+    overlay.style.transform = 'scale(1)';
     overlay.style.transformOrigin = 'center center';
 }
 
@@ -720,47 +717,31 @@ function initCytoscape(containerId) {
         elements: generateCytoscapeElements(),
 
         style: [
-            // Switch container nodes
+            // Switch container nodes (invisible - only for positioning)
             {
                 selector: '.switch-container',
                 style: {
                     'width': 280,
                     'height': 'data(height)',
-                    'shape': 'roundrectangle',
-                    'background-color': '#1e293b',
-                    'border-width': 4,
-                    'border-color': 'data(color)',
-                    'label': 'data(label)',
-                    'text-valign': 'top',
-                    'text-halign': 'center',
-                    'text-margin-y': -130,
-                    'font-size': 22,
-                    'font-weight': 800,
-                    'color': '#f1f5f9',
-                    'text-wrap': 'wrap',
-                    'text-max-width': 250
+                    'shape': 'rectangle',
+                    'background-opacity': 0,
+                    'border-width': 0,
+                    'label': '',
+                    'events': 'no'
                 }
             },
 
-            // Relay container nodes
+            // Relay container nodes (invisible - only for positioning)
             {
                 selector: '.relay-container',
                 style: {
                     'width': 280,
                     'height': 'data(height)',
-                    'shape': 'roundrectangle',
-                    'background-color': '#1e293b',
-                    'border-width': 4,
-                    'border-color': '#f59e0b',
-                    'label': 'data(label)',
-                    'text-valign': 'top',
-                    'text-halign': 'center',
-                    'text-margin-y': -130,
-                    'font-size': 22,
-                    'font-weight': 800,
-                    'color': '#f1f5f9',
-                    'text-wrap': 'wrap',
-                    'text-max-width': 250
+                    'shape': 'rectangle',
+                    'background-opacity': 0,
+                    'border-width': 0,
+                    'label': '',
+                    'events': 'no'
                 }
             },
 
@@ -770,10 +751,10 @@ function initCytoscape(containerId) {
                 style: {
                     'width': 10,
                     'height': 10,
-                    'background-color': '#6366f1',
-                    'border-width': 2,
-                    'border-color': '#4f46e5',
-                    'label': ''
+                    'background-opacity': 0,
+                    'border-width': 0,
+                    'label': '',
+                    'events': 'no'
                 }
             },
 
@@ -783,10 +764,10 @@ function initCytoscape(containerId) {
                 style: {
                     'width': 10,
                     'height': 10,
-                    'background-color': '#f59e0b',
-                    'border-width': 2,
-                    'border-color': '#d97706',
-                    'label': ''
+                    'background-opacity': 0,
+                    'border-width': 0,
+                    'label': '',
+                    'events': 'no'
                 }
             },
 

@@ -1181,7 +1181,7 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
     const statusClass = isOnline ? 'status-online' : 'status-offline'
     const statusDot = `<span class="status-indicator ${statusClass}"></span>`
     const checksum = firmware_checksums[switchId] || ''
-    const checksumDisplay = checksum ? `<div style="font-size: 0.75rem; color: #888; margin-top: 0.2rem;">FW: ${checksum}</div>` : ''
+    const checksumDisplay = checksum ? `<div class="firmware-version" style="font-size: 0.75rem; color: #888; margin-top: 0.2rem;">FW: ${checksum}</div>` : ''
 
     switchDiv.innerHTML = `
                 <div class="device-header">
@@ -1353,7 +1353,7 @@ function createRelay(relayId, relayName, outputs, x, y) {
     const statusClass = isOnline ? 'status-online' : 'status-offline'
     const statusDot = `<span class="status-indicator ${statusClass}"></span>`
     const checksum = firmware_checksums[relayId] || ''
-    const checksumDisplay = checksum ? `<div style="font-size: 0.75rem; color: #888; margin-top: 0.2rem;">FW: ${checksum}</div>` : ''
+    const checksumDisplay = checksum ? `<div class="firmware-version" style="font-size: 0.75rem; color: #888; margin-top: 0.2rem;">FW: ${checksum}</div>` : ''
 
     relayDiv.innerHTML = `
                 <div class="device-header">
@@ -1486,6 +1486,28 @@ function updateOnlineStatus() {
                 const isOnline = online_switches.has(parseInt(switchId))
                 indicator.className = isOnline ? 'status-indicator status-online' : 'status-indicator status-offline'
             }
+
+            // Update or add firmware version display
+            const deviceIdSpan = element.querySelector('.device-id')
+            if (deviceIdSpan) {
+                const parentSpan = deviceIdSpan.parentElement
+                let fwDiv = parentSpan.querySelector('.firmware-version')
+                const checksum = firmware_checksums[parseInt(switchId)] || ''
+
+                if (checksum) {
+                    if (!fwDiv) {
+                        fwDiv = document.createElement('div')
+                        fwDiv.className = 'firmware-version'
+                        fwDiv.style.fontSize = '0.75rem'
+                        fwDiv.style.color = '#888'
+                        fwDiv.style.marginTop = '0.2rem'
+                        parentSpan.appendChild(fwDiv)
+                    }
+                    fwDiv.textContent = `FW: ${checksum}`
+                } else if (fwDiv) {
+                    fwDiv.remove()
+                }
+            }
         }
     }
 
@@ -1497,6 +1519,28 @@ function updateOnlineStatus() {
             if (indicator) {
                 const isOnline = online_relays.has(parseInt(relayId))
                 indicator.className = isOnline ? 'status-indicator status-online' : 'status-indicator status-offline'
+            }
+
+            // Update or add firmware version display
+            const deviceIdSpan = element.querySelector('.device-id')
+            if (deviceIdSpan) {
+                const parentSpan = deviceIdSpan.parentElement
+                let fwDiv = parentSpan.querySelector('.firmware-version')
+                const checksum = firmware_checksums[parseInt(relayId)] || ''
+
+                if (checksum) {
+                    if (!fwDiv) {
+                        fwDiv = document.createElement('div')
+                        fwDiv.className = 'firmware-version'
+                        fwDiv.style.fontSize = '0.75rem'
+                        fwDiv.style.color = '#888'
+                        fwDiv.style.marginTop = '0.2rem'
+                        parentSpan.appendChild(fwDiv)
+                    }
+                    fwDiv.textContent = `FW: ${checksum}`
+                } else if (fwDiv) {
+                    fwDiv.remove()
+                }
             }
         }
     }

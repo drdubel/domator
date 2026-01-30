@@ -4,7 +4,7 @@ let switches = {}
 let relays = {}
 let online_relays = new Set()
 let online_switches = new Set()
-let firmware_checksums = {} // Maps device_id to firmware checksum
+let up_to_date_devices = {} // Maps device_id to boolean indicating if firmware is up to date
 let connections = {}
 var lights = {}
 var pendingClicks = new Set()
@@ -99,11 +99,11 @@ var wsManager = new WebSocketManager('/rcm/ws/', function (event) {
     if (msg.type == "online_status") {
         online_relays = new Set(msg.online_relays)
         online_switches = new Set(msg.online_switches)
-        firmware_checksums = msg.firmware_versions || {}
+        up_to_date_devices = msg.up_to_date_devices || {}
 
         console.log('Online relays:', online_relays)
         console.log('Online switches:', online_switches)
-        console.log('Firmware checksums:', firmware_checksums)
+        console.log('Up to date devices:', up_to_date_devices)
 
         updateOnlineStatus()
     }
@@ -1178,10 +1178,16 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
     }
 
     const isOnline = online_switches.has(switchId)
-    const statusClass = isOnline ? 'status-online' : 'status-offline'
+    const isUpToDate = up_to_date_devices[switchId]
+    let statusClass
+    if (!isOnline) {
+        statusClass = 'status-offline' // red
+    } else if (isUpToDate) {
+        statusClass = 'status-online' // green
+    } else {
+        statusClass = 'status-outdated' // orange/yellow
+    }
     const statusDot = `<span class="status-indicator ${statusClass}"></span>`
-    const checksum = firmware_checksums[switchId] || ''
-    const checksumDisplay = checksum ? `<div class="firmware-version" style="font-size: 0.7rem; color: #64748b; text-align: center; padding: 0.4rem 0.5rem; margin-top: 0.5rem; background: rgba(100, 116, 139, 0.05); border-top: 1px solid rgba(100, 116, 139, 0.1); border-radius: 0 0 8px 8px; font-family: 'Courier New', monospace;">${checksum}</div>` : ''
 
     switchDiv.innerHTML = `
                 <div class="device-header">
@@ -1200,7 +1206,6 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
                     <button class="color-btn" onclick="event.stopPropagation(); showColorPicker(${switchId})" title="Change Color">🎨</button>
                 </div>
                 ${buttonsHTML}
-                ${checksumDisplay}
             `
 
     document.getElementById('canvas').appendChild(switchDiv)
@@ -1350,10 +1355,16 @@ function createRelay(relayId, relayName, outputs, x, y) {
     }
 
     const isOnline = online_relays.has(relayId)
-    const statusClass = isOnline ? 'status-online' : 'status-offline'
+    const isUpToDate = up_to_date_devices[relayId]
+    let statusClass
+    if (!isOnline) {
+        statusClass = 'status-offline' // red
+    } else if (isUpToDate) {
+        statusClass = 'status-online' // green
+    } else {
+        statusClass = 'status-outdated' // orange/yellow
+    }
     const statusDot = `<span class="status-indicator ${statusClass}"></span>`
-    const checksum = firmware_checksums[relayId] || ''
-    const checksumDisplay = checksum ? `<div class="firmware-version" style="font-size: 0.7rem; color: #64748b; text-align: center; padding: 0.4rem 0.5rem; margin-top: 0.5rem; background: rgba(100, 116, 139, 0.05); border-top: 1px solid rgba(100, 116, 139, 0.1); border-radius: 0 0 8px 8px; font-family: 'Courier New', monospace;">${checksum}</div>` : ''
 
     relayDiv.innerHTML = `
                 <div class="device-header">
@@ -1369,7 +1380,6 @@ function createRelay(relayId, relayName, outputs, x, y) {
                 </div>
                 <div class="device-name device-name-relay-${relayId}" style="cursor: pointer;">${relayName}</div>
                 ${outputsHTML}
-                ${checksumDisplay}
             `
 
     document.getElementById('canvas').appendChild(relayDiv)
@@ -1484,31 +1494,16 @@ function updateOnlineStatus() {
             const indicator = element.querySelector('.status-indicator')
             if (indicator) {
                 const isOnline = online_switches.has(parseInt(switchId))
-                indicator.className = isOnline ? 'status-indicator status-online' : 'status-indicator status-offline'
-            }
-
-            // Update or add firmware version display at the bottom
-            let fwDiv = element.querySelector('.firmware-version')
-            const checksum = firmware_checksums[parseInt(switchId)] || ''
-
-            if (checksum) {
-                if (!fwDiv) {
-                    fwDiv = document.createElement('div')
-                    fwDiv.className = 'firmware-version'
-                    fwDiv.style.fontSize = '0.7rem'
-                    fwDiv.style.color = '#64748b'
-                    fwDiv.style.textAlign = 'center'
-                    fwDiv.style.padding = '0.4rem 0.5rem'
-                    fwDiv.style.marginTop = '0.5rem'
-                    fwDiv.style.background = 'rgba(100, 116, 139, 0.05)'
-                    fwDiv.style.borderTop = '1px solid rgba(100, 116, 139, 0.1)'
-                    fwDiv.style.borderRadius = '0 0 8px 8px'
-                    fwDiv.style.fontFamily = "'Courier New', monospace"
-                    element.appendChild(fwDiv)
+                const isUpToDate = up_to_date_devices[parseInt(switchId)]
+                let statusClass
+                if (!isOnline) {
+                    statusClass = 'status-indicator status-offline' // red
+                } else if (isUpToDate) {
+                    statusClass = 'status-indicator status-online' // green
+                } else {
+                    statusClass = 'status-indicator status-outdated' // orange/yellow
                 }
-                fwDiv.textContent = checksum
-            } else if (fwDiv) {
-                fwDiv.remove()
+                indicator.className = statusClass
             }
         }
     }
@@ -1520,31 +1515,16 @@ function updateOnlineStatus() {
             const indicator = element.querySelector('.status-indicator')
             if (indicator) {
                 const isOnline = online_relays.has(parseInt(relayId))
-                indicator.className = isOnline ? 'status-indicator status-online' : 'status-indicator status-offline'
-            }
-
-            // Update or add firmware version display at the bottom
-            let fwDiv = element.querySelector('.firmware-version')
-            const checksum = firmware_checksums[parseInt(relayId)] || ''
-
-            if (checksum) {
-                if (!fwDiv) {
-                    fwDiv = document.createElement('div')
-                    fwDiv.className = 'firmware-version'
-                    fwDiv.style.fontSize = '0.7rem'
-                    fwDiv.style.color = '#64748b'
-                    fwDiv.style.textAlign = 'center'
-                    fwDiv.style.padding = '0.4rem 0.5rem'
-                    fwDiv.style.marginTop = '0.5rem'
-                    fwDiv.style.background = 'rgba(100, 116, 139, 0.05)'
-                    fwDiv.style.borderTop = '1px solid rgba(100, 116, 139, 0.1)'
-                    fwDiv.style.borderRadius = '0 0 8px 8px'
-                    fwDiv.style.fontFamily = "'Courier New', monospace"
-                    element.appendChild(fwDiv)
+                const isUpToDate = up_to_date_devices[parseInt(relayId)]
+                let statusClass
+                if (!isOnline) {
+                    statusClass = 'status-indicator status-offline' // red
+                } else if (isUpToDate) {
+                    statusClass = 'status-indicator status-online' // green
+                } else {
+                    statusClass = 'status-indicator status-outdated' // orange/yellow
                 }
-                fwDiv.textContent = checksum
-            } else if (fwDiv) {
-                fwDiv.remove()
+                indicator.className = statusClass
             }
         }
     }

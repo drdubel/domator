@@ -584,6 +584,12 @@ body {
     box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
 }
 
+.status-outdated {
+    background-color: #f59e0b;
+    /* Orange */
+    box-shadow: 0 0 8px rgba(245, 158, 11, 0.6);
+}
+
 .status-offline {
     background-color: #ef4444;
     /* Red */

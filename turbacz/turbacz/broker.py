@@ -41,7 +41,7 @@ async def periodic_check_devices(interval: int = 15):
                 "type": "online_status",
                 "online_relays": list(state_manager._online_relays.keys()),
                 "online_switches": list(state_manager._online_switches.keys()),
-                "firmware_versions": state_manager._firmware_versions,
+                "up_to_date_devices": state_manager._up_to_date_devices,
             },
             "/rcm/ws/",
         )

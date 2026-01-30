@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import os
@@ -219,6 +220,9 @@ async def upload_firmware(
         with open(save_path, "wb") as buffer:
             buffer.write(contents)
 
+        hashlib_md5 = hashlib.md5(contents).hexdigest()
+        state_manager.set_up_to_date_firmware_version(device, hashlib_md5)
+
         logger.info(f"Successfully saved {len(contents)} bytes to {save_path}")
         return JSONResponse({"status": "ok", "device": device, "size": len(contents)})
 
@@ -380,7 +384,7 @@ async def websocket_rcm(websocket: WebSocket):
             "type": "online_status",
             "online_relays": list(state_manager._online_relays.keys()),
             "online_switches": list(state_manager._online_switches.keys()),
-            "firmware_versions": state_manager._firmware_versions,
+            "up_to_date_devices": state_manager._up_to_date_devices,
         },
         websocket,
     )

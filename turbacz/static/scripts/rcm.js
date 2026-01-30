@@ -147,19 +147,21 @@ function updateZoomDisplay() {
     }
 }
 
-function scheduleTransformUpdate() {
-    if (!transformPending) {
-        transformPending = true
-        requestAnimationFrame(() => {
-            applyCanvasTransform()
-            transformPending = false
-        })
-    }
-}
-
 function applyVisualTransform() {
     applyCanvasTransform()
     updateZoomDisplay()
+}
+
+function suspendJsPlumb() {
+    if (jsPlumbInstance) {
+        jsPlumbInstance.setSuspendDrawing(true)
+    }
+}
+
+function resumeJsPlumb() {
+    if (jsPlumbInstance) {
+        jsPlumbInstance.setSuspendDrawing(false, true) // second param = repaint immediately
+    }
 }
 
 // ------------------- JSPLUMB SYNC -------------------
@@ -220,18 +222,19 @@ function initPanning() {
         startX = e.clientX - panX
         startY = e.clientY - panY
         wrapper.classList.add('grabbing')
+        suspendJsPlumb()
     })
     document.addEventListener('mousemove', e => {
         if (!isPanning) return
         panX = e.clientX - startX
         panY = e.clientY - startY
-        scheduleTransformUpdate()
+        applyCanvasTransform()
     })
     document.addEventListener('mouseup', () => {
         if (!isPanning) return
         isPanning = false
         wrapper.classList.remove('grabbing')
-        debouncedSyncJsPlumb(500)
+        resumeJsPlumb()
         saveCanvasView()
     })
 
@@ -243,6 +246,7 @@ function initPanning() {
             startX = touch.clientX - panX
             startY = touch.clientY - panY
             wrapper.classList.add('grabbing')
+            suspendJsPlumb()
             e.preventDefault()
         }
         if (e.touches.length === 2) { // pinch start
@@ -260,7 +264,7 @@ function initPanning() {
             const touch = e.touches[0]
             panX = touch.clientX - startX
             panY = touch.clientY - startY
-            scheduleTransformUpdate()
+            applyCanvasTransform()
             e.preventDefault()
         }
         if (isPinching && e.touches.length === 2) {
@@ -283,7 +287,7 @@ function initPanning() {
         if (isPanning) {
             isPanning = false
             wrapper.classList.remove('grabbing')
-            debouncedSyncJsPlumb(500)
+            resumeJsPlumb()
             saveCanvasView()
         }
         if (isPinching) {
@@ -295,15 +299,34 @@ function initPanning() {
     })
 
     // ----------------- MOUSE WHEEL ZOOM -----------------
+    let wheelTimeout = null
     const wheelHandler = e => {
+        if (!wheelTimeout) suspendJsPlumb()
+        clearTimeout(wheelTimeout)
+
         const rect = wrapper.getBoundingClientRect()
         const centerX = e.clientX - rect.left
         const centerY = e.clientY - rect.top
         const factor = e.deltaY < 0 ? 1.1 : 0.9
-        zoomAtPoint(factor, centerX, centerY, false)
+
+        const prevScale = zoomLevel
+        zoomLevel *= factor
+        zoomLevel = Math.min(Math.max(zoomLevel, 0.2), 3)
+        panX = centerX - (centerX - panX) * (zoomLevel / prevScale)
+        panY = centerY - (centerY - panY) * (zoomLevel / prevScale)
+
+        applyCanvasTransform()
+        updateZoomDisplay()
+
+        wheelTimeout = setTimeout(() => {
+            resumeJsPlumb()
+            saveCanvasView()
+            wheelTimeout = null
+        }, 200)
+
         e.preventDefault()
     }
-    wrapper.addEventListener('wheel', throttle(wheelHandler, 50), { passive: false })
+    wrapper.addEventListener('wheel', wheelHandler, { passive: false })
 
     // ----------------- INITIAL VIEW -----------------
     applyVisualTransform()

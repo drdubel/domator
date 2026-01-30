@@ -230,477 +230,487 @@ function generateCytoscapeElements() {
                             buttonId: buttonId,
                             relayId: relayId,
                             outputId: outputId
+                        }
+                    });
+                }
+            }
+        }
+    }
+
+    return elements;
+}
+
 // Load configuration from API
 async function loadConfiguration() {
-                        showLoading();
+    showLoading();
 
     try {
-                            const [relaysData, outputsData, switchesData, connectionsData] = await Promise.all([
-                                fetchAPI('/lights/get_relays'),
-                                fetchAPI('/lights/get_outputs'),
-                                fetchAPI('/lights/get_switches'),
-                                fetchAPI('/lights/get_connections')
-                            ]);
+        const [relaysData, outputsData, switchesData, connectionsData] = await Promise.all([
+            fetchAPI('/lights/get_relays'),
+            fetchAPI('/lights/get_outputs'),
+            fetchAPI('/lights/get_switches'),
+            fetchAPI('/lights/get_connections')
+        ]);
 
-                            if(relaysData) relays = relaysData;
-                            if(switchesData) switches = switchesData;
-                            if(connectionsData) connections = connectionsData;
+        if (relaysData) relays = relaysData;
+        if (switchesData) switches = switchesData;
+        if (connectionsData) connections = connectionsData;
 
-                            // Merge outputs into relays
-                            if(outputsData && relaysData) {
-                        for (const [relayId, outputs] of Object.entries(outputsData)) {
-                            if (relays[relayId]) {
-                                relays[relayId].outputs = outputs;
-                            }
-                        }
-                    }
-
-                    console.log('Loaded:', { switches, relays, connections });
-
-                    // Rebuild Cytoscape graph
-                    if (cy) {
-                        cy.destroy();
-                    }
-                    initCytoscape('cy-container');
-
-                } catch (error) {
-                    console.error('Error loading configuration:', error);
-                }
-
-                hideLoading();
-            }
-
-            function showLoading() {
-                const loading = document.getElementById('loading');
-                if (loading) loading.classList.add('active');
-            }
-
-            function hideLoading() {
-                const loading = document.getElementById('loading');
-                if (loading) loading.classList.remove('active');
-            }
-
-            function updateOnlineStatus() {
-                if (!cy) return;
-
-                // Update switch status colors
-                cy.nodes('[type="switch"]').forEach(node => {
-                    const switchId = parseInt(node.data('deviceId'));
-                    const isOnline = online_switches.has(switchId);
-                    const isUpToDate = up_to_date_devices[switchId];
-
-                    let statusColor = '#ef4444'; // red offline
-                    if (isOnline) {
-                        statusColor = isUpToDate ? '#10b981' : '#f59e0b'; // green or orange
-                    }
-
-                    node.data('statusColor', statusColor);
-                });
-
-                // Update relay status colors
-                cy.nodes('[type="relay"]').forEach(node => {
-                    const relayId = parseInt(node.data('deviceId'));
-                    const isOnline = online_relays.has(relayId);
-                    const isUpToDate = up_to_date_devices[relayId];
-
-                    let statusColor = '#ef4444'; // red offline
-                    if (isOnline) {
-                        statusColor = isUpToDate ? '#10b981' : '#f59e0b'; // green or orange
-                    }
-
-                    node.data('statusColor', statusColor);
-                });
-            }
-
-            function updateLightUI(relay_id, output_id, state) {
-                if (!cy) return;
-
-                const outputNode = cy.getElementById(`relay-${relay_id}-output-${output_id}`);
-                if (outputNode.length) {
-                    outputNode.data('lightState', state);
+        // Merge outputs into relays
+        if (outputsData && relaysData) {
+            for (const [relayId, outputs] of Object.entries(outputsData)) {
+                if (relays[relayId]) {
+                    relays[relayId].outputs = outputs;
                 }
             }
+        }
 
-            function highlightButton(switchId, buttonId) {
-                // TODO: Implement button highlighting
-                console.log('Highlight button:', switchId, buttonId);
-            }
+        console.log('Loaded:', { switches, relays, connections });
 
-            function clearButtonHighlight(switchId, buttonId) {
-                // TODO: Implement clear button highlight
-                console.log('Clear highlight:', switchId, buttonId);
-            }
+        // Rebuild Cytoscape graph
+        if (cy) {
+            cy.destroy();
+        }
+        initCytoscape('cy-container');
 
-            // Toolbar functions
-            async function addSwitch() {
-                const switchId = parseInt(document.getElementById('new-switch-id').value);
-                const switchName = document.getElementById('new-switch-name').value;
-                const buttonCount = parseInt(document.getElementById('new-switch-buttons').value);
+    } catch (error) {
+        console.error('Error loading configuration:', error);
+    }
 
-                if (!switchId || !switchName || !buttonCount) {
-                    alert('Please fill all fields');
-                    return;
+    hideLoading();
+}
+
+function showLoading() {
+    const loading = document.getElementById('loading');
+    if (loading) loading.classList.add('active');
+}
+
+function hideLoading() {
+    const loading = document.getElementById('loading');
+    if (loading) loading.classList.remove('active');
+}
+
+function updateOnlineStatus() {
+    if (!cy) return;
+
+    // Update switch status colors
+    cy.nodes('[type="switch"]').forEach(node => {
+        const switchId = parseInt(node.data('deviceId'));
+        const isOnline = online_switches.has(switchId);
+        const isUpToDate = up_to_date_devices[switchId];
+
+        let statusColor = '#ef4444'; // red offline
+        if (isOnline) {
+            statusColor = isUpToDate ? '#10b981' : '#f59e0b'; // green or orange
+        }
+
+        node.data('statusColor', statusColor);
+    });
+
+    // Update relay status colors
+    cy.nodes('[type="relay"]').forEach(node => {
+        const relayId = parseInt(node.data('deviceId'));
+        const isOnline = online_relays.has(relayId);
+        const isUpToDate = up_to_date_devices[relayId];
+
+        let statusColor = '#ef4444'; // red offline
+        if (isOnline) {
+            statusColor = isUpToDate ? '#10b981' : '#f59e0b'; // green or orange
+        }
+
+        node.data('statusColor', statusColor);
+    });
+}
+
+function updateLightUI(relay_id, output_id, state) {
+    if (!cy) return;
+
+    const outputNode = cy.getElementById(`relay-${relay_id}-output-${output_id}`);
+    if (outputNode.length) {
+        outputNode.data('lightState', state);
+    }
+}
+
+function highlightButton(switchId, buttonId) {
+    // TODO: Implement button highlighting
+    console.log('Highlight button:', switchId, buttonId);
+}
+
+function clearButtonHighlight(switchId, buttonId) {
+    // TODO: Implement clear button highlight
+    console.log('Clear highlight:', switchId, buttonId);
+}
+
+// Toolbar functions
+async function addSwitch() {
+    const switchId = parseInt(document.getElementById('new-switch-id').value);
+    const switchName = document.getElementById('new-switch-name').value;
+    const buttonCount = parseInt(document.getElementById('new-switch-buttons').value);
+
+    if (!switchId || !switchName || !buttonCount) {
+        alert('Please fill all fields');
+        return;
+    }
+
+    const result = await postForm('/lights/add_switch', {
+        switch_id: switchId,
+        switch_name: switchName,
+        button_count: buttonCount
+    });
+
+    if (result) {
+        closeModal('addSwitchModal');
+    }
+}
+
+async function addRelay() {
+    const relayId = parseInt(document.getElementById('new-relay-id').value);
+    const relayName = document.getElementById('new-relay-name').value;
+
+    if (!relayId || !relayName) {
+        alert('Please fill all fields');
+        return;
+    }
+
+    const result = await postForm('/lights/add_relay', {
+        relay_id: relayId,
+        relay_name: relayName
+    });
+
+    if (result) {
+        closeModal('addRelayModal');
+    }
+}
+
+function showAddSwitchModal() {
+    document.getElementById('addSwitchModal').classList.add('active');
+}
+
+function showAddRelayModal() {
+    document.getElementById('addRelayModal').classList.add('active');
+}
+
+function closeModal(modalId) {
+    document.getElementById(modalId).classList.remove('active');
+}
+
+function updateAllSwitches() {
+    if (!wsManager.isConnected()) {
+        alert('Not connected to server');
+        return;
+    }
+    wsManager.send(JSON.stringify({ type: 'update_all_switches' }));
+}
+
+function updateAllRelays() {
+    if (!wsManager.isConnected()) {
+        alert('Not connected to server');
+        return;
+    }
+    wsManager.send(JSON.stringify({ type: 'update_all_relays' }));
+}
+
+function updateRoot() {
+    if (!wsManager.isConnected()) {
+        alert('Not connected to server');
+        return;
+    }
+    wsManager.send(JSON.stringify({ type: 'update_root' }));
+}
+
+// Initialize Cytoscape
+function initCytoscape(containerId) {
+    cy = cytoscape({
+        container: document.getElementById(containerId),
+
+        elements: generateCytoscapeElements(),
+
+        style: [
+            // Switch container nodes
+            {
+                selector: '.switch-container',
+                style: {
+                    'width': 280,
+                    'height': 'data(height)',
+                    'shape': 'roundrectangle',
+                    'background-color': '#1e293b',
+                    'border-width': 4,
+                    'border-color': 'data(color)',
+                    'label': 'data(label)',
+                    'text-valign': 'top',
+                    'text-halign': 'center',
+                    'text-margin-y': -130,
+                    'font-size': 22,
+                    'font-weight': 800,
+                    'color': '#f1f5f9',
+                    'text-wrap': 'wrap',
+                    'text-max-width': 250
                 }
+            },
 
-                const result = await postForm('/lights/add_switch', {
-                    switch_id: switchId,
-                    switch_name: switchName,
-                    button_count: buttonCount
-                });
-
-                if (result) {
-                    closeModal('addSwitchModal');
+            // Relay container nodes
+            {
+                selector: '.relay-container',
+                style: {
+                    'width': 280,
+                    'height': 'data(height)',
+                    'shape': 'roundrectangle',
+                    'background-color': '#1e293b',
+                    'border-width': 4,
+                    'border-color': '#f59e0b',
+                    'label': 'data(label)',
+                    'text-valign': 'top',
+                    'text-halign': 'center',
+                    'text-margin-y': -130,
+                    'font-size': 22,
+                    'font-weight': 800,
+                    'color': '#f1f5f9',
+                    'text-wrap': 'wrap',
+                    'text-max-width': 250
                 }
-            }
+            },
 
-            async function addRelay() {
-                const relayId = parseInt(document.getElementById('new-relay-id').value);
-                const relayName = document.getElementById('new-relay-name').value;
-
-                if (!relayId || !relayName) {
-                    alert('Please fill all fields');
-                    return;
+            // Button nodes (invisible, only for connections)
+            {
+                selector: 'node[type="button"]',
+                style: {
+                    'width': 10,
+                    'height': 10,
+                    'background-color': '#6366f1',
+                    'border-width': 2,
+                    'border-color': '#4f46e5',
+                    'label': ''
                 }
+            },
 
-                const result = await postForm('/lights/add_relay', {
-                    relay_id: relayId,
-                    relay_name: relayName
-                });
-
-                if (result) {
-                    closeModal('addRelayModal');
+            // Output nodes (invisible, only for connections)
+            {
+                selector: 'node[type="output"]',
+                style: {
+                    'width': 10,
+                    'height': 10,
+                    'background-color': '#f59e0b',
+                    'border-width': 2,
+                    'border-color': '#d97706',
+                    'label': ''
                 }
-            }
+            },
 
-            function showAddSwitchModal() {
-                document.getElementById('addSwitchModal').classList.add('active');
-            }
-
-            function showAddRelayModal() {
-                document.getElementById('addRelayModal').classList.add('active');
-            }
-
-            function closeModal(modalId) {
-                document.getElementById(modalId).classList.remove('active');
-            }
-
-            function updateAllSwitches() {
-                if (!wsManager.isConnected()) {
-                    alert('Not connected to server');
-                    return;
+            // Connection edges
+            {
+                selector: 'edge',
+                style: {
+                    'width': 3,
+                    'line-color': 'data(color)',
+                    'target-arrow-color': 'data(color)',
+                    'curve-style': 'bezier',
+                    'control-point-step-size': 40
                 }
-                wsManager.send(JSON.stringify({ type: 'update_all_switches' }));
-            }
+            },
 
-            function updateAllRelays() {
-                if (!wsManager.isConnected()) {
-                    alert('Not connected to server');
-                    return;
-                }
-                wsManager.send(JSON.stringify({ type: 'update_all_relays' }));
-            }
-
-            function updateRoot() {
-                if (!wsManager.isConnected()) {
-                    alert('Not connected to server');
-                    return;
-                }
-                wsManager.send(JSON.stringify({ type: 'update_root' }));
-            }
-
-            // Initialize Cytoscape
-            function initCytoscape(containerId) {
-                cy = cytoscape({
-                    container: document.getElementById(containerId),
-
-                    elements: generateCytoscapeElements(),
-
-                    style: [
-                        // Switch container nodes
-                        {
-                            selector: '.switch-container',
-                            style: {
-                                'width': 280,
-                                'height': 'data(height)',
-                                'shape': 'roundrectangle',
-                                'background-color': '#1e293b',
-                                'border-width': 4,
-                                'border-color': 'data(color)',
-                                'label': 'data(label)',
-                                'text-valign': 'top',
-                                'text-halign': 'center',
-                                'text-margin-y': -130,
-                                'font-size': 22,
-                                'font-weight': 800,
-                                'color': '#f1f5f9',
-                                'text-wrap': 'wrap',
-                                'text-max-width': 250
-                            }
-                        },
-
-                        // Relay container nodes
-                        {
-                            selector: '.relay-container',
-                            style: {
-                                'width': 280,
-                                'height': 'data(height)',
-                                'shape': 'roundrectangle',
-                                'background-color': '#1e293b',
-                                'border-width': 4,
-                                'border-color': '#f59e0b',
-                                'label': 'data(label)',
-                                'text-valign': 'top',
-                                'text-halign': 'center',
-                                'text-margin-y': -130,
-                                'font-size': 22,
-                                'font-weight': 800,
-                                'color': '#f1f5f9',
-                                'text-wrap': 'wrap',
-                                'text-max-width': 250
-                            }
-                        },
-
-                        // Button nodes (invisible, only for connections)
-                        {
-                            selector: 'node[type="button"]',
-                            style: {
-                                'width': 10,
-                                'height': 10,
-                                'background-color': '#6366f1',
-                                'border-width': 2,
-                                'border-color': '#4f46e5',
-                                'label': ''
-                            }
-                        },
-
-                        // Output nodes (invisible, only for connections)
-                        {
-                            selector: 'node[type="output"]',
-                            style: {
-                                'width': 10,
-                                'height': 10,
-                                'background-color': '#f59e0b',
-                                'border-width': 2,
-                                'border-color': '#d97706',
-                                'label': ''
-                            }
-                        },
-
-                        // Connection edges
-                        {
-                            selector: 'edge',
-                            style: {
-                                'width': 3,
-                                'line-color': 'data(color)',
-                                'target-arrow-color': 'data(color)',
-                                'curve-style': 'bezier',
-                                'control-point-step-size': 40
-                            }
-                        },
-
-                        // Edge hover effect
-                        {
-                            selector: 'edge:active',
-                            style: {
-                                'width': 5,
-                                'line-color': '#818cf8'
-                            }
-                        }
-                    ],
-
-                    layout: {
-                        name: 'preset' // Use predefined positions
-                    },
-
-                    // Performance optimizations
-                    renderer: {
-                        name: 'canvas'
-                    },
-
-                    wheelSensitivity: 0.3,
-
-                    minZoom: 0.2,
-                    maxZoom: 3,
-
-                    // Better rendering performance
-                    pixelRatio: 'auto',
-                    motionBlur: false,
-                    textureOnViewport: true,
-                    hideEdgesOnViewport: false,
-                    hideLabelsOnViewport: false
-                });
-
-
-                // Setup hover effects
-                setupHoverEffects();
-
-                console.log('Cytoscape initialized with', cy.nodes().length, 'nodes and', cy.edges().length, 'edges');
-            }
-
-            // Setup pan and zoom with smooth transitions
-            function setupPanZoom() {
-                // Mouse wheel zoom
-                cy.on('wheel', function (event) {
-                    event.preventDefault();
-                });
-
-                // Double-click to fit
-                cy.on('dblclick', function (event) {
-                    if (event.target === cy) {
-                        cy.animate({
-                            fit: {
-                                eles: cy.elements(),
-                                padding: 50
-                            },
-                            duration: 300,
-                            easing: 'ease-out'
-                        });
-                    }
-                });
-
-                // Save viewport state on pan/zoom
-                cy.on('viewport', debounce(function () {
-                    const zoom = cy.zoom();
-                    const pan = cy.pan();
-                    localStorage.setItem('rcm_cytoscape_viewport', JSON.stringify({
-                        zoom: zoom,
-                        pan: pan
-                    }));
-                }, 300));
-
-                // Restore viewport state
-                const savedViewport = localStorage.getItem('rcm_cytoscape_viewport');
-                if (savedViewport) {
-                    try {
-                        const viewport = JSON.parse(savedViewport);
-                        cy.viewport({
-                            zoom: viewport.zoom,
-                            pan: viewport.pan
-                        });
-                    } catch (e) {
-                        // Default view
-                        cy.fit(cy.elements(), 50);
-                    }
-                } else {
-                    // Initial fit
-                    cy.fit(cy.elements(), 50);
+            // Edge hover effect
+            {
+                selector: 'edge:active',
+                style: {
+                    'width': 5,
+                    'line-color': '#818cf8'
                 }
             }
+        ],
 
-            // Setup hover effects for edges
-            function setupHoverEffects() {
-                let hoveredEdge = null;
+        layout: {
+            name: 'preset' // Use predefined positions
+        },
 
-                cy.on('mouseover', 'edge', function (event) {
-                    const edge = event.target;
-                    hoveredEdge = edge;
+        // Performance optimizations
+        renderer: {
+            name: 'canvas'
+        },
 
-                    const currentColor = edge.data('color');
-                    // Brighten color
-                    const brightColor = brightenColor(currentColor, 60);
+        wheelSensitivity: 0.3,
 
-                    edge.style({
-                        'width': 5,
-                        'line-color': brightColor
-                    });
-                });
+        minZoom: 0.2,
+        maxZoom: 3,
 
-                cy.on('mouseout', 'edge', function (event) {
-                    const edge = event.target;
-                    if (edge === hoveredEdge) {
-                        hoveredEdge = null;
-                    }
+        // Better rendering performance
+        pixelRatio: 'auto',
+        motionBlur: false,
+        textureOnViewport: true,
+        hideEdgesOnViewport: false,
+        hideLabelsOnViewport: false
+    });
 
-                    edge.style({
-                        'width': 3,
-                        'line-color': edge.data('color')
-                    });
-                });
 
-                // Container node hover
-                cy.on('mouseover', 'node[type="switch"], node[type="relay"]', function (event) {
-                    event.target.style({
-                        'border-width': 6
-                    });
-                });
+    // Setup hover effects
+    setupHoverEffects();
 
-                cy.on('mouseout', 'node[type="switch"], node[type="relay"]', function (event) {
-                    event.target.style({
-                        'border-width': 4
-                    });
-                });
-            }
+    console.log('Cytoscape initialized with', cy.nodes().length, 'nodes and', cy.edges().length, 'edges');
+}
 
-            // Utility: Brighten hex color
-            function brightenColor(hexColor, amount) {
-                if (!hexColor.startsWith('#')) return hexColor;
+// Setup pan and zoom with smooth transitions
+function setupPanZoom() {
+    // Mouse wheel zoom
+    cy.on('wheel', function (event) {
+        event.preventDefault();
+    });
 
-                const r = parseInt(hexColor.slice(1, 3), 16);
-                const g = parseInt(hexColor.slice(3, 5), 16);
-                const b = parseInt(hexColor.slice(5, 7), 16);
-
-                const hr = Math.min(255, r + amount);
-                const hg = Math.min(255, g + amount);
-                const hb = Math.min(255, b + amount);
-
-                return `rgb(${hr}, ${hg}, ${hb})`;
-            }
-
-            // Utility: Debounce function
-            function debounce(func, delay) {
-                let timeoutId;
-                return function (...args) {
-                    clearTimeout(timeoutId);
-                    timeoutId = setTimeout(() => func.apply(this, args), delay);
-                };
-            }
-
-            // Zoom controls
-            function zoomIn() {
-                cy.animate({
-                    zoom: cy.zoom() * 1.2,
-                    duration: 200
-                });
-            }
-
-            function zoomOut() {
-                cy.animate({
-                    zoom: cy.zoom() * 0.8,
-                    duration: 200
-                });
-            }
-
-            function resetZoom() {
-                cy.animate({
-                    fit: {
-                        eles: cy.elements(),
-                        padding: 50
-                    },
-                    duration: 300
-                });
-            }
-
-            // Export for global access
-            window.CytoscapeRCM = {
-                init: initCytoscape,
-                loadConfiguration: loadConfiguration,
-                zoomIn: zoomIn,
-                zoomOut: zoomOut,
-                resetZoom: resetZoom,
-                addSwitch: addSwitch,
-                addRelay: addRelay,
-                showAddSwitchModal: showAddSwitchModal,
-                showAddRelayModal: showAddRelayModal,
-                closeModal: closeModal,
-                updateAllSwitches: updateAllSwitches,
-                updateAllRelays: updateAllRelays,
-                updateRoot: updateRoot,
-                getInstance: () => cy
-            };
-
-            // Auto-initialize when DOM is ready
-            document.addEventListener('DOMContentLoaded', function () {
-                console.log('Initializing Cytoscape RCM...');
-                wsManager.connect();
-                loadConfiguration();
+    // Double-click to fit
+    cy.on('dblclick', function (event) {
+        if (event.target === cy) {
+            cy.animate({
+                fit: {
+                    eles: cy.elements(),
+                    padding: 50
+                },
+                duration: 300,
+                easing: 'ease-out'
             });
+        }
+    });
+
+    // Save viewport state on pan/zoom
+    cy.on('viewport', debounce(function () {
+        const zoom = cy.zoom();
+        const pan = cy.pan();
+        localStorage.setItem('rcm_cytoscape_viewport', JSON.stringify({
+            zoom: zoom,
+            pan: pan
+        }));
+    }, 300));
+
+    // Restore viewport state
+    const savedViewport = localStorage.getItem('rcm_cytoscape_viewport');
+    if (savedViewport) {
+        try {
+            const viewport = JSON.parse(savedViewport);
+            cy.viewport({
+                zoom: viewport.zoom,
+                pan: viewport.pan
+            });
+        } catch (e) {
+            // Default view
+            cy.fit(cy.elements(), 50);
+        }
+    } else {
+        // Initial fit
+        cy.fit(cy.elements(), 50);
+    }
+}
+
+// Setup hover effects for edges
+function setupHoverEffects() {
+    let hoveredEdge = null;
+
+    cy.on('mouseover', 'edge', function (event) {
+        const edge = event.target;
+        hoveredEdge = edge;
+
+        const currentColor = edge.data('color');
+        // Brighten color
+        const brightColor = brightenColor(currentColor, 60);
+
+        edge.style({
+            'width': 5,
+            'line-color': brightColor
+        });
+    });
+
+    cy.on('mouseout', 'edge', function (event) {
+        const edge = event.target;
+        if (edge === hoveredEdge) {
+            hoveredEdge = null;
+        }
+
+        edge.style({
+            'width': 3,
+            'line-color': edge.data('color')
+        });
+    });
+
+    // Container node hover
+    cy.on('mouseover', 'node[type="switch"], node[type="relay"]', function (event) {
+        event.target.style({
+            'border-width': 6
+        });
+    });
+
+    cy.on('mouseout', 'node[type="switch"], node[type="relay"]', function (event) {
+        event.target.style({
+            'border-width': 4
+        });
+    });
+}
+
+// Utility: Brighten hex color
+function brightenColor(hexColor, amount) {
+    if (!hexColor.startsWith('#')) return hexColor;
+
+    const r = parseInt(hexColor.slice(1, 3), 16);
+    const g = parseInt(hexColor.slice(3, 5), 16);
+    const b = parseInt(hexColor.slice(5, 7), 16);
+
+    const hr = Math.min(255, r + amount);
+    const hg = Math.min(255, g + amount);
+    const hb = Math.min(255, b + amount);
+
+    return `rgb(${hr}, ${hg}, ${hb})`;
+}
+
+// Utility: Debounce function
+function debounce(func, delay) {
+    let timeoutId;
+    return function (...args) {
+        clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => func.apply(this, args), delay);
+    };
+}
+
+// Zoom controls
+function zoomIn() {
+    cy.animate({
+        zoom: cy.zoom() * 1.2,
+        duration: 200
+    });
+}
+
+function zoomOut() {
+    cy.animate({
+        zoom: cy.zoom() * 0.8,
+        duration: 200
+    });
+}
+
+function resetZoom() {
+    cy.animate({
+        fit: {
+            eles: cy.elements(),
+            padding: 50
+        },
+        duration: 300
+    });
+}
+
+// Export for global access
+window.CytoscapeRCM = {
+    init: initCytoscape,
+    loadConfiguration: loadConfiguration,
+    zoomIn: zoomIn,
+    zoomOut: zoomOut,
+    resetZoom: resetZoom,
+    addSwitch: addSwitch,
+    addRelay: addRelay,
+    showAddSwitchModal: showAddSwitchModal,
+    showAddRelayModal: showAddRelayModal,
+    closeModal: closeModal,
+    updateAllSwitches: updateAllSwitches,
+    updateAllRelays: updateAllRelays,
+    updateRoot: updateRoot,
+    getInstance: () => cy
+};
+
+// Auto-initialize when DOM is ready
+document.addEventListener('DOMContentLoaded', function () {
+    console.log('Initializing Cytoscape RCM...');
+    wsManager.connect();
+    loadConfiguration();
+});

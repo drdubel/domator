@@ -336,6 +336,7 @@ body {
     transition: box-shadow 0.2s, border-color 0.2s;
     border: 1px solid var(--border-color);
     will-change: transform;
+    z-index: 100;
 }
 
 .device-box:hover {
@@ -350,7 +351,7 @@ body {
 
 .switch-box {
     border-left: 4px solid var(--primary-color);
-    z-index: 10010;
+    z-index: 100;
 }
 
 .switch-box.highlighted {
@@ -773,16 +774,21 @@ body {
     }
 }
 
-/* jsPlumb styles - CONNECTIONS ON TOP */
+/* jsPlumb styles - Layered properly */
+/* Connection lines below device cards */
 ._jsPlumb_connector,
+.jtk-connector {
+    z-index: 50 !important;
+}
+
+/* Connection endpoints above device cards for editing */
 ._jsPlumb_endpoint,
-.jtk-connector,
 .jtk-endpoint {
-    z-index: 10005 !important;
+    z-index: 200 !important;
 }
 
 ._jsPlumb_overlay {
-    z-index: 10006 !important;
+    z-index: 210 !important;
 }
 
 ._jsPlumb_endpoint:hover {

@@ -220,7 +220,7 @@ async def handle_root_state(payload_str):
 
     state_manager.mark_relay_online(data["deviceId"], time())
     state_manager.mark_switch_online(data["deviceId"], time())
-    state_manager.set_firmware_version(data["deviceId"], data["firmware"])
+    state_manager.set_firmware_version(data["deviceId"], data["type"], data["firmware"])
 
     data["name"] = data["name"].replace(" ", "\\ ")
 

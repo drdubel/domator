@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RCM - Cytoscape Test</title>
+    <title>RCM - Cytoscape</title>
 
     <!-- Cytoscape.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
@@ -46,6 +46,7 @@
         .controls {
             display: flex;
             gap: 0.5rem;
+            align-items: center;
         }
 
         .btn {
@@ -64,10 +65,129 @@
             box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
         }
 
+        .btn-green {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        }
+
+        .btn-green:hover {
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+        }
+
         #cy-container {
             width: 100%;
             height: calc(100vh - 90px);
             background: #0f172a;
+            position: relative;
+        }
+
+        /* Loading Overlay */
+        #loading {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(15, 23, 42, 0.95);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 10000;
+        }
+
+        #loading.active {
+            display: flex;
+        }
+
+        .spinner {
+            border: 4px solid rgba(99, 102, 241, 0.1);
+            border-top: 4px solid #6366f1;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            justify-content: center;
+            align-items: center;
+            z-index: 20000;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: #1e293b;
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            min-width: 400px;
+        }
+
+        .modal-content h2 {
+            margin-bottom: 1.5rem;
+            color: #f1f5f9;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #cbd5e1;
+            font-weight: 500;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 0.75rem;
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            color: #f1f5f9;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #6366f1;
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: flex-end;
+            margin-top: 1.5rem;
+        }
+
+        .btn-cancel {
+            background: #475569;
+        }
+
+        .btn-cancel:hover {
+            background: #64748b;
+            box-shadow: none;
         }
 
         .zoom-info {
@@ -85,36 +205,102 @@
 
 <body>
     <div class="header">
-        <h1>⚡ RCM - Cytoscape.js (Stage 1)</h1>
+        <h1>⚡ RCM - Cytoscape.js</h1>
         <div class="controls">
-            <button class="btn" onclick="CytoscapeRCM.zoomIn()">Zoom In</button>
-            <button class="btn" onclick="CytoscapeRCM.zoomOut()">Zoom Out</button>
-            <button class="btn" onclick="CytoscapeRCM.resetZoom()">Reset Zoom</button>
+            <button class="btn" onclick="CytoscapeRCM.showAddSwitchModal()">Add Switch</button>
+            <button class="btn" onclick="CytoscapeRCM.showAddRelayModal()">Add Relay</button>
+            <button class="btn btn-green" onclick="CytoscapeRCM.updateAllSwitches()">Update Switches</button>
+            <button class="btn btn-green" onclick="CytoscapeRCM.updateAllRelays()">Update Relays</button>
+            <button class="btn btn-green" onclick="CytoscapeRCM.updateRoot()">Update Root</button>
+            <button class="btn" onclick="CytoscapeRCM.zoomIn()">+</button>
+            <button class="btn" onclick="CytoscapeRCM.zoomOut()">-</button>
+            <button class="btn" onclick="CytoscapeRCM.resetZoom()">Reset</button>
         </div>
     </div>
 
-    <div id="cy-container"></div>
+    <div id="cy-container">
+        <div id="loading">
+            <div class="spinner"></div>
+        </div>
+    </div>
 
     <div class="zoom-info" id="zoom-info">Zoom: 100%</div>
 
-    <script src="/static/scripts/rcm-cytoscape.js"></script>
-    <script>
-        // Initialize Cytoscape on load
-        window.addEventListener('load', function () {
-            CytoscapeRCM.init('cy-container');
+    <!-- Add Switch Modal -->
+    <div id="addSwitchModal" class="modal">
+        <div class="modal-content">
+            <h2>Add New Switch</h2>
+            <div class="form-group">
+                <label for="new-switch-id">Switch ID</label>
+                <input type="number" id="new-switch-id" placeholder="e.g., 1">
+            </div>
+            <div class="form-group">
+                <label for="new-switch-name">Switch Name</label>
+                <input type="text" id="new-switch-name" placeholder="e.g., Living Room">
+            </div>
+            <div class="form-group">
+                <label for="new-switch-buttons">Button Count</label>
+                <input type="number" id="new-switch-buttons" value="4" min="1" max="8">
+            </div>
+            <div class="modal-buttons">
+                <button class="btn btn-cancel" onclick="CytoscapeRCM.closeModal('addSwitchModal')">Cancel</button>
+                <button class="btn" onclick="CytoscapeRCM.addSwitch()">Add Switch</button>
+            </div>
+        </div>
+    </div>
 
-            // Update zoom info
+    <!-- Add Relay Modal -->
+    <div id="addRelayModal" class="modal">
+        <div class="modal-content">
+            <h2>Add New Relay</h2>
+            <div class="form-group">
+                <label for="new-relay-id">Relay ID</label>
+                <input type="number" id="new-relay-id" placeholder="e.g., 101">
+            </div>
+            <div class="form-group">
+                <label for="new-relay-name">Relay Name</label>
+                <input type="text" id="new-relay-name" placeholder="e.g., Living Room Relay">
+            </div>
+            <div class="modal-buttons">
+                <button class="btn btn-cancel" onclick="CytoscapeRCM.closeModal('addRelayModal')">Cancel</button>
+                <button class="btn" onclick="CytoscapeRCM.addRelay()">Add Relay</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/scripts/common.js"></script>
+    <script src="/static/scripts/rcm-cytoscape.js"></script>
+
+    <script>
+        // Update zoom info display
+        setInterval(() => {
             const cy = CytoscapeRCM.getInstance();
-            cy.on('viewport', function () {
+            if (cy) {
                 const zoom = Math.round(cy.zoom() * 100);
                 document.getElementById('zoom-info').textContent = `Zoom: ${zoom}%`;
-            });
-
-            // Initial zoom display
-            const initialZoom = Math.round(cy.zoom() * 100);
-            document.getElementById('zoom-info').textContent = `Zoom: ${initialZoom}%`;
-        });
+            }
+        }, 100);
     </script>
+</body>
+
+</html>
+<script>
+    // Initialize Cytoscape on load
+    window.addEventListener('load', function () {
+        CytoscapeRCM.init('cy-container');
+
+        // Update zoom info
+        const cy = CytoscapeRCM.getInstance();
+        cy.on('viewport', function () {
+            const zoom = Math.round(cy.zoom() * 100);
+            document.getElementById('zoom-info').textContent = `Zoom: ${zoom}%`;
+        });
+
+        // Initial zoom display
+        const initialZoom = Math.round(cy.zoom() * 100);
+        document.getElementById('zoom-info').textContent = `Zoom: ${initialZoom}%`;
+    });
+</script>
 </body>
 
 </html>

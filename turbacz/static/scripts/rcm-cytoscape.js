@@ -1,51 +1,103 @@
-// RCM Cytoscape.js Implementation - Stage 1
-// Parallel implementation for performance testing
+// RCM Cytoscape.js Implementation - Full Integration
+// Canvas-based rendering with real data and WebSocket support
 
 let cy = null;
+let switches = {};
+let relays = {};
+let connections = {};
+let online_relays = new Set();
+let online_switches = new Set();
+let up_to_date_devices = {};
+let lights = {};
+let highlightedDevice = null;
 
-// Mock data mirroring jsPlumb structure
-const mockSwitches = {
-    12345: { name: "Living Room", buttonCount: 4, x: 24800, y: 24800, color: '#6366f1' },
-    12346: { name: "Kitchen", buttonCount: 3, x: 25200, y: 24800, color: '#10b981' },
-    12347: { name: "Bedroom", buttonCount: 4, x: 24800, y: 25200, color: '#f59e0b' }
-};
+const API_BASE_URL = `https://${window.location.host}`;
 
-const mockRelays = {
-    54321: {
-        name: "Main Relay", x: 25600, y: 24800, outputs: {
-            'a': 'Light 1', 'b': 'Light 2', 'c': 'Light 3', 'd': 'Light 4',
-            'e': 'Light 5', 'f': 'Light 6', 'g': 'Light 7', 'h': 'Light 8'
-        }
-    },
-    54322: {
-        name: "Secondary", x: 25600, y: 25200, outputs: {
-            'a': 'Outlet 1', 'b': 'Outlet 2', 'c': 'Outlet 3', 'd': 'Outlet 4'
-        }
+// Initialize WebSocket manager
+var wsManager = new WebSocketManager('/rcm/ws/', function (event) {
+    var msg = JSON.parse(event.data);
+    console.log(msg);
+
+    if (msg.type == "update") {
+        loadConfiguration();
     }
-};
 
-const mockConnections = {
-    12345: {
-        'a': [{ relayId: 54321, outputId: 'a' }],
-        'b': [{ relayId: 54321, outputId: 'b' }],
-        'c': [{ relayId: 54321, outputId: 'c' }]
-    },
-    12346: {
-        'a': [{ relayId: 54321, outputId: 'd' }],
-        'b': [{ relayId: 54322, outputId: 'a' }]
-    },
-    12347: {
-        'a': [{ relayId: 54322, outputId: 'b' }],
-        'b': [{ relayId: 54322, outputId: 'c' }]
+    if (msg.type == "light_state") {
+        lights[`${msg.relay_id}-${msg.output_id}`] = msg.state;
+        updateLightUI(msg.relay_id, msg.output_id, msg.state);
     }
-};
+
+    if (msg.type == "online_status") {
+        online_relays = new Set(msg.online_relays);
+        online_switches = new Set(msg.online_switches);
+        up_to_date_devices = msg.up_to_date_devices || {};
+
+        console.log('Online relays:', online_relays);
+        console.log('Online switches:', online_switches);
+        console.log('Up to date devices:', up_to_date_devices);
+
+        updateOnlineStatus();
+    }
+
+    if (msg.type == "switch_state" && msg.switch_id && msg.button_id) {
+        highlightButton(msg.switch_id, msg.button_id);
+        setTimeout(() => {
+            clearButtonHighlight(msg.switch_id, msg.button_id);
+        }, 5000);
+    }
+});
+
+// Connect WebSocket
+wsManager.connect();
+wsManager.startConnectionCheck();
+
+// API Functions
+async function fetchAPI(endpoint) {
+    try {
+        const url = `${API_BASE_URL}${endpoint}`;
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        return await response.json();
+    } catch (error) {
+        console.error('Fetch error:', error);
+        return null;
+    }
+}
+
+async function postForm(endpoint, data) {
+    try {
+        const formData = new FormData();
+        Object.keys(data).forEach(key => formData.append(key, data[key]));
+
+        const url = `${API_BASE_URL}${endpoint}`;
+        const response = await fetch(url, {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        wsManager.send(JSON.stringify({ "type": "update" }));
+        return { success: true };
+    } catch (error) {
+        console.error('Post error:', error);
+        alert('Error: ' + error.message);
+        return null;
+    }
+}
 
 // Convert data to Cytoscape format
 function generateCytoscapeElements() {
     const elements = [];
 
     // Add switch nodes
-    for (const [switchId, switchData] of Object.entries(mockSwitches)) {
+    for (const [switchId, switchData] of Object.entries(switches)) {
+        const isOnline = online_switches.has(parseInt(switchId));
+        const isUpToDate = up_to_date_devices[parseInt(switchId)];
+        let statusColor = '#ef4444'; // red offline
+        if (isOnline) {
+            statusColor = isUpToDate ? '#10b981' : '#f59e0b'; // green or orange
+        }
+
         // Main switch container node
         elements.push({
             group: 'nodes',
@@ -54,7 +106,8 @@ function generateCytoscapeElements() {
                 label: switchData.name,
                 type: 'switch',
                 deviceId: switchId,
-                color: switchData.color
+                color: switchData.color || '#6366f1',
+                statusColor: statusColor
             },
             position: { x: switchData.x, y: switchData.y },
             classes: 'switch-container'
@@ -70,15 +123,23 @@ function generateCytoscapeElements() {
                     label: `Btn ${i + 1}`,
                     type: 'button',
                     parent: `switch-${switchId}`,
-                    buttonId: buttonId
+                    buttonId: buttonId,
+                    switchId: switchId
                 },
-                position: { x: switchData.x, y: switchData.y + 40 + (i * 30) }
+                position: { x: switchData.x, y: switchData.y + 60 + (i * 45) }
             });
         }
     }
 
     // Add relay nodes
-    for (const [relayId, relayData] of Object.entries(mockRelays)) {
+    for (const [relayId, relayData] of Object.entries(relays)) {
+        const isOnline = online_relays.has(parseInt(relayId));
+        const isUpToDate = up_to_date_devices[parseInt(relayId)];
+        let statusColor = '#ef4444'; // red offline
+        if (isOnline) {
+            statusColor = isUpToDate ? '#10b981' : '#f59e0b'; // green or orange
+        }
+
         // Main relay container node
         elements.push({
             group: 'nodes',
@@ -86,7 +147,8 @@ function generateCytoscapeElements() {
                 id: `relay-${relayId}`,
                 label: relayData.name,
                 type: 'relay',
-                deviceId: relayId
+                deviceId: relayId,
+                statusColor: statusColor
             },
             position: { x: relayData.x, y: relayData.y },
             classes: 'relay-container'
@@ -94,7 +156,8 @@ function generateCytoscapeElements() {
 
         // Output nodes (for connection endpoints)
         let outputIndex = 0;
-        for (const [outputId, outputName] of Object.entries(relayData.outputs)) {
+        for (const [outputId, outputName] of Object.entries(relayData.outputs || {})) {
+            const lightState = lights[`${relayId}-${outputId}`] || 0;
             elements.push({
                 group: 'nodes',
                 data: {
@@ -102,35 +165,211 @@ function generateCytoscapeElements() {
                     label: outputName,
                     type: 'output',
                     parent: `relay-${relayId}`,
-                    outputId: outputId
+                    outputId: outputId,
+                    relayId: relayId,
+                    lightState: lightState
                 },
-                position: { x: relayData.x, y: relayData.y + 40 + (outputIndex * 30) }
+                position: { x: relayData.x, y: relayData.y + 60 + (outputIndex * 45) }
             });
             outputIndex++;
         }
     }
 
     // Add connection edges
-    for (const [switchId, buttons] of Object.entries(mockConnections)) {
-        const switchData = mockSwitches[switchId];
+    for (const [switchId, buttons] of Object.entries(connections)) {
+        const switchData = switches[switchId];
         const connectionColor = switchData?.color || '#6366f1';
 
-        for (const [buttonId, connections] of Object.entries(buttons)) {
-            for (const conn of connections) {
-                elements.push({
-                    group: 'edges',
-                    data: {
-                        id: `edge-${switchId}-${buttonId}-${conn.relayId}-${conn.outputId}`,
-                        source: `switch-${switchId}-btn-${buttonId}`,
-                        target: `relay-${conn.relayId}-output-${conn.outputId}`,
-                        color: connectionColor
-                    }
-                });
+        for (const [buttonId, conns] of Object.entries(buttons)) {
+            if (Array.isArray(conns)) {
+                for (const conn of conns) {
+                    elements.push({
+                        group: 'edges',
+                        data: {
+                            id: `edge-${switchId}-${buttonId}-${conn.relayId}-${conn.outputId}`,
+                            source: `switch-${switchId}-btn-${buttonId}`,
+                            target: `relay-${conn.relayId}-output-${conn.outputId}`,
+                            color: connectionColor,
+                            switchId: switchId,
+                            buttonId: buttonId,
+                            relayId: conn.relayId,
+                            outputId: conn.outputId
+                        }
+                    });
+                }
             }
         }
     }
 
     return elements;
+}
+
+// Load configuration from API
+async function loadConfiguration() {
+    showLoading();
+
+    try {
+        const switchesData = await fetchAPI('/lights/switches');
+        const relaysData = await fetchAPI('/lights/relays');
+        const connectionsData = await fetchAPI('/lights/connections');
+        const lightsData = await fetchAPI('/lights/get_lights');
+
+        if (switchesData) switches = switchesData;
+        if (relaysData) relays = relaysData;
+        if (connectionsData) connections = connectionsData;
+        if (lightsData) lights = lightsData;
+
+        console.log('Loaded:', { switches, relays, connections, lights });
+
+        // Rebuild Cytoscape graph
+        if (cy) {
+            cy.destroy();
+        }
+        initCytoscape('cy-container');
+
+    } catch (error) {
+        console.error('Error loading configuration:', error);
+    }
+
+    hideLoading();
+}
+
+function showLoading() {
+    const loading = document.getElementById('loading');
+    if (loading) loading.classList.add('active');
+}
+
+function hideLoading() {
+    const loading = document.getElementById('loading');
+    if (loading) loading.classList.remove('active');
+}
+
+function updateOnlineStatus() {
+    if (!cy) return;
+
+    // Update switch status colors
+    cy.nodes('[type="switch"]').forEach(node => {
+        const switchId = parseInt(node.data('deviceId'));
+        const isOnline = online_switches.has(switchId);
+        const isUpToDate = up_to_date_devices[switchId];
+
+        let statusColor = '#ef4444'; // red offline
+        if (isOnline) {
+            statusColor = isUpToDate ? '#10b981' : '#f59e0b'; // green or orange
+        }
+
+        node.data('statusColor', statusColor);
+    });
+
+    // Update relay status colors
+    cy.nodes('[type="relay"]').forEach(node => {
+        const relayId = parseInt(node.data('deviceId'));
+        const isOnline = online_relays.has(relayId);
+        const isUpToDate = up_to_date_devices[relayId];
+
+        let statusColor = '#ef4444'; // red offline
+        if (isOnline) {
+            statusColor = isUpToDate ? '#10b981' : '#f59e0b'; // green or orange
+        }
+
+        node.data('statusColor', statusColor);
+    });
+}
+
+function updateLightUI(relay_id, output_id, state) {
+    if (!cy) return;
+
+    const outputNode = cy.getElementById(`relay-${relay_id}-output-${output_id}`);
+    if (outputNode.length) {
+        outputNode.data('lightState', state);
+    }
+}
+
+function highlightButton(switchId, buttonId) {
+    // TODO: Implement button highlighting
+    console.log('Highlight button:', switchId, buttonId);
+}
+
+function clearButtonHighlight(switchId, buttonId) {
+    // TODO: Implement clear button highlight
+    console.log('Clear highlight:', switchId, buttonId);
+}
+
+// Toolbar functions
+async function addSwitch() {
+    const switchId = parseInt(document.getElementById('new-switch-id').value);
+    const switchName = document.getElementById('new-switch-name').value;
+    const buttonCount = parseInt(document.getElementById('new-switch-buttons').value);
+
+    if (!switchId || !switchName || !buttonCount) {
+        alert('Please fill all fields');
+        return;
+    }
+
+    const result = await postForm('/lights/add_switch', {
+        switch_id: switchId,
+        switch_name: switchName,
+        button_count: buttonCount
+    });
+
+    if (result) {
+        closeModal('addSwitchModal');
+    }
+}
+
+async function addRelay() {
+    const relayId = parseInt(document.getElementById('new-relay-id').value);
+    const relayName = document.getElementById('new-relay-name').value;
+
+    if (!relayId || !relayName) {
+        alert('Please fill all fields');
+        return;
+    }
+
+    const result = await postForm('/lights/add_relay', {
+        relay_id: relayId,
+        relay_name: relayName
+    });
+
+    if (result) {
+        closeModal('addRelayModal');
+    }
+}
+
+function showAddSwitchModal() {
+    document.getElementById('addSwitchModal').classList.add('active');
+}
+
+function showAddRelayModal() {
+    document.getElementById('addRelayModal').classList.add('active');
+}
+
+function closeModal(modalId) {
+    document.getElementById(modalId).classList.remove('active');
+}
+
+function updateAllSwitches() {
+    if (!wsManager.isConnected()) {
+        alert('Not connected to server');
+        return;
+    }
+    wsManager.send(JSON.stringify({ type: 'update_all_switches' }));
+}
+
+function updateAllRelays() {
+    if (!wsManager.isConnected()) {
+        alert('Not connected to server');
+        return;
+    }
+    wsManager.send(JSON.stringify({ type: 'update_all_relays' }));
+}
+
+function updateRoot() {
+    if (!wsManager.isConnected()) {
+        alert('Not connected to server');
+        return;
+    }
+    wsManager.send(JSON.stringify({ type: 'update_root' }));
 }
 
 // Initialize Cytoscape
@@ -425,8 +664,24 @@ function resetZoom() {
 // Export for global access
 window.CytoscapeRCM = {
     init: initCytoscape,
+    loadConfiguration: loadConfiguration,
     zoomIn: zoomIn,
     zoomOut: zoomOut,
     resetZoom: resetZoom,
+    addSwitch: addSwitch,
+    addRelay: addRelay,
+    showAddSwitchModal: showAddSwitchModal,
+    showAddRelayModal: showAddRelayModal,
+    closeModal: closeModal,
+    updateAllSwitches: updateAllSwitches,
+    updateAllRelays: updateAllRelays,
+    updateRoot: updateRoot,
     getInstance: () => cy
 };
+
+// Auto-initialize when DOM is ready
+document.addEventListener('DOMContentLoaded', function () {
+    console.log('Initializing Cytoscape RCM...');
+    wsManager.connect();
+    loadConfiguration();
+});

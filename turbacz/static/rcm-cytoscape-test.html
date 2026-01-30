@@ -209,38 +209,41 @@
         }
 
         .device-card {
-            background: rgba(30, 41, 59, 0.95);
-            backdrop-filter: blur(10px);
-            border-radius: 12px;
-            padding: 1rem;
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-            border-left: 4px solid #6366f1;
-            width: 280px;
+            background: linear-gradient(135deg, rgba(30, 41, 59, 0.95) 0%, rgba(51, 65, 85, 0.95) 100%);
+            backdrop-filter: blur(20px);
+            border-radius: 16px;
+            padding: 1.25rem;
+            box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+            border: 1px solid rgba(71, 85, 105, 0.3);
+            cursor: move;
+            min-width: 280px;
+            transition: box-shadow 0.2s, border-color 0.2s;
         }
 
         .switch-card {
-            border-left-color: inherit;
+            border-left: 4px solid #6366f1;
         }
 
         .relay-card {
-            border-left-color: #f59e0b;
+            border-left: 4px solid #f59e0b;
         }
 
         .device-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 0.75rem;
-            font-size: 0.75rem;
-            color: #94a3b8;
+            margin-bottom: 1rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid rgba(71, 85, 105, 0.3);
         }
 
         .status-indicator {
             display: inline-block;
-            width: 8px;
-            height: 8px;
+            width: 10px;
+            height: 10px;
             border-radius: 50%;
-            margin-right: 0.5rem;
+            margin-left: 8px;
+            margin-right: 0.6rem;
         }
 
         .status-online {
@@ -259,50 +262,192 @@
         }
 
         .device-id {
-            font-family: 'Courier New', monospace;
+            font-size: 0.75rem;
+            color: #94a3b8;
+            background: rgba(99, 102, 241, 0.1);
+            padding: 0.375rem 0.75rem;
+            border-radius: 6px;
             font-weight: 600;
+            letter-spacing: 0.05em;
+        }
+
+        .device-buttons {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .delete-btn {
+            background: #ef4444;
+            color: white;
+            border: none;
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 1rem;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .delete-btn:hover {
+            background: #dc2626;
+            transform: scale(1.1) rotate(90deg);
+        }
+
+        .update-btn {
+            color: white;
+            border: none;
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 1.125rem;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .update-btn-switch {
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+        }
+
+        .update-btn-switch:hover {
+            background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+            transform: scale(1.1) rotate(180deg);
+        }
+
+        .update-btn-relay {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+        }
+
+        .update-btn-relay:hover {
+            background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
+            transform: scale(1.1) rotate(180deg);
+        }
+
+        .color-btn {
+            background: linear-gradient(135deg, #ec4899 0%, #db2777 100%);
+            color: white;
+            border: none;
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 1.125rem;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .color-btn:hover {
+            background: linear-gradient(135deg, #db2777 0%, #be185d 100%);
+            transform: scale(1.1);
+        }
+
+        .hide-btn {
+            background: linear-gradient(135deg, #64748b 0%, #475569 100%);
+            color: white;
+            border: none;
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 1.125rem;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .hide-btn:hover {
+            background: linear-gradient(135deg, #475569 0%, #334155 100%);
+            transform: scale(1.1);
         }
 
         .device-name {
-            font-size: 1.375rem;
             font-weight: 800;
-            color: #f1f5f9;
+            font-size: 1.375rem;
             margin-bottom: 1rem;
-            word-wrap: break-word;
+            color: #f1f5f9;
+            cursor: pointer;
+            padding: 0.5rem;
+            border-radius: 8px;
+            transition: all 0.2s;
+        }
+
+        .device-name:hover {
+            background: rgba(99, 102, 241, 0.1);
+            color: #818cf8;
         }
 
         .button-item,
         .output-item {
+            padding: 0.875rem 1rem;
+            margin: 0.5rem 0;
+            border-radius: 10px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 0.5rem 0.75rem;
-            margin-bottom: 0.5rem;
-            background: rgba(15, 23, 42, 0.6);
-            border-radius: 8px;
-            transition: background 0.2s;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            cursor: pointer;
+            border: 1px solid transparent;
         }
 
-        .button-item:hover,
+        .button-item {
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.2) 0%, rgba(79, 70, 229, 0.2) 100%);
+            border-color: rgba(99, 102, 241, 0.3);
+        }
+
+        .button-item:hover {
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.3) 0%, rgba(79, 70, 229, 0.3) 100%);
+            transform: translateX(5px);
+            border-color: #6366f1;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+        }
+
+        .output-item {
+            background: linear-gradient(135deg, rgba(245, 158, 11, 0.2) 0%, rgba(217, 119, 6, 0.2) 100%);
+            border-color: rgba(245, 158, 11, 0.3);
+        }
+
         .output-item:hover {
-            background: rgba(15, 23, 42, 0.8);
+            background: linear-gradient(135deg, rgba(245, 158, 11, 0.3) 0%, rgba(217, 119, 6, 0.3) 100%);
+            transform: translateX(-5px);
+            border-color: #f59e0b;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
         }
 
         .button-name,
         .output-name {
-            font-size: 0.875rem;
-            color: #e2e8f0;
             flex: 1;
+            color: #f1f5f9;
+            font-weight: 500;
+            font-size: 1rem;
+            margin-left: 1rem;
         }
 
         .item-icon {
-            font-size: 1.25rem;
-            opacity: 0.8;
+            width: 25px;
+            height: 25px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1rem;
         }
 
         .item-icon img {
-            width: 20px;
-            height: 20px;
+            width: 25px;
+            height: 25px;
+            object-fit: contain;
         }
     </style>
 </head>

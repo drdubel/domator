@@ -479,6 +479,12 @@ function createDeviceOverlays() {
                         <span class="status-indicator ${statusClass}"></span>
                         <span class="device-id">ID: ${switchId}</span>
                     </span>
+                    <div class="device-buttons">
+                        <button class="hide-btn" title="Hide Device">👁️</button>
+                        <button class="update-btn update-btn-switch" title="Update Device">⟳</button>
+                        <button class="color-btn" title="Change Color">🎨</button>
+                        <button class="delete-btn">✕</button>
+                    </div>
                 </div>
                 <div class="device-name">${switchData.name}</div>
                 ${buttonsHTML}
@@ -521,6 +527,11 @@ function createDeviceOverlays() {
                         <span class="status-indicator ${statusClass}"></span>
                         <span class="device-id">ID: ${relayId}</span>
                     </span>
+                    <div class="device-buttons">
+                        <button class="hide-btn" title="Hide Device">👁️</button>
+                        <button class="update-btn update-btn-relay" title="Update Device">⟳</button>
+                        <button class="delete-btn">✕</button>
+                    </div>
                 </div>
                 <div class="device-name">${relayData.name}</div>
                 ${outputsHTML}

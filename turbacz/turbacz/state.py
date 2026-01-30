@@ -13,6 +13,8 @@ class StateManager:
         self._up_to_date_devices: dict[int, bool] = {}
         self._up_to_date_firmware_versions: dict[str, str] = {}
 
+        self.update_up_to_date_firmware_versions()
+
     async def update_state(self, relay_id: int, output_id: str, state: int):
         if relay_id not in self._states:
             self._states[relay_id] = {}

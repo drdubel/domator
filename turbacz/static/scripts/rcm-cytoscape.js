@@ -705,11 +705,16 @@ function updateOverlayPosition(node, overlay) {
     const renderedX = pos.x * zoom + pan.x;
     const renderedY = pos.y * zoom + pan.y;
 
-    // Position the overlay at the rendered position (no scaling needed)
-    overlay.style.left = `${renderedX - width / 2}px`;
-    overlay.style.top = `${renderedY - height / 2}px`;
+    // Scale the overlay with zoom - bigger when zoomed in, smaller when zoomed out
+    const scaledWidth = width * zoom;
+    const scaledHeight = height * zoom;
+
+    // Position the overlay at the rendered position
+    overlay.style.left = `${renderedX - scaledWidth / 2}px`;
+    overlay.style.top = `${renderedY - scaledHeight / 2}px`;
     overlay.style.width = `${width}px`;
-    overlay.style.transform = 'none';
+    overlay.style.transform = `scale(${zoom})`;
+    overlay.style.transformOrigin = 'center center';
 }
 
 // Initialize Cytoscape

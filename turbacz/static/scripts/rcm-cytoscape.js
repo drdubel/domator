@@ -440,6 +440,123 @@ function updateRoot() {
     wsManager.send(JSON.stringify({ type: 'update_root' }));
 }
 
+// Create HTML device card overlays
+function createDeviceOverlays() {
+    const container = document.getElementById('cy-container');
+
+    // Remove existing overlays
+    const existingOverlays = container.querySelectorAll('.device-overlay');
+    existingOverlays.forEach(el => el.remove());
+
+    // Create switch overlays
+    cy.nodes('[type="switch"]').forEach(node => {
+        const switchId = node.data('deviceId');
+        const switchData = switches[switchId];
+        if (!switchData) return;
+
+        const isOnline = online_switches.has(parseInt(switchId));
+        const isUpToDate = up_to_date_devices[parseInt(switchId)];
+        let statusClass = !isOnline ? 'status-offline' : (isUpToDate ? 'status-online' : 'status-outdated');
+
+        let buttonsHTML = '';
+        for (let i = 0; i < switchData.buttonCount; i++) {
+            const buttonId = String.fromCharCode(97 + i);
+            buttonsHTML += `
+                <div class="button-item" id="switch-${switchId}-btn-${buttonId}-label">
+                    <span class="button-name">Button ${i + 1}</span>
+                    <span class="item-icon">🔘</span>
+                </div>
+            `;
+        }
+
+        const overlay = document.createElement('div');
+        overlay.className = 'device-overlay switch-overlay';
+        overlay.id = `overlay-switch-${switchId}`;
+        overlay.innerHTML = `
+            <div class="device-card switch-card" style="border-left-color: ${switchData.color || '#6366f1'}">
+                <div class="device-header">
+                    <span>
+                        <span class="status-indicator ${statusClass}"></span>
+                        <span class="device-id">ID: ${switchId}</span>
+                    </span>
+                </div>
+                <div class="device-name">${switchData.name}</div>
+                ${buttonsHTML}
+            </div>
+        `;
+
+        container.appendChild(overlay);
+        updateOverlayPosition(node, overlay);
+    });
+
+    // Create relay overlays
+    cy.nodes('[type="relay"]').forEach(node => {
+        const relayId = node.data('deviceId');
+        const relayData = relays[relayId];
+        if (!relayData) return;
+
+        const isOnline = online_relays.has(parseInt(relayId));
+        const isUpToDate = up_to_date_devices[parseInt(relayId)];
+        let statusClass = !isOnline ? 'status-offline' : (isUpToDate ? 'status-online' : 'status-outdated');
+
+        let outputsHTML = '';
+        for (const [outputId, outputName] of Object.entries(relayData.outputs || {})) {
+            const lightState = lights[`${relayId}-${outputId}`] || 0;
+            const imgSrc = lightState ? '/static/data/img/on.png' : '/static/data/img/off.png';
+            outputsHTML += `
+                <div class="output-item" id="relay-${relayId}-output-${outputId}-label">
+                    <span><img class="item-icon" src="${imgSrc}" alt="light"></span>
+                    <span class="output-name">${outputName}</span>
+                </div>
+            `;
+        }
+
+        const overlay = document.createElement('div');
+        overlay.className = 'device-overlay relay-overlay';
+        overlay.id = `overlay-relay-${relayId}`;
+        overlay.innerHTML = `
+            <div class="device-card relay-card">
+                <div class="device-header">
+                    <span>
+                        <span class="status-indicator ${statusClass}"></span>
+                        <span class="device-id">ID: ${relayId}</span>
+                    </span>
+                </div>
+                <div class="device-name">${relayData.name}</div>
+                ${outputsHTML}
+            </div>
+        `;
+
+        container.appendChild(overlay);
+        updateOverlayPosition(node, overlay);
+    });
+
+    // Update positions on pan/zoom
+    cy.on('pan zoom', debounce(() => {
+        cy.nodes('[type="switch"], [type="relay"]').forEach(node => {
+            const deviceId = node.data('deviceId');
+            const type = node.data('type');
+            const overlay = document.getElementById(`overlay-${type}-${deviceId}`);
+            if (overlay) {
+                updateOverlayPosition(node, overlay);
+            }
+        });
+    }, 16)); // ~60fps
+}
+
+function updateOverlayPosition(node, overlay) {
+    const pos = node.renderedPosition();
+    const zoom = cy.zoom();
+    const width = 280 * zoom;
+    const height = node.data('height') * zoom;
+
+    overlay.style.left = `${pos.x - width / 2}px`;
+    overlay.style.top = `${pos.y - height / 2}px`;
+    overlay.style.width = `${width}px`;
+    overlay.style.transform = `scale(${zoom})`;
+    overlay.style.transformOrigin = 'center center';
+}
+
 // Initialize Cytoscape
 function initCytoscape(containerId) {
     cy = cytoscape({
@@ -562,6 +679,11 @@ function initCytoscape(containerId) {
         hideLabelsOnViewport: false
     });
 
+    // Create HTML overlays for device cards
+    createDeviceOverlays();
+
+    // Enable smooth pan and zoom
+    setupPanZoom();
 
     // Setup hover effects
     setupHoverEffects();

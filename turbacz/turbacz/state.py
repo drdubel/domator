@@ -1,3 +1,4 @@
+import hashlib
 from time import time
 
 from turbacz.websocket import ws_manager
@@ -38,6 +39,12 @@ class StateManager:
 
     def set_up_to_date_firmware_version(self, device_type: str, version: str):
         self._up_to_date_firmware_versions[device_type] = version
+
+    def update_up_to_date_firmware_versions(self):
+        for device_type in ["relay", "switch", "root"]:
+            with open(f"static/data/{device_type}/firmware.bin", "rb") as f:
+                version = hashlib.md5(f.read()).hexdigest()
+                self._up_to_date_firmware_versions[device_type] = version
 
     def set_firmware_version(self, device_id: int, version: str):
         self._firmware_versions[device_id] = version

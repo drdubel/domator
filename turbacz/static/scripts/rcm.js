@@ -938,6 +938,56 @@ function clearButtonHighlight(switchId, buttonId) {
     console.log('Cleared button highlight:', switchId, buttonId)
 }
 
+// Helper function to add hover effect to a connection
+function addConnectionHoverEffect(conn) {
+    // Store original paint style
+    if (!conn._originalPaintStyle) {
+        conn._originalPaintStyle = conn.getPaintStyle()
+    }
+
+    // Add custom hover handlers
+    conn.bind("mouseenter", function () {
+        // Don't change style if device is highlighted
+        if (highlightedDevice) {
+            return
+        }
+
+        const currentStyle = conn.getPaintStyle()
+        const currentColor = currentStyle.stroke
+
+        // Brighten the current color for hover
+        let hoverColor = currentColor
+        if (currentColor.startsWith('#')) {
+            // Convert hex to rgb, brighten, and use
+            const r = parseInt(currentColor.slice(1, 3), 16)
+            const g = parseInt(currentColor.slice(3, 5), 16)
+            const b = parseInt(currentColor.slice(5, 7), 16)
+
+            // Brighten by adding to each channel (max 255)
+            const brighten = 60
+            const hr = Math.min(255, r + brighten)
+            const hg = Math.min(255, g + brighten)
+            const hb = Math.min(255, b + brighten)
+
+            hoverColor = `rgb(${hr}, ${hg}, ${hb})`
+        }
+
+        conn.setPaintStyle({ stroke: hoverColor, strokeWidth: 5 })
+    })
+
+    conn.bind("mouseexit", function () {
+        // Don't change style if device is highlighted
+        if (highlightedDevice) {
+            return
+        }
+
+        // Restore original style
+        if (conn._originalPaintStyle) {
+            conn.setPaintStyle(conn._originalPaintStyle)
+        }
+    })
+}
+
 function initJsPlumb() {
     jsPlumb.ready(function () {
         jsPlumbInstance = jsPlumb.getInstance({
@@ -961,52 +1011,7 @@ function initJsPlumb() {
 
         // Bind hover events to handle custom colors
         jsPlumbInstance.bind("connection", function (info) {
-            const conn = info.connection
-
-            // Store original paint style
-            conn._originalPaintStyle = conn.getPaintStyle()
-
-            // Add custom hover handlers
-            conn.bind("mouseenter", function () {
-                // Don't change style if device is highlighted
-                if (highlightedDevice) {
-                    return
-                }
-
-                const currentStyle = conn.getPaintStyle()
-                const currentColor = currentStyle.stroke
-
-                // Brighten the current color for hover
-                let hoverColor = currentColor
-                if (currentColor.startsWith('#')) {
-                    // Convert hex to rgb, brighten, and use
-                    const r = parseInt(currentColor.slice(1, 3), 16)
-                    const g = parseInt(currentColor.slice(3, 5), 16)
-                    const b = parseInt(currentColor.slice(5, 7), 16)
-
-                    // Brighten by adding to each channel (max 255)
-                    const brighten = 40
-                    const hr = Math.min(255, r + brighten)
-                    const hg = Math.min(255, g + brighten)
-                    const hb = Math.min(255, b + brighten)
-
-                    hoverColor = `rgb(${hr}, ${hg}, ${hb})`
-                }
-
-                conn.setPaintStyle({ stroke: hoverColor, strokeWidth: 4 })
-            })
-
-            conn.bind("mouseexit", function () {
-                // Don't change style if device is highlighted
-                if (highlightedDevice) {
-                    return
-                }
-
-                // Restore original style
-                if (conn._originalPaintStyle) {
-                    conn.setPaintStyle(conn._originalPaintStyle)
-                }
-            })
+            addConnectionHoverEffect(info.connection)
         })
 
         bindJsPlumbEvents()
@@ -1603,6 +1608,9 @@ function createConnection(switchId, buttonId, relayId, outputId) {
     if (conn) {
         // Store original paint style for hover
         conn._originalPaintStyle = { stroke: connectionColor, strokeWidth: 3 }
+
+        // Add hover effect
+        addConnectionHoverEffect(conn)
 
         if (!connections[switchId]) connections[switchId] = {}
         if (!connections[switchId][buttonId]) connections[switchId][buttonId] = []

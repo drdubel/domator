@@ -214,8 +214,12 @@ function generateCytoscapeElements() {
 
                     // Check if target relay and output exist
                     const targetRelay = relays[relayId];
-                    if (!targetRelay || !targetRelay.outputs || !targetRelay.outputs[outputId]) {
-                        console.warn(`Connection target does not exist: relay ${relayId} output ${outputId}`);
+                    if (!targetRelay) {
+                        console.warn(`Connection target relay does not exist: ${relayId}. Available relays:`, Object.keys(relays));
+                        continue;
+                    }
+                    if (!targetRelay.outputs || !targetRelay.outputs[outputId]) {
+                        console.warn(`Connection output does not exist: relay ${relayId} output ${outputId}. Available outputs:`, Object.keys(targetRelay.outputs || {}));
                         continue;
                     }
 
@@ -252,18 +256,36 @@ async function loadConfiguration() {
             fetchAPI('/lights/get_connections')
         ]);
 
-        if (relaysData) relays = relaysData;
-        if (switchesData) switches = switchesData;
-        if (connectionsData) connections = connectionsData;
-
-        // Merge outputs into relays
-        if (outputsData && relaysData) {
-            for (const [relayId, outputs] of Object.entries(outputsData)) {
-                if (relays[relayId]) {
-                    relays[relayId].outputs = outputs;
-                }
+        // Convert API format to internal format
+        // Relays: API returns { relayId: relayName } -> convert to { relayId: { name, outputs, x, y } }
+        if (relaysData) {
+            relays = {};
+            for (const [relayId, relayName] of Object.entries(relaysData)) {
+                relays[relayId] = {
+                    name: relayName,
+                    outputs: outputsData?.[relayId] || {},
+                    x: 25000,
+                    y: 25000
+                };
             }
         }
+
+        // Switches: API returns { switchId: [switchName, buttonCount] } -> convert to { switchId: { name, buttonCount, color, x, y } }
+        if (switchesData) {
+            switches = {};
+            for (const [switchId, switchData] of Object.entries(switchesData)) {
+                const [switchName, buttonCount] = switchData;
+                switches[switchId] = {
+                    name: switchName,
+                    buttonCount: buttonCount,
+                    color: '#6366f1',
+                    x: 23500,
+                    y: 25000
+                };
+            }
+        }
+
+        if (connectionsData) connections = connectionsData;
 
         console.log('Loaded:', { switches, relays, connections });
 

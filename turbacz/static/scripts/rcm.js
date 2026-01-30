@@ -178,6 +178,8 @@ function resumeJsPlumb() {
     }
     applyCanvasTransformImmediate()
     if (jsPlumbInstance) {
+        // Ensure jsPlumb uses the current zoom before resuming drawing
+        jsPlumbInstance.setZoom(zoomLevel)
         jsPlumbInstance.setSuspendDrawing(false, true) // second param = repaint immediately
     }
 }
@@ -207,8 +209,12 @@ function zoomAtPoint(factor, centerX, centerY, commit = false) {
 
     applyCanvasTransform()
     updateZoomDisplay()
-    if (commit) syncJsPlumb()
-    else debouncedSyncJsPlumb()
+    if (commit) {
+        syncJsPlumb()
+    } else if (!isPinching) {
+        // Avoid scheduling jsPlumb syncs while pinching; resume handles it
+        debouncedSyncJsPlumb()
+    }
 }
 
 // ------------------- RESET / BUTTON ZOOM -------------------
@@ -232,6 +238,7 @@ function initPanning() {
     // Add GPU acceleration hints
     canvasElement.style.willChange = 'transform'
     canvasElement.style.backfaceVisibility = 'hidden'
+    canvasElement.style.transformOrigin = '0 0'
 
     // ----------------- MOUSE PANNING -----------------
     wrapper.addEventListener('mousedown', e => {
@@ -273,6 +280,8 @@ function initPanning() {
             wrapper.classList.remove('grabbing')
             const t1 = e.touches[0], t2 = e.touches[1]
             lastPinchDistance = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY)
+            // Suspend jsPlumb during pinch zoom for smoothness
+            suspendJsPlumb()
             e.preventDefault()
         }
     }, { passive: false })
@@ -311,7 +320,8 @@ function initPanning() {
         if (isPinching) {
             isPinching = false
             lastPinchDistance = 0
-            debouncedSyncJsPlumb()
+            // Resume jsPlumb and apply current zoom
+            resumeJsPlumb()
             setTimeout(saveCanvasView, 150)
         }
     })

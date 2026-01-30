@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RCM - Cytoscape Test</title>
+
+    <!-- Cytoscape.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
+
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            color: #f1f5f9;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .header {
+            background: rgba(30, 41, 59, 0.8);
+            backdrop-filter: blur(10px);
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+        }
+
+        .controls {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .btn {
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+            color: white;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+        }
+
+        #cy-container {
+            width: 100%;
+            height: calc(100vh - 90px);
+            background: #0f172a;
+        }
+
+        .zoom-info {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(30, 41, 59, 0.9);
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            font-size: 0.875rem;
+            pointer-events: none;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <h1>⚡ RCM - Cytoscape.js (Stage 1)</h1>
+        <div class="controls">
+            <button class="btn" onclick="CytoscapeRCM.zoomIn()">Zoom In</button>
+            <button class="btn" onclick="CytoscapeRCM.zoomOut()">Zoom Out</button>
+            <button class="btn" onclick="CytoscapeRCM.resetZoom()">Reset Zoom</button>
+        </div>
+    </div>
+
+    <div id="cy-container"></div>
+
+    <div class="zoom-info" id="zoom-info">Zoom: 100%</div>
+
+    <script src="/static/scripts/rcm-cytoscape.js"></script>
+    <script>
+        // Initialize Cytoscape on load
+        window.addEventListener('load', function () {
+            CytoscapeRCM.init('cy-container');
+
+            // Update zoom info
+            const cy = CytoscapeRCM.getInstance();
+            cy.on('viewport', function () {
+                const zoom = Math.round(cy.zoom() * 100);
+                document.getElementById('zoom-info').textContent = `Zoom: ${zoom}%`;
+            });
+
+            // Initial zoom display
+            const initialZoom = Math.round(cy.zoom() * 100);
+            document.getElementById('zoom-info').textContent = `Zoom: ${initialZoom}%`;
+        });
+    </script>
+</body>
+
+</html>

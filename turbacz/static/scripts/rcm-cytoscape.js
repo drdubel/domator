@@ -191,11 +191,29 @@ function generateCytoscapeElements() {
     // Add connection edges
     for (const [switchId, buttons] of Object.entries(connections)) {
         const switchData = switches[switchId];
-        const connectionColor = switchData?.color || '#6366f1';
+        if (!switchData) {
+            console.warn(`Connection references nonexistent switch ${switchId}`);
+            continue;
+        }
+
+        const connectionColor = switchData.color || '#6366f1';
 
         for (const [buttonId, conns] of Object.entries(buttons)) {
             if (Array.isArray(conns)) {
                 for (const conn of conns) {
+                    // Validate connection has required properties
+                    if (!conn.relayId || !conn.outputId) {
+                        console.warn(`Invalid connection: switch ${switchId} button ${buttonId} -> relay ${conn.relayId} output ${conn.outputId}`);
+                        continue;
+                    }
+
+                    // Check if target relay and output exist
+                    const targetRelay = relays[conn.relayId];
+                    if (!targetRelay || !targetRelay.outputs || !targetRelay.outputs[conn.outputId]) {
+                        console.warn(`Connection target does not exist: relay ${conn.relayId} output ${conn.outputId}`);
+                        continue;
+                    }
+
                     elements.push({
                         group: 'edges',
                         data: {

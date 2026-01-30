@@ -57,6 +57,8 @@ let lastPinchDistance = 0
 // Cached DOM elements
 let canvasElement = null
 let zoomLevelElement = null
+let transformPending = false
+let lastDisplayedZoom = -1
 
 const API_BASE_URL = `https://${window.location.host}`
 
@@ -133,11 +135,31 @@ function hideLoading() {
 // =================== OPTIMIZED PAN/ZOOM SYSTEM ===================
 
 // ------------------- GPU TRANSFORM -------------------
-function applyVisualTransform() {
-    if (!canvasElement) canvasElement = document.getElementById('canvas')
-    if (!zoomLevelElement) zoomLevelElement = document.getElementById('zoomLevel')
+function applyCanvasTransform() {
     canvasElement.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`
-    zoomLevelElement.innerText = `${Math.round(zoomLevel * 100)}%`
+}
+
+function updateZoomDisplay() {
+    const displayZoom = Math.round(zoomLevel * 100)
+    if (displayZoom !== lastDisplayedZoom) {
+        zoomLevelElement.innerText = `${displayZoom}%`
+        lastDisplayedZoom = displayZoom
+    }
+}
+
+function scheduleTransformUpdate() {
+    if (!transformPending) {
+        transformPending = true
+        requestAnimationFrame(() => {
+            applyCanvasTransform()
+            transformPending = false
+        })
+    }
+}
+
+function applyVisualTransform() {
+    applyCanvasTransform()
+    updateZoomDisplay()
 }
 
 // ------------------- JSPLUMB SYNC -------------------
@@ -163,7 +185,8 @@ function zoomAtPoint(factor, centerX, centerY, commit = false) {
     panX = centerX - (centerX - panX) * (zoomLevel / prevScale)
     panY = centerY - (centerY - panY) * (zoomLevel / prevScale)
 
-    applyVisualTransform()
+    applyCanvasTransform()
+    updateZoomDisplay()
     if (commit) syncJsPlumb()
     else debouncedSyncJsPlumb()
 }
@@ -186,6 +209,10 @@ function initPanning() {
     canvasElement = document.getElementById('canvas')
     zoomLevelElement = document.getElementById('zoomLevel')
 
+    // Add GPU acceleration hints
+    canvasElement.style.willChange = 'transform'
+    canvasElement.style.backfaceVisibility = 'hidden'
+
     // ----------------- MOUSE PANNING -----------------
     wrapper.addEventListener('mousedown', e => {
         if (e.target !== wrapper && e.target !== canvasElement) return
@@ -198,7 +225,7 @@ function initPanning() {
         if (!isPanning) return
         panX = e.clientX - startX
         panY = e.clientY - startY
-        applyVisualTransform()
+        scheduleTransformUpdate()
     })
     document.addEventListener('mouseup', () => {
         if (!isPanning) return
@@ -233,7 +260,7 @@ function initPanning() {
             const touch = e.touches[0]
             panX = touch.clientX - startX
             panY = touch.clientY - startY
-            applyVisualTransform()
+            scheduleTransformUpdate()
             e.preventDefault()
         }
         if (isPinching && e.touches.length === 2) {

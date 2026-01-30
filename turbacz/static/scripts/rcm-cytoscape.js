@@ -695,18 +695,21 @@ function createDeviceOverlays() {
 }
 
 function updateOverlayPosition(node, overlay) {
-    const pos = node.renderedPosition();
+    const pos = node.position(); // Get model position
+    const pan = cy.pan();
     const zoom = cy.zoom();
     const width = 280;
     const height = node.data('height');
 
-    // Don't scale the cards - they should stay the same size regardless of zoom
-    // Just position them at the rendered position
-    overlay.style.left = `${pos.x - width / 2}px`;
-    overlay.style.top = `${pos.y - height / 2}px`;
+    // Calculate rendered position manually: (model_pos * zoom) + pan
+    const renderedX = pos.x * zoom + pan.x;
+    const renderedY = pos.y * zoom + pan.y;
+
+    // Position the overlay at the rendered position (no scaling needed)
+    overlay.style.left = `${renderedX - width / 2}px`;
+    overlay.style.top = `${renderedY - height / 2}px`;
     overlay.style.width = `${width}px`;
-    overlay.style.transform = 'scale(1)';
-    overlay.style.transformOrigin = 'center center';
+    overlay.style.transform = 'none';
 }
 
 // Initialize Cytoscape

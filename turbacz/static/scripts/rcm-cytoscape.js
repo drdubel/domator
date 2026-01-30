@@ -510,6 +510,7 @@ function makeDraggable(overlay, node) {
         if (e.target.classList.contains('button-item') || e.target.classList.contains('output-item')) return;
 
         isDragging = true;
+        const zoom = cy.zoom();
         startX = e.clientX;
         startY = e.clientY;
         const nodePos = node.position();
@@ -524,11 +525,10 @@ function makeDraggable(overlay, node) {
         if (!isDragging) return;
 
         const zoom = cy.zoom();
-        const pan = cy.pan();
 
-        // Calculate movement in canvas coordinates
-        const dx = (e.clientX - startX) / zoom;
-        const dy = (e.clientY - startY) / zoom;
+        // Calculate movement in model coordinates (divide by zoom AND scale)
+        const dx = (e.clientX - startX) / (zoom * zoom);
+        const dy = (e.clientY - startY) / (zoom * zoom);
 
         // Update node position
         node.position({
@@ -783,7 +783,7 @@ function initCytoscape(containerId) {
             {
                 selector: 'edge',
                 style: {
-                    'width': 3,
+                    'width': 'mapData(zoom, 0.2, 2, 1, 6)',
                     'line-color': 'data(color)',
                     'target-arrow-color': 'data(color)',
                     'curve-style': 'bezier',

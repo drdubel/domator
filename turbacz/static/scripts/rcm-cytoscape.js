@@ -496,6 +496,59 @@ function updateRoot() {
     wsManager.send(JSON.stringify({ type: 'update_root' }));
 }
 
+// Make overlay draggable
+function makeDraggable(overlay, node) {
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+    let startNodeX = 0;
+    let startNodeY = 0;
+
+    overlay.addEventListener('mousedown', (e) => {
+        // Only drag if clicking on the card itself, not buttons
+        if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
+        if (e.target.classList.contains('button-item') || e.target.classList.contains('output-item')) return;
+
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        const nodePos = node.position();
+        startNodeX = nodePos.x;
+        startNodeY = nodePos.y;
+
+        overlay.style.cursor = 'grabbing';
+        e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+
+        const zoom = cy.zoom();
+        const pan = cy.pan();
+
+        // Calculate movement in canvas coordinates
+        const dx = (e.clientX - startX) / zoom;
+        const dy = (e.clientY - startY) / zoom;
+
+        // Update node position
+        node.position({
+            x: startNodeX + dx,
+            y: startNodeY + dy
+        });
+
+        // Update overlay position
+        updateOverlayPosition(node, overlay);
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (isDragging) {
+            isDragging = false;
+            overlay.style.cursor = 'move';
+            saveDevicePositions();
+        }
+    });
+}
+
 // Create HTML device card overlays
 function createDeviceOverlays() {
     const container = document.getElementById('cy-container');
@@ -549,6 +602,9 @@ function createDeviceOverlays() {
 
         container.appendChild(overlay);
         updateOverlayPosition(node, overlay);
+
+        // Make overlay draggable
+        makeDraggable(overlay, node);
     });
 
     // Create relay overlays
@@ -563,12 +619,17 @@ function createDeviceOverlays() {
 
         let outputsHTML = '';
         for (const [outputId, outputName] of Object.entries(relayData.outputs || {})) {
+            // Handle array outputName (take first element)
+            let displayName = outputName;
+            if (Array.isArray(outputName)) {
+                displayName = outputName[0];
+            }
             const lightState = lights[`${relayId}-${outputId}`] || 0;
             const imgSrc = lightState ? '/static/data/img/on.png' : '/static/data/img/off.png';
             outputsHTML += `
                 <div class="output-item" id="relay-${relayId}-output-${outputId}-label">
                     <span><img class="item-icon" src="${imgSrc}" alt="light"></span>
-                    <span class="output-name">${outputName}</span>
+                    <span class="output-name">${displayName}</span>
                 </div>
             `;
         }
@@ -596,6 +657,9 @@ function createDeviceOverlays() {
 
         container.appendChild(overlay);
         updateOverlayPosition(node, overlay);
+
+        // Make overlay draggable
+        makeDraggable(overlay, node);
     });
 
     // Enable dragging on container nodes
@@ -636,10 +700,16 @@ function updateOverlayPosition(node, overlay) {
     const width = 280;
     const height = node.data('height');
 
-    // Keep cards at constant size, only position follows zoom
-    overlay.style.left = `${pos.x - width / 2}px`;
-    overlay.style.top = `${pos.y - height / 2}px`;
+    // Scale inversely with zoom - cards get smaller as you zoom out
+    const scale = 1 / zoom;
+    const scaledWidth = width * scale;
+    const scaledHeight = height * scale;
+
+    overlay.style.left = `${pos.x - scaledWidth / 2}px`;
+    overlay.style.top = `${pos.y - scaledHeight / 2}px`;
     overlay.style.width = `${width}px`;
+    overlay.style.transform = `scale(${scale})`;
+    overlay.style.transformOrigin = 'center center';
 }
 
 // Initialize Cytoscape

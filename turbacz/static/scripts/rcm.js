@@ -4,6 +4,7 @@ let switches = {}
 let relays = {}
 let online_relays = new Set()
 let online_switches = new Set()
+let firmware_checksums = {} // Maps device_id to firmware checksum
 let connections = {}
 var lights = {}
 var pendingClicks = new Set()
@@ -98,9 +99,11 @@ var wsManager = new WebSocketManager('/rcm/ws/', function (event) {
     if (msg.type == "online_status") {
         online_relays = new Set(msg.online_relays)
         online_switches = new Set(msg.online_switches)
+        firmware_checksums = msg.firmware_checksums || {}
 
         console.log('Online relays:', online_relays)
         console.log('Online switches:', online_switches)
+        console.log('Firmware checksums:', firmware_checksums)
 
         updateOnlineStatus()
     }
@@ -1177,12 +1180,15 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
     const isOnline = online_switches.has(switchId)
     const statusClass = isOnline ? 'status-online' : 'status-offline'
     const statusDot = `<span class="status-indicator ${statusClass}"></span>`
+    const checksum = firmware_checksums[switchId] || ''
+    const checksumDisplay = checksum ? `<div style="font-size: 0.75rem; color: #888; margin-top: 0.2rem;">FW: ${checksum}</div>` : ''
 
     switchDiv.innerHTML = `
                 <div class="device-header">
                     <span>
                     ${statusDot}
                     <span class="device-id" onclick="event.stopPropagation(); copyIdToClipboard(${switchId}, this)">ID: ${switchId}</span>
+                    ${checksumDisplay}
                     </span>
                     <div style="display: flex; gap: 0.5rem;">
                         <button class="hide-btn" onclick="event.stopPropagation(); hideDevice(${switchId}, 'switch')" title="Hide Device">👁️</button>
@@ -1346,12 +1352,15 @@ function createRelay(relayId, relayName, outputs, x, y) {
     const isOnline = online_relays.has(relayId)
     const statusClass = isOnline ? 'status-online' : 'status-offline'
     const statusDot = `<span class="status-indicator ${statusClass}"></span>`
+    const checksum = firmware_checksums[relayId] || ''
+    const checksumDisplay = checksum ? `<div style="font-size: 0.75rem; color: #888; margin-top: 0.2rem;">FW: ${checksum}</div>` : ''
 
     relayDiv.innerHTML = `
                 <div class="device-header">
                     <span>
                     ${statusDot}
                     <span class="device-id" onclick="event.stopPropagation(); copyIdToClipboard(${relayId}, this)">ID: ${relayId}</span>
+                    ${checksumDisplay}
                     </span>
                     <div style="display: flex; gap: 0.5rem;">
                         <button class="hide-btn" onclick="event.stopPropagation(); hideDevice(${relayId}, 'relay')" title="Hide Device">👁️</button>

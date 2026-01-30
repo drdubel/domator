@@ -8,10 +8,12 @@ class StateManager:
         self._states: dict[int, dict[str, int]] = {}
         self._online_relays: dict[int, int] = {}
         self._online_switches: dict[int, int] = {}
+        self._firmware_versions: dict[int, str] = {}
 
     async def update_state(self, relay_id: int, output_id: str, state: int):
         if relay_id not in self._states:
             self._states[relay_id] = {}
+
         self._states[relay_id][output_id] = state
         await ws_manager.broadcast(
             {
@@ -31,6 +33,9 @@ class StateManager:
             },
             "/lights/ws/",
         )
+
+    def set_firmware_version(self, relay_id: int, version: str):
+        self._firmware_versions[relay_id] = version
 
     def mark_switch_offline(self, switch_id: str):
         if switch_id in self._online_switches:

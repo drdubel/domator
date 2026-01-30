@@ -41,6 +41,7 @@ async def periodic_check_devices(interval: int = 15):
                 "type": "online_status",
                 "online_relays": list(state_manager._online_relays.keys()),
                 "online_switches": list(state_manager._online_switches.keys()),
+                "firmware_versions": state_manager._firmware_versions,
             },
             "/rcm/ws/",
         )
@@ -219,6 +220,7 @@ async def handle_root_state(payload_str):
 
     state_manager.mark_relay_online(data["deviceId"], time())
     state_manager.mark_switch_online(data["deviceId"], time())
+    state_manager.set_firmware_version(data["deviceId"], data["firmware"])
 
     data["name"] = data["name"].replace(" ", "\\ ")
 

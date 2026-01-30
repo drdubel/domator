@@ -57,7 +57,16 @@ async function fetchAPI(endpoint) {
         const url = `${API_BASE_URL}${endpoint}`;
         const response = await fetch(url);
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-        return await response.json();
+
+        const text = await response.text();
+        if (!text) return null;
+
+        try {
+            return JSON.parse(text);
+        } catch (jsonError) {
+            console.error('JSON parse error for', endpoint, ':', text.substring(0, 200));
+            return null;
+        }
     } catch (error) {
         console.error('Fetch error:', error);
         return null;

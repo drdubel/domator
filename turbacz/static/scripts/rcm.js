@@ -778,6 +778,13 @@ function highlightDevice(deviceId) {
     const allConnections = jsPlumbInstance.getAllConnections()
     allConnections.forEach(conn => {
         conn.canvas.style.opacity = '0.2'
+        conn.canvas.classList.remove('highlighted')
+        // Remove highlighted class from endpoints
+        if (conn.endpoints) {
+            conn.endpoints.forEach(ep => {
+                if (ep.canvas) ep.canvas.classList.remove('highlighted')
+            })
+        }
     })
 
     deviceConnections.forEach(conn => {
@@ -786,6 +793,14 @@ function highlightDevice(deviceId) {
 
         conn.setPaintStyle({ stroke: '#ef4444', strokeWidth: 5 })
         conn.canvas.style.opacity = '1'
+        conn.canvas.classList.add('highlighted')
+
+        // Add highlighted class to endpoints
+        if (conn.endpoints) {
+            conn.endpoints.forEach(ep => {
+                if (ep.canvas) ep.canvas.classList.add('highlighted')
+            })
+        }
 
         if (sourceId.startsWith(deviceId)) {
             const targetMatch = targetId.match(/^(relay-\d+|switch-\d+)/)
@@ -837,6 +852,14 @@ function clearHighlights() {
 
         conn.setPaintStyle({ stroke: color, strokeWidth: 3 })
         conn.canvas.style.opacity = '1'
+        conn.canvas.classList.remove('highlighted')
+
+        // Remove highlighted class from endpoints
+        if (conn.endpoints) {
+            conn.endpoints.forEach(ep => {
+                if (ep.canvas) ep.canvas.classList.remove('highlighted')
+            })
+        }
     })
 
     highlightedDevice = null
@@ -951,8 +974,15 @@ function addConnectionHoverEffect(conn) {
 
     // Add hover effect using native DOM events
     canvas.addEventListener('mouseenter', function () {
-        // Don't change style if device is highlighted
+        // When device is highlighted, only allow hover on highlighted connections
         if (highlightedDevice) {
+            // Check if this connection is highlighted
+            if (!canvas.classList.contains('highlighted')) {
+                return
+            }
+            // If highlighted, make it even brighter
+            conn.setPaintStyle({ stroke: '#ff6b6b', strokeWidth: 6 })
+            canvas.style.cursor = 'pointer'
             return
         }
 
@@ -981,7 +1011,14 @@ function addConnectionHoverEffect(conn) {
     })
 
     canvas.addEventListener('mouseleave', function () {
-        // Don't change style if device is highlighted
+        // When device is highlighted, restore highlighted style
+        if (highlightedDevice && canvas.classList.contains('highlighted')) {
+            conn.setPaintStyle({ stroke: '#ef4444', strokeWidth: 5 })
+            canvas.style.cursor = 'default'
+            return
+        }
+
+        // Don't change style if device is highlighted but this connection is not
         if (highlightedDevice) {
             return
         }

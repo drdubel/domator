@@ -361,10 +361,12 @@ body {
 
 .relay-box {
     border-left: 4px solid var(--secondary-color);
+    z-index: 80;
 }
 
 .relay-box.highlighted {
     border-left-color: var(--danger-color);
+    z-index: 10000;
 }
 
 .device-header {
@@ -775,20 +777,30 @@ body {
 }
 
 /* jsPlumb styles - Layered properly */
-/* Connection lines below device cards */
+/* Connection lines and dots below device cards by default */
 ._jsPlumb_connector,
 .jtk-connector {
     z-index: 50 !important;
 }
 
-/* Connection endpoints above device cards for editing */
 ._jsPlumb_endpoint,
 .jtk-endpoint {
-    z-index: 200 !important;
+    z-index: 90 !important;
 }
 
 ._jsPlumb_overlay {
-    z-index: 210 !important;
+    z-index: 95 !important;
+}
+
+/* Highlighted connections on top of everything */
+._jsPlumb_connector.highlighted,
+.jtk-connector.highlighted {
+    z-index: 10100 !important;
+}
+
+._jsPlumb_endpoint.highlighted,
+.jtk-endpoint.highlighted {
+    z-index: 10100 !important;
 }
 
 ._jsPlumb_endpoint:hover {

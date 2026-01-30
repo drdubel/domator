@@ -51,7 +51,6 @@ class StateManager:
     def set_firmware_version(self, device_id: int, device_type: str, version: str):
         self._firmware_versions[device_id] = version
 
-        print(self._up_to_date_firmware_versions, version, device_type, device_id)
         if version == self._up_to_date_firmware_versions.get(device_type):
             self._up_to_date_devices[device_id] = True
         else:

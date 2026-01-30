@@ -380,6 +380,7 @@ async def websocket_rcm(websocket: WebSocket):
             "type": "online_status",
             "online_relays": list(state_manager._online_relays.keys()),
             "online_switches": list(state_manager._online_switches.keys()),
+            "firmware_versions": state_manager._firmware_versions,
         },
         websocket,
     )

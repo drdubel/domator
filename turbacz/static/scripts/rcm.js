@@ -1181,14 +1181,13 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
     const statusClass = isOnline ? 'status-online' : 'status-offline'
     const statusDot = `<span class="status-indicator ${statusClass}"></span>`
     const checksum = firmware_checksums[switchId] || ''
-    const checksumDisplay = checksum ? `<div class="firmware-version" style="font-size: 0.75rem; color: #888; margin-top: 0.2rem;">FW: ${checksum}</div>` : ''
+    const checksumDisplay = checksum ? `<div class="firmware-version" style="font-size: 0.7rem; color: #64748b; text-align: center; padding: 0.4rem 0.5rem; margin-top: 0.5rem; background: rgba(100, 116, 139, 0.05); border-top: 1px solid rgba(100, 116, 139, 0.1); border-radius: 0 0 8px 8px; font-family: 'Courier New', monospace;">${checksum}</div>` : ''
 
     switchDiv.innerHTML = `
                 <div class="device-header">
                     <span>
                     ${statusDot}
                     <span class="device-id" onclick="event.stopPropagation(); copyIdToClipboard(${switchId}, this)">ID: ${switchId}</span>
-                    ${checksumDisplay}
                     </span>
                     <div style="display: flex; gap: 0.5rem;">
                         <button class="hide-btn" onclick="event.stopPropagation(); hideDevice(${switchId}, 'switch')" title="Hide Device">👁️</button>
@@ -1201,6 +1200,7 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
                     <button class="color-btn" onclick="event.stopPropagation(); showColorPicker(${switchId})" title="Change Color">🎨</button>
                 </div>
                 ${buttonsHTML}
+                ${checksumDisplay}
             `
 
     document.getElementById('canvas').appendChild(switchDiv)
@@ -1353,14 +1353,13 @@ function createRelay(relayId, relayName, outputs, x, y) {
     const statusClass = isOnline ? 'status-online' : 'status-offline'
     const statusDot = `<span class="status-indicator ${statusClass}"></span>`
     const checksum = firmware_checksums[relayId] || ''
-    const checksumDisplay = checksum ? `<div class="firmware-version" style="font-size: 0.75rem; color: #888; margin-top: 0.2rem;">FW: ${checksum}</div>` : ''
+    const checksumDisplay = checksum ? `<div class="firmware-version" style="font-size: 0.7rem; color: #64748b; text-align: center; padding: 0.4rem 0.5rem; margin-top: 0.5rem; background: rgba(100, 116, 139, 0.05); border-top: 1px solid rgba(100, 116, 139, 0.1); border-radius: 0 0 8px 8px; font-family: 'Courier New', monospace;">${checksum}</div>` : ''
 
     relayDiv.innerHTML = `
                 <div class="device-header">
                     <span>
                     ${statusDot}
                     <span class="device-id" onclick="event.stopPropagation(); copyIdToClipboard(${relayId}, this)">ID: ${relayId}</span>
-                    ${checksumDisplay}
                     </span>
                     <div style="display: flex; gap: 0.5rem;">
                         <button class="hide-btn" onclick="event.stopPropagation(); hideDevice(${relayId}, 'relay')" title="Hide Device">👁️</button>
@@ -1370,6 +1369,7 @@ function createRelay(relayId, relayName, outputs, x, y) {
                 </div>
                 <div class="device-name device-name-relay-${relayId}" style="cursor: pointer;">${relayName}</div>
                 ${outputsHTML}
+                ${checksumDisplay}
             `
 
     document.getElementById('canvas').appendChild(relayDiv)
@@ -1487,26 +1487,28 @@ function updateOnlineStatus() {
                 indicator.className = isOnline ? 'status-indicator status-online' : 'status-indicator status-offline'
             }
 
-            // Update or add firmware version display
-            const deviceIdSpan = element.querySelector('.device-id')
-            if (deviceIdSpan) {
-                const parentSpan = deviceIdSpan.parentElement
-                let fwDiv = parentSpan.querySelector('.firmware-version')
-                const checksum = firmware_checksums[parseInt(switchId)] || ''
+            // Update or add firmware version display at the bottom
+            let fwDiv = element.querySelector('.firmware-version')
+            const checksum = firmware_checksums[parseInt(switchId)] || ''
 
-                if (checksum) {
-                    if (!fwDiv) {
-                        fwDiv = document.createElement('div')
-                        fwDiv.className = 'firmware-version'
-                        fwDiv.style.fontSize = '0.75rem'
-                        fwDiv.style.color = '#888'
-                        fwDiv.style.marginTop = '0.2rem'
-                        parentSpan.appendChild(fwDiv)
-                    }
-                    fwDiv.textContent = `FW: ${checksum}`
-                } else if (fwDiv) {
-                    fwDiv.remove()
+            if (checksum) {
+                if (!fwDiv) {
+                    fwDiv = document.createElement('div')
+                    fwDiv.className = 'firmware-version'
+                    fwDiv.style.fontSize = '0.7rem'
+                    fwDiv.style.color = '#64748b'
+                    fwDiv.style.textAlign = 'center'
+                    fwDiv.style.padding = '0.4rem 0.5rem'
+                    fwDiv.style.marginTop = '0.5rem'
+                    fwDiv.style.background = 'rgba(100, 116, 139, 0.05)'
+                    fwDiv.style.borderTop = '1px solid rgba(100, 116, 139, 0.1)'
+                    fwDiv.style.borderRadius = '0 0 8px 8px'
+                    fwDiv.style.fontFamily = "'Courier New', monospace"
+                    element.appendChild(fwDiv)
                 }
+                fwDiv.textContent = checksum
+            } else if (fwDiv) {
+                fwDiv.remove()
             }
         }
     }
@@ -1521,26 +1523,28 @@ function updateOnlineStatus() {
                 indicator.className = isOnline ? 'status-indicator status-online' : 'status-indicator status-offline'
             }
 
-            // Update or add firmware version display
-            const deviceIdSpan = element.querySelector('.device-id')
-            if (deviceIdSpan) {
-                const parentSpan = deviceIdSpan.parentElement
-                let fwDiv = parentSpan.querySelector('.firmware-version')
-                const checksum = firmware_checksums[parseInt(relayId)] || ''
+            // Update or add firmware version display at the bottom
+            let fwDiv = element.querySelector('.firmware-version')
+            const checksum = firmware_checksums[parseInt(relayId)] || ''
 
-                if (checksum) {
-                    if (!fwDiv) {
-                        fwDiv = document.createElement('div')
-                        fwDiv.className = 'firmware-version'
-                        fwDiv.style.fontSize = '0.75rem'
-                        fwDiv.style.color = '#888'
-                        fwDiv.style.marginTop = '0.2rem'
-                        parentSpan.appendChild(fwDiv)
-                    }
-                    fwDiv.textContent = `FW: ${checksum}`
-                } else if (fwDiv) {
-                    fwDiv.remove()
+            if (checksum) {
+                if (!fwDiv) {
+                    fwDiv = document.createElement('div')
+                    fwDiv.className = 'firmware-version'
+                    fwDiv.style.fontSize = '0.7rem'
+                    fwDiv.style.color = '#64748b'
+                    fwDiv.style.textAlign = 'center'
+                    fwDiv.style.padding = '0.4rem 0.5rem'
+                    fwDiv.style.marginTop = '0.5rem'
+                    fwDiv.style.background = 'rgba(100, 116, 139, 0.05)'
+                    fwDiv.style.borderTop = '1px solid rgba(100, 116, 139, 0.1)'
+                    fwDiv.style.borderRadius = '0 0 8px 8px'
+                    fwDiv.style.fontFamily = "'Courier New', monospace"
+                    element.appendChild(fwDiv)
                 }
+                fwDiv.textContent = checksum
+            } else if (fwDiv) {
+                fwDiv.remove()
             }
         }
     }

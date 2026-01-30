@@ -99,7 +99,7 @@ var wsManager = new WebSocketManager('/rcm/ws/', function (event) {
     if (msg.type == "online_status") {
         online_relays = new Set(msg.online_relays)
         online_switches = new Set(msg.online_switches)
-        firmware_checksums = msg.firmware_checksums || {}
+        firmware_checksums = msg.firmware_versions || {}
 
         console.log('Online relays:', online_relays)
         console.log('Online switches:', online_switches)

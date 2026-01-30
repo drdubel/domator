@@ -36,8 +36,6 @@ async def periodic_check_devices(interval: int = 15):
         except Exception as e:
             print(f"Error checking relays/switches: {e}")
 
-        print(state_manager._firmware_versions)
-
         await ws_manager.broadcast(
             {
                 "type": "online_status",

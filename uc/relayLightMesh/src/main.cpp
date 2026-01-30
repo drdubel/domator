@@ -98,7 +98,6 @@ struct Statistics {
 bool registeredWithRoot = false;
 bool hasRootMac = false;
 uint32_t otaTimer = 0;
-bool otaTimerStarted = false;
 volatile bool otaInProgress = false;
 unsigned long lastRootComm = 0;
 
@@ -544,7 +543,6 @@ void buttonPressTask(void* pvParameters) {
 
             if (xSemaphoreTake(lightsArrayMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
                 lights[i] = buttonState[i] ? HIGH : LOW;
-                digitalWrite(relays[i], lights[i]);
                 clicks++;
 
                 char response[3];
@@ -614,7 +612,7 @@ void processMeshMessage(const espnow_message_t& message) {
 
     if (msg == "U") {
         DEBUG_INFO("Firmware update command received");
-        otaTimerStarted = true;
+        otaInProgress = true;
         return;
     }
 

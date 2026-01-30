@@ -945,8 +945,12 @@ function addConnectionHoverEffect(conn) {
         conn._originalPaintStyle = conn.getPaintStyle()
     }
 
-    // Add custom hover handlers
-    conn.bind("mouseenter", function () {
+    // Get the connection canvas element
+    const canvas = conn.canvas
+    if (!canvas) return
+
+    // Add hover effect using native DOM events
+    canvas.addEventListener('mouseenter', function () {
         // Don't change style if device is highlighted
         if (highlightedDevice) {
             return
@@ -973,9 +977,10 @@ function addConnectionHoverEffect(conn) {
         }
 
         conn.setPaintStyle({ stroke: hoverColor, strokeWidth: 5 })
+        canvas.style.cursor = 'pointer'
     })
 
-    conn.bind("mouseexit", function () {
+    canvas.addEventListener('mouseleave', function () {
         // Don't change style if device is highlighted
         if (highlightedDevice) {
             return
@@ -985,6 +990,7 @@ function addConnectionHoverEffect(conn) {
         if (conn._originalPaintStyle) {
             conn.setPaintStyle(conn._originalPaintStyle)
         }
+        canvas.style.cursor = 'default'
     })
 }
 

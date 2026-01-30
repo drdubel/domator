@@ -488,8 +488,8 @@ body {
 }
 
 .device-name {
-    font-weight: 700;
-    font-size: 1.125rem;
+    font-weight: 800;
+    font-size: 1.375rem;
     margin-bottom: 1rem;
     color: var(--text-primary);
     cursor: pointer;
@@ -878,7 +878,7 @@ body {
     }
 
     .device-name {
-        font-size: 1rem;
+        font-size: 1.125rem;
     }
 
     .button-item,

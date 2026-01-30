@@ -59,6 +59,7 @@ let canvasElement = null
 let zoomLevelElement = null
 let transformPending = false
 let lastDisplayedZoom = -1
+let rafId = null
 
 const API_BASE_URL = `https://${window.location.host}`
 
@@ -136,6 +137,18 @@ function hideLoading() {
 
 // ------------------- GPU TRANSFORM -------------------
 function applyCanvasTransform() {
+    if (rafId) return // Already scheduled
+    rafId = requestAnimationFrame(() => {
+        canvasElement.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`
+        rafId = null
+    })
+}
+
+function applyCanvasTransformImmediate() {
+    if (rafId) {
+        cancelAnimationFrame(rafId)
+        rafId = null
+    }
     canvasElement.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`
 }
 
@@ -148,7 +161,7 @@ function updateZoomDisplay() {
 }
 
 function applyVisualTransform() {
-    applyCanvasTransform()
+    applyCanvasTransformImmediate()
     updateZoomDisplay()
 }
 
@@ -159,6 +172,11 @@ function suspendJsPlumb() {
 }
 
 function resumeJsPlumb() {
+    if (rafId) {
+        cancelAnimationFrame(rafId)
+        rafId = null
+    }
+    applyCanvasTransformImmediate()
     if (jsPlumbInstance) {
         jsPlumbInstance.setSuspendDrawing(false, true) // second param = repaint immediately
     }

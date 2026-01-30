@@ -244,6 +244,55 @@ function generateCytoscapeElements() {
     return elements;
 }
 
+// Position management
+function loadDevicePositions() {
+    const saved = localStorage.getItem('rcm_device_positions');
+    return saved ? JSON.parse(saved) : {};
+}
+
+function getSavedPosition(deviceId, defaultX, defaultY) {
+    const positions = loadDevicePositions();
+    return positions[deviceId] || { x: defaultX, y: defaultY };
+}
+
+function saveDevicePositions() {
+    const positions = {};
+
+    // Save switch positions
+    for (const switchId of Object.keys(switches)) {
+        const node = cy.$(`#switch-${switchId}`);
+        if (node.length) {
+            positions[`switch-${switchId}`] = {
+                x: Math.round(node.position('x')),
+                y: Math.round(node.position('y'))
+            };
+        }
+    }
+
+    // Save relay positions
+    for (const relayId of Object.keys(relays)) {
+        const node = cy.$(`#relay-${relayId}`);
+        if (node.length) {
+            positions[`relay-${relayId}`] = {
+                x: Math.round(node.position('x')),
+                y: Math.round(node.position('y'))
+            };
+        }
+    }
+
+    localStorage.setItem('rcm_device_positions', JSON.stringify(positions));
+}
+
+function loadDeviceColors() {
+    const saved = localStorage.getItem('rcm_device_colors');
+    return saved ? JSON.parse(saved) : {};
+}
+
+function getSavedColor(deviceId) {
+    const colors = loadDeviceColors();
+    return colors[deviceId];
+}
+
 // Load configuration from API
 async function loadConfiguration() {
     showLoading();
@@ -260,28 +309,35 @@ async function loadConfiguration() {
         // Relays: API returns { relayId: relayName } -> convert to { relayId: { name, outputs, x, y } }
         if (relaysData) {
             relays = {};
+            let relayY = 25000;
             for (const [relayId, relayName] of Object.entries(relaysData)) {
+                const savedPos = getSavedPosition(`relay-${relayId}`, 25000, relayY);
                 relays[relayId] = {
                     name: relayName,
                     outputs: outputsData?.[relayId] || {},
-                    x: 25000,
-                    y: 25000
+                    x: savedPos.x,
+                    y: savedPos.y
                 };
+                relayY += 400;
             }
         }
 
         // Switches: API returns { switchId: [switchName, buttonCount] } -> convert to { switchId: { name, buttonCount, color, x, y } }
         if (switchesData) {
             switches = {};
+            let switchY = 25000;
             for (const [switchId, switchData] of Object.entries(switchesData)) {
                 const [switchName, buttonCount] = switchData;
+                const savedPos = getSavedPosition(`switch-${switchId}`, 23500, switchY);
+                const savedColor = getSavedColor(`switch-${switchId}`);
                 switches[switchId] = {
                     name: switchName,
                     buttonCount: buttonCount,
-                    color: '#6366f1',
-                    x: 23500,
-                    y: 25000
+                    color: savedColor || '#6366f1',
+                    x: savedPos.x,
+                    y: savedPos.y
                 };
+                switchY += (buttonCount * 72 + 185);
             }
         }
 
@@ -542,8 +598,27 @@ function createDeviceOverlays() {
         updateOverlayPosition(node, overlay);
     });
 
-    // Update positions on pan/zoom
-    cy.on('pan zoom', debounce(() => {
+    // Enable dragging on container nodes
+    cy.nodes('[type="switch"], [type="relay"]').forEach(node => {
+        node.grabify();
+    });
+
+    // Update overlay positions when nodes are dragged
+    cy.on('drag', 'node[type="switch"], node[type="relay"]', function (event) {
+        const node = event.target;
+        const deviceId = node.data('deviceId');
+        const type = node.data('type');
+        const overlay = document.getElementById(`overlay-${type}-${deviceId}`);
+        if (overlay) {
+            updateOverlayPosition(node, overlay);
+        }
+    });
+
+    // Save positions after drag ends
+    cy.on('dragfree', 'node[type="switch"], node[type="relay"]', debounce(saveDevicePositions, 300));
+
+    // Update positions on pan/zoom - no debounce for smooth movement
+    cy.on('pan zoom', () => {
         cy.nodes('[type="switch"], [type="relay"]').forEach(node => {
             const deviceId = node.data('deviceId');
             const type = node.data('type');
@@ -552,20 +627,19 @@ function createDeviceOverlays() {
                 updateOverlayPosition(node, overlay);
             }
         });
-    }, 16)); // ~60fps
+    });
 }
 
 function updateOverlayPosition(node, overlay) {
     const pos = node.renderedPosition();
     const zoom = cy.zoom();
-    const width = 280 * zoom;
-    const height = node.data('height') * zoom;
+    const width = 280;
+    const height = node.data('height');
 
+    // Keep cards at constant size, only position follows zoom
     overlay.style.left = `${pos.x - width / 2}px`;
     overlay.style.top = `${pos.y - height / 2}px`;
     overlay.style.width = `${width}px`;
-    overlay.style.transform = `scale(${zoom})`;
-    overlay.style.transformOrigin = 'center center';
 }
 
 // Initialize Cytoscape

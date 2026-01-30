@@ -218,14 +218,28 @@ async function loadConfiguration() {
     showLoading();
 
     try {
-        const switchesData = await fetchAPI('/lights/switches');
-        const relaysData = await fetchAPI('/lights/relays');
-        const connectionsData = await fetchAPI('/lights/connections');
-        const lightsData = await fetchAPI('/lights/get_lights');
+        const [relaysData, outputsData, switchesData, connectionsData] = await Promise.all([
+            fetchAPI('/lights/get_relays'),
+            fetchAPI('/lights/get_outputs'),
+            fetchAPI('/lights/get_switches'),
+            fetchAPI('/lights/get_connections')
+        ]);
 
-        if (switchesData) switches = switchesData;
         if (relaysData) relays = relaysData;
+        if (switchesData) switches = switchesData;
         if (connectionsData) connections = connectionsData;
+
+        // Merge outputs into relays
+        if (outputsData && relaysData) {
+            for (const [relayId, outputs] of Object.entries(outputsData)) {
+                if (relays[relayId]) {
+                    relays[relayId].outputs = outputs;
+                }
+            }
+        }
+
+        // Get light states
+        const lightsData = await fetchAPI('/lights/get_lights');
         if (lightsData) lights = lightsData;
 
         console.log('Loaded:', { switches, relays, connections, lights });

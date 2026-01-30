@@ -4,43 +4,19 @@ let switches = {}
 let relays = {}
 let online_relays = new Set()
 let online_switches = new Set()
-let up_to_date_devices = {}
+let up_to_date_devices = {} // Maps device_id to boolean indicating if firmware is up to date
 let connections = {}
 var lights = {}
 var pendingClicks = new Set()
 let currentEditTarget = null
 let highlightedDevice = null
 let isLoadingConnections = false
-let connectionLookupMap = {}
+let connectionLookupMap = {} // Maps device IDs to their connections for fast lookup
+let zoomUpdateScheduled = false
 let cachedElements = {}
-let hiddenDevices = new Set()
+let hiddenDevices = new Set() // Track hidden devices
 
-// =================== ULTRA-OPTIMIZED ZOOM/PAN SYSTEM ===================
-
-// Zoom and Pan State
-let zoomLevel = 0.4
-let panX = 0
-let panY = 0
-let isPanning = false
-let isPinching = false
-let startX = 0
-let startY = 0
-let lastPinchDistance = 0
-
-// Performance tracking
-let isInteracting = false
-let interactionTimeout = null
-let lastJsPlumbSync = 0
-const JSPLUMB_IDLE_SYNC_DELAY = 250 // Only sync after user stops interacting
-
-// Cached DOM elements
-let canvasElement = null
-let canvasWrapper = null
-let zoomLevelElement = null
-
-const API_BASE_URL = `https://${window.location.host}`
-
-// ------------------- LOAD/SAVE CANVAS VIEW -------------------
+// Zoom and Pan System - GPU Accelerated
 function loadCanvasView() {
     const saved = localStorage.getItem('rcm_canvas_view')
     if (saved) {
@@ -68,253 +44,21 @@ function getDefaultPanY() {
     return viewportCenterY - (deviceCenterY * defaultZoom)
 }
 
-function saveCanvasView() {
-    localStorage.setItem('rcm_canvas_view', JSON.stringify({
-        zoomLevel: zoomLevel,
-        panX: panX,
-        panY: panY
-    }))
-}
+const initialView = loadCanvasView()
+let zoomLevel = initialView.zoomLevel
+let panX = initialView.panX
+let panY = initialView.panY
+let isPanning = false
+let isPinching = false
+let startX = 0
+let startY = 0
+let lastPinchDistance = 0
 
-// ------------------- INTERACTION STATE MANAGEMENT -------------------
-function startInteraction() {
-    isInteracting = true
-    clearTimeout(interactionTimeout)
+// Cached DOM elements
+let canvasElement = null
+let zoomLevelElement = null
 
-    if (!canvasElement) canvasElement = document.getElementById('canvas')
-    canvasElement.style.willChange = 'transform'
-
-    // Hide connections during interaction for better performance
-    if (jsPlumbInstance) {
-        const allConnections = jsPlumbInstance.getAllConnections()
-        allConnections.forEach(conn => {
-            if (conn.canvas) {
-                conn.canvas.style.opacity = '0.3' // Dim instead of hide for visual feedback
-            }
-        })
-    }
-}
-
-function endInteraction() {
-    clearTimeout(interactionTimeout)
-
-    interactionTimeout = setTimeout(() => {
-        isInteracting = false
-
-        if (canvasElement) {
-            canvasElement.style.willChange = 'auto'
-        }
-
-        // Restore connections and sync jsPlumb
-        if (jsPlumbInstance) {
-            const allConnections = jsPlumbInstance.getAllConnections()
-            allConnections.forEach(conn => {
-                if (conn.canvas && !conn.canvas.classList.contains('dimmed-by-highlight')) {
-                    conn.canvas.style.opacity = '1'
-                }
-            })
-
-            syncJsPlumb()
-        }
-
-        saveCanvasView()
-    }, JSPLUMB_IDLE_SYNC_DELAY)
-}
-
-// ------------------- GPU-ACCELERATED TRANSFORM -------------------
-let rafId = null
-
-function applyVisualTransform() {
-    if (rafId) return
-
-    rafId = requestAnimationFrame(() => {
-        if (!canvasElement) canvasElement = document.getElementById('canvas')
-        if (!zoomLevelElement) zoomLevelElement = document.getElementById('zoomLevel')
-
-        // GPU-accelerated transform
-        canvasElement.style.transform = `translate3d(${panX}px, ${panY}px, 0) scale(${zoomLevel})`
-        zoomLevelElement.innerText = `${Math.round(zoomLevel * 100)}%`
-
-        rafId = null
-    })
-}
-
-// ------------------- MINIMAL JSPLUMB SYNC -------------------
-function syncJsPlumb() {
-    if (!jsPlumbInstance) return
-
-    const now = performance.now()
-    lastJsPlumbSync = now
-
-    // Use setZoom only - don't repaint during interaction
-    jsPlumbInstance.setZoom(zoomLevel)
-
-    // Only do full repaint when idle
-    if (!isInteracting) {
-        requestAnimationFrame(() => {
-            jsPlumbInstance.batch(() => {
-                jsPlumbInstance.repaintEverything()
-            })
-        })
-    }
-}
-
-// ------------------- ZOOM AT POINT (OPTIMIZED) -------------------
-function zoomAtPoint(factor, centerX, centerY) {
-    const prevScale = zoomLevel
-    const newZoom = Math.min(Math.max(prevScale * factor, 0.2), 3)
-
-    if (newZoom === zoomLevel) return
-
-    const scaleFactor = newZoom / prevScale
-    zoomLevel = newZoom
-
-    panX = centerX - (centerX - panX) * scaleFactor
-    panY = centerY - (centerY - panY) * scaleFactor
-
-    applyVisualTransform()
-}
-
-// ------------------- RESET / BUTTON ZOOM -------------------
-function resetZoom() {
-    zoomLevel = 0.4
-    panX = getDefaultPanX()
-    panY = getDefaultPanY()
-    applyVisualTransform()
-
-    // Force immediate sync for button clicks
-    setTimeout(() => {
-        syncJsPlumb()
-        saveCanvasView()
-    }, 50)
-}
-
-function zoomIn() {
-    startInteraction()
-    zoomAtPoint(1.1, window.innerWidth / 2, window.innerHeight / 2)
-    endInteraction()
-}
-
-function zoomOut() {
-    startInteraction()
-    zoomAtPoint(0.9, window.innerWidth / 2, window.innerHeight / 2)
-    endInteraction()
-}
-
-// ------------------- ULTRA-OPTIMIZED PANNING SYSTEM -------------------
-function initPanning() {
-    canvasWrapper = document.getElementById('canvas-wrapper')
-    canvasElement = document.getElementById('canvas')
-    zoomLevelElement = document.getElementById('zoomLevel')
-
-    // Load initial view
-    const initialView = loadCanvasView()
-    zoomLevel = initialView.zoomLevel
-    panX = initialView.panX
-    panY = initialView.panY
-
-    applyVisualTransform()
-
-    // ----------------- MOUSE PANNING -----------------
-    canvasWrapper.addEventListener('mousedown', e => {
-        if (e.target !== canvasWrapper && e.target !== canvasElement) return
-        isPanning = true
-        startX = e.clientX - panX
-        startY = e.clientY - panY
-        canvasWrapper.classList.add('grabbing')
-        startInteraction()
-    })
-
-    document.addEventListener('mousemove', e => {
-        if (!isPanning) return
-
-        panX = e.clientX - startX
-        panY = e.clientY - startY
-        applyVisualTransform()
-    })
-
-    document.addEventListener('mouseup', () => {
-        if (!isPanning) return
-        isPanning = false
-        canvasWrapper.classList.remove('grabbing')
-        endInteraction()
-    })
-
-    // ----------------- TOUCH PANNING -----------------
-    canvasWrapper.addEventListener('touchstart', e => {
-        if (e.touches.length === 1 && (e.target === canvasWrapper || e.target === canvasElement)) {
-            isPanning = true
-            const touch = e.touches[0]
-            startX = touch.clientX - panX
-            startY = touch.clientY - panY
-            canvasWrapper.classList.add('grabbing')
-            startInteraction()
-            e.preventDefault()
-        }
-        if (e.touches.length === 2) {
-            isPinching = true
-            isPanning = false
-            canvasWrapper.classList.remove('grabbing')
-            const t1 = e.touches[0], t2 = e.touches[1]
-            lastPinchDistance = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY)
-            startInteraction()
-            e.preventDefault()
-        }
-    }, { passive: false })
-
-    document.addEventListener('touchmove', e => {
-        if (isPanning && e.touches.length === 1) {
-            const touch = e.touches[0]
-            panX = touch.clientX - startX
-            panY = touch.clientY - startY
-            applyVisualTransform()
-            e.preventDefault()
-        }
-        if (isPinching && e.touches.length === 2) {
-            const t1 = e.touches[0], t2 = e.touches[1]
-            const distance = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY)
-            if (lastPinchDistance > 0) {
-                const center = {
-                    x: (t1.clientX + t2.clientX) / 2,
-                    y: (t1.clientY + t2.clientY) / 2
-                }
-                const factor = distance / lastPinchDistance
-                zoomAtPoint(factor, center.x, center.y)
-            }
-            lastPinchDistance = distance
-            e.preventDefault()
-        }
-    }, { passive: false })
-
-    document.addEventListener('touchend', e => {
-        if (isPanning || isPinching) {
-            isPanning = false
-            isPinching = false
-            lastPinchDistance = 0
-            canvasWrapper.classList.remove('grabbing')
-            endInteraction()
-        }
-    })
-
-    // ----------------- MOUSE WHEEL ZOOM -----------------
-    const wheelHandler = e => {
-        const rect = canvasWrapper.getBoundingClientRect()
-        const centerX = e.clientX - rect.left
-        const centerY = e.clientY - rect.top
-        const factor = e.deltaY < 0 ? 1.1 : 0.9
-
-        startInteraction()
-        zoomAtPoint(factor, centerX, centerY)
-        endInteraction()
-
-        e.preventDefault()
-    }
-
-    canvasWrapper.addEventListener('wheel', wheelHandler, { passive: false })
-
-    // Initial sync after a delay
-    setTimeout(() => syncJsPlumb(), 200)
-}
+const API_BASE_URL = `https://${window.location.host}`
 
 // Performance utilities
 function throttle(func, delay) {
@@ -336,12 +80,11 @@ function debounce(func, delay) {
     }
 }
 
-// =================== REST OF YOUR CODE ===================
-
 // Initialize WebSocket manager
 var wsManager = new WebSocketManager('/rcm/ws/', function (event) {
     var msg = JSON.parse(event.data)
     console.log(msg)
+
 
     if (msg.type == "update") {
         loadConfiguration()
@@ -368,12 +111,14 @@ var wsManager = new WebSocketManager('/rcm/ws/', function (event) {
     if (msg.type == "switch_state" && msg.switch_id && msg.button_id) {
         highlightButton(msg.switch_id, msg.button_id)
 
+        // Auto-clear highlight after 5 seconds
         setTimeout(() => {
             clearButtonHighlight(msg.switch_id, msg.button_id)
         }, 5000)
     }
 })
 
+// Connect and start connection monitoring
 wsManager.connect()
 wsManager.startConnectionCheck()
 
@@ -383,6 +128,169 @@ function showLoading() {
 
 function hideLoading() {
     document.getElementById('loading').classList.remove('active')
+}
+
+// =================== OPTIMIZED PAN/ZOOM SYSTEM ===================
+
+// ------------------- GPU TRANSFORM -------------------
+function applyVisualTransform() {
+    if (!canvasElement) canvasElement = document.getElementById('canvas')
+    if (!zoomLevelElement) zoomLevelElement = document.getElementById('zoomLevel')
+    canvasElement.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`
+    zoomLevelElement.innerText = `${Math.round(zoomLevel * 100)}%`
+}
+
+// ------------------- JSPLUMB SYNC -------------------
+function syncJsPlumb() {
+    if (!jsPlumbInstance) return
+    jsPlumbInstance.setZoom(zoomLevel)
+    jsPlumbInstance.repaintEverything()
+}
+
+// ------------------- DEBOUNCED SYNC -------------------
+let syncTimeout = null
+function debouncedSyncJsPlumb() {
+    clearTimeout(syncTimeout)
+    syncTimeout = setTimeout(syncJsPlumb, 120) // only after interaction ends
+}
+
+// ------------------- ZOOM AT POINT -------------------
+function zoomAtPoint(factor, centerX, centerY, commit = false) {
+    const prevScale = zoomLevel
+    zoomLevel *= factor
+    zoomLevel = Math.min(Math.max(zoomLevel, 0.2), 3)
+
+    panX = centerX - (centerX - panX) * (zoomLevel / prevScale)
+    panY = centerY - (centerY - panY) * (zoomLevel / prevScale)
+
+    applyVisualTransform()
+    if (commit) syncJsPlumb()
+    else debouncedSyncJsPlumb()
+}
+
+// ------------------- RESET / BUTTON ZOOM -------------------
+function resetZoom() {
+    zoomLevel = 0.4
+    panX = getDefaultPanX()
+    panY = getDefaultPanY()
+    applyVisualTransform()
+    syncJsPlumb()
+    saveCanvasView()
+}
+function zoomIn() { zoomAtPoint(1.1, window.innerWidth / 2, window.innerHeight / 2, true) }
+function zoomOut() { zoomAtPoint(0.9, window.innerWidth / 2, window.innerHeight / 2, true) }
+
+// ------------------- INIT PANNING / ZOOM -------------------
+function initPanning() {
+    const wrapper = document.getElementById('canvas-wrapper')
+    canvasElement = document.getElementById('canvas')
+    zoomLevelElement = document.getElementById('zoomLevel')
+
+    // ----------------- MOUSE PANNING -----------------
+    wrapper.addEventListener('mousedown', e => {
+        if (e.target !== wrapper && e.target !== canvasElement) return
+        isPanning = true
+        startX = e.clientX - panX
+        startY = e.clientY - panY
+        wrapper.classList.add('grabbing')
+    })
+    document.addEventListener('mousemove', e => {
+        if (!isPanning) return
+        panX = e.clientX - startX
+        panY = e.clientY - startY
+        applyVisualTransform()
+    })
+    document.addEventListener('mouseup', () => {
+        if (!isPanning) return
+        isPanning = false
+        wrapper.classList.remove('grabbing')
+        syncJsPlumb()
+        saveCanvasView()
+    })
+
+    // ----------------- TOUCH PANNING -----------------
+    wrapper.addEventListener('touchstart', e => {
+        if (e.touches.length === 1 && (e.target === wrapper || e.target === canvasElement)) {
+            isPanning = true
+            const touch = e.touches[0]
+            startX = touch.clientX - panX
+            startY = touch.clientY - panY
+            wrapper.classList.add('grabbing')
+            e.preventDefault()
+        }
+        if (e.touches.length === 2) { // pinch start
+            isPinching = true
+            isPanning = false
+            wrapper.classList.remove('grabbing')
+            const t1 = e.touches[0], t2 = e.touches[1]
+            lastPinchDistance = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY)
+            e.preventDefault()
+        }
+    }, { passive: false })
+
+    document.addEventListener('touchmove', e => {
+        if (isPanning && e.touches.length === 1) {
+            const touch = e.touches[0]
+            panX = touch.clientX - startX
+            panY = touch.clientY - startY
+            applyVisualTransform()
+            e.preventDefault()
+        }
+        if (isPinching && e.touches.length === 2) {
+            const t1 = e.touches[0], t2 = e.touches[1]
+            const distance = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY)
+            if (lastPinchDistance > 0) {
+                const center = {
+                    x: (t1.clientX + t2.clientX) / 2,
+                    y: (t1.clientY + t2.clientY) / 2
+                }
+                const factor = distance / lastPinchDistance
+                zoomAtPoint(factor, center.x, center.y, false)
+            }
+            lastPinchDistance = distance
+            e.preventDefault()
+        }
+    }, { passive: false })
+
+    document.addEventListener('touchend', e => {
+        if (isPanning) {
+            isPanning = false
+            wrapper.classList.remove('grabbing')
+            syncJsPlumb()
+            saveCanvasView()
+        }
+        if (isPinching) {
+            isPinching = false
+            lastPinchDistance = 0
+            debouncedSyncJsPlumb()
+            setTimeout(saveCanvasView, 150)
+        }
+    })
+
+    // ----------------- MOUSE WHEEL ZOOM -----------------
+    const wheelHandler = e => {
+        const rect = wrapper.getBoundingClientRect()
+        const centerX = e.clientX - rect.left
+        const centerY = e.clientY - rect.top
+        const factor = e.deltaY < 0 ? 1.1 : 0.9
+        zoomAtPoint(factor, centerX, centerY, false)
+        e.preventDefault()
+    }
+    wrapper.addEventListener('wheel', throttle(wheelHandler, 16), { passive: false })
+
+    // ----------------- INITIAL VIEW -----------------
+    applyVisualTransform()
+    syncJsPlumb()
+}
+
+// Save/Load canvas view
+function saveCanvasView() {
+    localStorage.setItem('rcm_canvas_view', JSON.stringify({
+        zoomLevel: zoomLevel,
+        panX: panX,
+        panY: panY
+    }))
+    console.log('Canvas view saved')
 }
 
 // Save/Load device positions
@@ -427,6 +335,8 @@ function resetAllPositions() {
     if (!confirm('Reset all device positions to default? This will center all devices on the canvas.')) return
 
     localStorage.removeItem('rcm_device_positions')
+
+    // Reload configuration to apply default positions
     loadConfiguration()
 }
 
@@ -473,12 +383,14 @@ function hideDevice(deviceId, deviceType) {
         element.style.display = 'none'
     }
 
+    // Hide connections
     const deviceConnections = connectionLookupMap[`${deviceType}-${deviceId}`] || []
     deviceConnections.forEach(conn => {
         conn.setVisible(false)
     })
 
-    if (jsPlumbInstance && !isInteracting) {
+    // Repaint to remove endpoint dots immediately
+    if (jsPlumbInstance) {
         jsPlumbInstance.repaintEverything()
     }
 }
@@ -490,6 +402,7 @@ function showAllHiddenDevices() {
             element.style.display = 'block'
         }
 
+        // Show connections
         const deviceConnections = connectionLookupMap[deviceKey] || []
         deviceConnections.forEach(conn => {
             conn.setVisible(true)
@@ -498,17 +411,38 @@ function showAllHiddenDevices() {
 
     hiddenDevices.clear()
 
-    if (jsPlumbInstance && !isInteracting) {
+    // Repaint to fix connection line positions immediately
+    if (jsPlumbInstance) {
         jsPlumbInstance.repaintEverything()
     }
 }
 
 function showColorPicker(switchId) {
     const colors = [
-        '#6366f1', '#ef4444', '#f59e0b', '#10b981', '#8b5cf6', '#ec4899',
-        '#06b6d4', '#f97316', '#84cc16', '#a855f7', '#14b8a6', '#f43f5e',
-        '#facc15', '#fb923c', '#4ade80', '#2dd4bf', '#c084fc', '#f472b6',
-        '#fb7185', '#fbbf24', '#22d3ee', '#a3e635', '#fca5a5', '#d8b4fe'
+        '#6366f1', // Default blue
+        '#ef4444', // Red
+        '#f59e0b', // Orange
+        '#10b981', // Green
+        '#8b5cf6', // Purple
+        '#ec4899', // Pink
+        '#06b6d4', // Cyan
+        '#f97316', // Orange-red
+        '#84cc16', // Lime
+        '#a855f7', // Violet
+        '#14b8a6', // Teal
+        '#f43f5e', // Rose
+        '#facc15', // Yellow
+        '#fb923c', // Light orange
+        '#4ade80', // Light green
+        '#2dd4bf', // Light teal
+        '#c084fc', // Light purple
+        '#f472b6', // Light pink
+        '#fb7185', // Watermelon
+        '#fbbf24', // Amber
+        '#22d3ee', // Sky blue
+        '#a3e635', // Lime green
+        '#fca5a5', // Coral
+        '#d8b4fe'  // Lavender
     ]
 
     const colorButtons = colors.map(color =>
@@ -540,10 +474,12 @@ function closeColorPicker() {
 function setDeviceColor(switchId, color) {
     switches[switchId].color = color
 
+    // Update switch visual
     const switchElement = document.getElementById(`switch-${switchId}`)
     if (switchElement) {
         switchElement.style.borderLeftColor = color
 
+        // Update all buttons in the switch
         const buttons = switchElement.querySelectorAll('.button-item')
         buttons.forEach(btn => {
             btn.style.background = `linear-gradient(135deg, ${color}33 0%, ${color}55 100%)`
@@ -551,6 +487,7 @@ function setDeviceColor(switchId, color) {
         })
     }
 
+    // Update connection colors
     const deviceId = `switch-${switchId}`
     const deviceConnections = connectionLookupMap[deviceId] || []
 
@@ -578,6 +515,7 @@ function applyDeviceColor(switchId) {
         btn.style.borderColor = `${color}66`
     })
 
+    // Update connection colors
     setTimeout(() => {
         const deviceId = `switch-${switchId}`
         const deviceConnections = connectionLookupMap[deviceId] || []
@@ -690,6 +628,7 @@ function bindJsPlumbEvents() {
                             connection: info.connection
                         })
 
+                        // Update lookup map
                         const switchDeviceId = `switch-${switchId}`
                         const relayDeviceId = `relay-${relayId}`
                         if (!connectionLookupMap[switchDeviceId]) connectionLookupMap[switchDeviceId] = []
@@ -736,6 +675,7 @@ function bindJsPlumbEvents() {
                             )
                         }
 
+                        // Update lookup map
                         const switchDeviceId = `switch-${switchId}`
                         const relayDeviceId = `relay-${relayId}`
                         if (connectionLookupMap[switchDeviceId]) {
@@ -760,6 +700,7 @@ function bindJsPlumbEvents() {
 
     jsPlumbInstance.bind("click", function (connection, e) {
         const { x, y } = { x: e.offsetX, y: e.offsetY }
+        // Optional: implement a small distance check to ensure correct connection
         console.log("Clicked connection:", connection.sourceId, "->", connection.targetId)
     })
 
@@ -795,6 +736,7 @@ function bindJsPlumbEvents() {
                         )
                     }
 
+                    // Update lookup map
                     const switchDeviceId = `switch-${switchId}`
                     const relayDeviceId = `relay-${relayId}`
                     if (connectionLookupMap[switchDeviceId]) {
@@ -822,19 +764,22 @@ function highlightDevice(deviceId) {
     element.classList.add('highlighted')
     highlightedDevice = deviceId
 
+    // Dim all other devices
     document.querySelectorAll('.device-box').forEach(el => {
         if (el.id !== deviceId) {
             el.style.opacity = '0.3'
         }
     })
 
+    // Use lookup map for faster connection finding
     const deviceConnections = connectionLookupMap[deviceId] || []
 
+    // Dim all connections first
     const allConnections = jsPlumbInstance.getAllConnections()
     allConnections.forEach(conn => {
         conn.canvas.style.opacity = '0.2'
         conn.canvas.classList.remove('highlighted')
-        conn.canvas.classList.add('dimmed-by-highlight')
+        // Remove highlighted class from endpoints
         if (conn.endpoints) {
             conn.endpoints.forEach(ep => {
                 if (ep.canvas) ep.canvas.classList.remove('highlighted')
@@ -849,8 +794,8 @@ function highlightDevice(deviceId) {
         conn.setPaintStyle({ stroke: '#ef4444', strokeWidth: 5 })
         conn.canvas.style.opacity = '1'
         conn.canvas.classList.add('highlighted')
-        conn.canvas.classList.remove('dimmed-by-highlight')
 
+        // Add highlighted class to endpoints
         if (conn.endpoints) {
             conn.endpoints.forEach(ep => {
                 if (ep.canvas) ep.canvas.classList.add('highlighted')
@@ -886,16 +831,18 @@ function clearHighlights() {
         el.classList.remove('highlighted')
     })
 
+    // Restore full opacity to all devices
     document.querySelectorAll('.device-box').forEach(el => {
         el.style.opacity = '1'
     })
 
     const allConnections = jsPlumbInstance.getAllConnections()
     allConnections.forEach(conn => {
+        // Get the source switch ID to check for custom color
         const sourceId = conn.sourceId
         const switchMatch = sourceId.match(/switch-(\d+)-btn/)
 
-        let color = '#6366f1'
+        let color = '#6366f1' // default blue
         if (switchMatch) {
             const switchId = parseInt(switchMatch[1])
             if (switches[switchId] && switches[switchId].color) {
@@ -906,8 +853,8 @@ function clearHighlights() {
         conn.setPaintStyle({ stroke: color, strokeWidth: 3 })
         conn.canvas.style.opacity = '1'
         conn.canvas.classList.remove('highlighted')
-        conn.canvas.classList.remove('dimmed-by-highlight')
 
+        // Remove highlighted class from endpoints
         if (conn.endpoints) {
             conn.endpoints.forEach(ep => {
                 if (ep.canvas) ep.canvas.classList.remove('highlighted')
@@ -925,20 +872,26 @@ function highlightButton(switchId, buttonId) {
         return
     }
 
-    let targetColor = '#6366f1'
+    // Get the custom color if set, otherwise use default blue
+    let targetColor = '#6366f1' // default blue
     if (switches[switchId] && switches[switchId].color) {
         targetColor = switches[switchId].color
     }
 
+    // Set initial red background
     buttonElement.style.background = 'rgba(255, 0, 0, 1)'
     buttonElement.style.transition = 'none'
 
+    // Force reflow to ensure the transition works
     buttonElement.offsetHeight
 
+    // Convert hex color to rgba for gradient
     const r = parseInt(targetColor.slice(1, 3), 16)
     const g = parseInt(targetColor.slice(3, 5), 16)
     const b = parseInt(targetColor.slice(5, 7), 16)
 
+    // Start fading to the switch's custom color over 5 seconds
+    // Using ease-in: starts slow, ends fast
     requestAnimationFrame(() => {
         buttonElement.style.transition = 'background 5s ease-in'
         buttonElement.style.background = `linear-gradient(135deg, rgba(${r}, ${g}, ${b}, 0.2) 0%, rgba(${r}, ${g}, ${b}, 0.33) 100%)`
@@ -1008,19 +961,26 @@ function clearButtonHighlight(switchId, buttonId) {
     console.log('Cleared button highlight:', switchId, buttonId)
 }
 
+// Helper function to add hover effect to a connection
 function addConnectionHoverEffect(conn) {
+    // Store original paint style
     if (!conn._originalPaintStyle) {
         conn._originalPaintStyle = conn.getPaintStyle()
     }
 
+    // Get the connection canvas element
     const canvas = conn.canvas
     if (!canvas) return
 
+    // Add hover effect using native DOM events
     canvas.addEventListener('mouseenter', function () {
+        // When device is highlighted, only allow hover on highlighted connections
         if (highlightedDevice) {
+            // Check if this connection is highlighted
             if (!canvas.classList.contains('highlighted')) {
                 return
             }
+            // If highlighted, make it even brighter
             conn.setPaintStyle({ stroke: '#ff6b6b', strokeWidth: 6 })
             canvas.style.cursor = 'pointer'
             return
@@ -1029,12 +989,15 @@ function addConnectionHoverEffect(conn) {
         const currentStyle = conn.getPaintStyle()
         const currentColor = currentStyle.stroke
 
+        // Brighten the current color for hover
         let hoverColor = currentColor
         if (currentColor.startsWith('#')) {
+            // Convert hex to rgb, brighten, and use
             const r = parseInt(currentColor.slice(1, 3), 16)
             const g = parseInt(currentColor.slice(3, 5), 16)
             const b = parseInt(currentColor.slice(5, 7), 16)
 
+            // Brighten by adding to each channel (max 255)
             const brighten = 60
             const hr = Math.min(255, r + brighten)
             const hg = Math.min(255, g + brighten)
@@ -1048,16 +1011,19 @@ function addConnectionHoverEffect(conn) {
     })
 
     canvas.addEventListener('mouseleave', function () {
+        // When device is highlighted, restore highlighted style
         if (highlightedDevice && canvas.classList.contains('highlighted')) {
             conn.setPaintStyle({ stroke: '#ef4444', strokeWidth: 5 })
             canvas.style.cursor = 'default'
             return
         }
 
+        // Don't change style if device is highlighted but this connection is not
         if (highlightedDevice) {
             return
         }
 
+        // Restore original style
         if (conn._originalPaintStyle) {
             conn.setPaintStyle(conn._originalPaintStyle)
         }
@@ -1086,6 +1052,7 @@ function initJsPlumb() {
             DragOptions: { cursor: 'move', zIndex: 2000 }
         })
 
+        // Bind hover events to handle custom colors
         jsPlumbInstance.bind("connection", function (info) {
             addConnectionHoverEffect(info.connection)
         })
@@ -1095,12 +1062,14 @@ function initJsPlumb() {
 
         const canvas = document.getElementById('canvas')
 
+        // Clear highlights on click (desktop)
         canvas.addEventListener('click', function (e) {
             if (e.target.id === 'canvas') {
                 clearHighlights()
             }
         })
 
+        // Clear highlights on tap (touch screens)
         let canvasTouchStart = null
         canvas.addEventListener('touchstart', function (e) {
             if (e.target.id === 'canvas' && e.touches.length === 1) {
@@ -1119,6 +1088,7 @@ function initJsPlumb() {
                 const dy = Math.abs(touch.clientY - canvasTouchStart.y)
                 const duration = Date.now() - canvasTouchStart.time
 
+                // Only clear if it was a tap (not a pan/swipe)
                 if (dx < 10 && dy < 10 && duration < 200) {
                     clearHighlights()
                 }
@@ -1134,6 +1104,7 @@ async function loadConfiguration() {
     showLoading()
     isLoadingConnections = true
 
+    // Suspend drawing for better performance
     if (jsPlumbInstance) {
         jsPlumbInstance.batch(() => {
             jsPlumbInstance.deleteEveryConnection()
@@ -1141,6 +1112,7 @@ async function loadConfiguration() {
         })
     }
 
+    // Clear canvas
     const canvas = cachedElements.canvas || document.getElementById('canvas')
     canvas.innerHTML = ''
     if (!cachedElements.canvas) cachedElements.canvas = canvas
@@ -1150,7 +1122,7 @@ async function loadConfiguration() {
     connections = {}
     connectionLookupMap = {}
     cachedElements = { canvas, zoomLevel: cachedElements.zoomLevel }
-    hiddenDevices = new Set()
+    hiddenDevices = new Set()  // Don't persist hidden devices across reloads
 
     try {
         const [relaysData, outputsData, switchesData, connectionsData] = await Promise.all([
@@ -1165,6 +1137,7 @@ async function loadConfiguration() {
         const switches_config = switchesData || getDemoSwitches()
         const connections_config = connectionsData || getDemoConnections()
 
+        // create relays (centered on canvas by default)
         let relayX = 25000, relayY = 25000
         for (let [relayId, relayName] of Object.entries(relays_config)) {
             createRelay(parseInt(relayId), relayName, outputs_config[relayId] || {}, relayX, relayY)
@@ -1172,6 +1145,7 @@ async function loadConfiguration() {
             if (relayY > 29000) { relayY = 25000; relayX += 350; }
         }
 
+        // create switches (centered on canvas by default)
         let switchX = 23500, switchY = 25000
         for (let [switchId, switchData] of Object.entries(switches_config)) {
             const [switchName, buttonCount] = switchData
@@ -1180,6 +1154,7 @@ async function loadConfiguration() {
             if (switchY > 29000) { switchY = 25000; switchX += 500; }
         }
 
+        // Create connections after elements exist (batched for performance)
         setTimeout(() => {
             jsPlumbInstance.batch(() => {
                 for (let [switchId, buttons] of Object.entries(connections_config)) {
@@ -1195,6 +1170,7 @@ async function loadConfiguration() {
             isLoadingConnections = false
             hideLoading()
 
+            // Apply hidden state
             hiddenDevices.forEach(deviceKey => {
                 const element = document.getElementById(deviceKey)
                 if (element) {
@@ -1271,9 +1247,6 @@ function getDemoConnections() {
     }
 }
 
-// Remaining functions (createSwitch, createRelay, etc.) are unchanged from your original code
-// I'm including the complete versions below for completeness
-
 function createSwitch(switchId, switchName, buttonCount, x, y) {
     const savedPos = getSavedPosition(`switch-${switchId}`, x, y)
     const savedColor = getSavedColor(`switch-${switchId}`)
@@ -1302,11 +1275,11 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
     const isUpToDate = up_to_date_devices[switchId]
     let statusClass
     if (!isOnline) {
-        statusClass = 'status-offline'
+        statusClass = 'status-offline' // red
     } else if (isUpToDate) {
-        statusClass = 'status-online'
+        statusClass = 'status-online' // green
     } else {
-        statusClass = 'status-outdated'
+        statusClass = 'status-outdated' // orange/yellow
     }
     const statusDot = `<span class="status-indicator ${statusClass}"></span>`
 
@@ -1331,6 +1304,7 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
 
     document.getElementById('canvas').appendChild(switchDiv)
 
+    // Add click and touch handler for device name edit
     const deviceNameElement = switchDiv.querySelector(`.device-name-switch-${switchId}`)
     if (deviceNameElement) {
         addClickAndTouchHandler(deviceNameElement, (e) => {
@@ -1360,7 +1334,9 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
     })
 
     switchDiv.addEventListener('touchend', function (e) {
+        // Check if it was a tap (not a drag) and quick
         if (!isDragging && (Date.now() - dragStartTime) < 200) {
+            // Verify minimal movement (tap, not swipe)
             if (touchStartPos && e.changedTouches.length > 0) {
                 const touch = e.changedTouches[0]
                 const dx = Math.abs(touch.clientX - touchStartPos.x)
@@ -1375,6 +1351,7 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
     })
 
     switchDiv.addEventListener('click', function (e) {
+        // Only highlight if not dragging and click was quick
         if (!isDragging && (Date.now() - dragStartTime) < 200) {
             highlightDevice(`switch-${switchId}`)
         }
@@ -1384,14 +1361,10 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
         containment: false,
         start: function () {
             isDragging = true
-            startInteraction()
-        },
-        drag: function () {
-            // Don't sync during drag
         },
         stop: function () {
             saveDevicePositions()
-            endInteraction()
+            // Reset drag state after a short delay
             setTimeout(() => {
                 isDragging = false
             }, 100)
@@ -1412,6 +1385,7 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
 
     switches[switchId] = { name: switchName, buttonCount, element: switchDiv, color: savedColor }
 
+    // Apply saved color after DOM is ready
     if (savedColor) {
         applyDeviceColor(switchId)
     }
@@ -1419,8 +1393,10 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
 
 function copyIdToClipboard(id, element) {
     navigator.clipboard.writeText(id).then(() => {
+        // Get element position
         const rect = element.getBoundingClientRect()
 
+        // Create message element
         const message = document.createElement('div')
         message.textContent = `ID ${id} copied!`
         message.style.cssText = `
@@ -1440,6 +1416,7 @@ function copyIdToClipboard(id, element) {
         `
         document.body.appendChild(message)
 
+        // Remove after 1.5 seconds
         setTimeout(() => {
             message.remove()
         }, 1500)
@@ -1475,11 +1452,11 @@ function createRelay(relayId, relayName, outputs, x, y) {
     const isUpToDate = up_to_date_devices[relayId]
     let statusClass
     if (!isOnline) {
-        statusClass = 'status-offline'
+        statusClass = 'status-offline' // red
     } else if (isUpToDate) {
-        statusClass = 'status-online'
+        statusClass = 'status-online' // green
     } else {
-        statusClass = 'status-outdated'
+        statusClass = 'status-outdated' // orange/yellow
     }
     const statusDot = `<span class="status-indicator ${statusClass}"></span>`
 
@@ -1501,9 +1478,11 @@ function createRelay(relayId, relayName, outputs, x, y) {
 
     document.getElementById('canvas').appendChild(relayDiv)
 
+    // Add click and touch handlers for light bulbs and output names
     for (let i = 1; i <= 8; i++) {
         const outputId = String.fromCharCode(96 + i)
 
+        // Light bulb toggle
         const bulbElement = relayDiv.querySelector(`.light-bulb-${relayId}-${outputId}`)
         if (bulbElement) {
             addClickAndTouchHandler(bulbElement, (e) => {
@@ -1512,6 +1491,7 @@ function createRelay(relayId, relayName, outputs, x, y) {
             })
         }
 
+        // Output name edit
         const nameElement = relayDiv.querySelector(`.output-name-${relayId}-${outputId}`)
         if (nameElement) {
             addClickAndTouchHandler(nameElement, (e) => {
@@ -1521,6 +1501,7 @@ function createRelay(relayId, relayName, outputs, x, y) {
         }
     }
 
+    // Device name edit
     const deviceNameElement = relayDiv.querySelector(`.device-name-relay-${relayId}`)
     if (deviceNameElement) {
         addClickAndTouchHandler(deviceNameElement, (e) => {
@@ -1550,7 +1531,9 @@ function createRelay(relayId, relayName, outputs, x, y) {
     })
 
     relayDiv.addEventListener('touchend', function (e) {
+        // Check if it was a tap (not a drag) and quick
         if (!isDragging && (Date.now() - dragStartTime) < 200) {
+            // Verify minimal movement (tap, not swipe)
             if (touchStartPos && e.changedTouches.length > 0) {
                 const touch = e.changedTouches[0]
                 const dx = Math.abs(touch.clientX - touchStartPos.x)
@@ -1565,6 +1548,7 @@ function createRelay(relayId, relayName, outputs, x, y) {
     })
 
     relayDiv.addEventListener('click', function (e) {
+        // Only highlight if not dragging and click was quick
         if (!isDragging && (Date.now() - dragStartTime) < 200) {
             highlightDevice(`relay-${relayId}`)
         }
@@ -1574,14 +1558,10 @@ function createRelay(relayId, relayName, outputs, x, y) {
         containment: false,
         start: function () {
             isDragging = true
-            startInteraction()
-        },
-        drag: function () {
-            // Don't sync during drag
         },
         stop: function () {
             saveDevicePositions()
-            endInteraction()
+            // Reset drag state after a short delay
             setTimeout(() => {
                 isDragging = false
             }, 100)
@@ -1601,6 +1581,7 @@ function createRelay(relayId, relayName, outputs, x, y) {
 }
 
 function updateOnlineStatus() {
+    // Update all switches
     for (let switchId in switches) {
         const element = document.getElementById(`switch-${switchId}`)
         if (element) {
@@ -1610,17 +1591,18 @@ function updateOnlineStatus() {
                 const isUpToDate = up_to_date_devices[parseInt(switchId)]
                 let statusClass
                 if (!isOnline) {
-                    statusClass = 'status-indicator status-offline'
+                    statusClass = 'status-indicator status-offline' // red
                 } else if (isUpToDate) {
-                    statusClass = 'status-indicator status-online'
+                    statusClass = 'status-indicator status-online' // green
                 } else {
-                    statusClass = 'status-indicator status-outdated'
+                    statusClass = 'status-indicator status-outdated' // orange/yellow
                 }
                 indicator.className = statusClass
             }
         }
     }
 
+    // Update all relays
     for (let relayId in relays) {
         const element = document.getElementById(`relay-${relayId}`)
         if (element) {
@@ -1630,11 +1612,11 @@ function updateOnlineStatus() {
                 const isUpToDate = up_to_date_devices[parseInt(relayId)]
                 let statusClass
                 if (!isOnline) {
-                    statusClass = 'status-indicator status-offline'
+                    statusClass = 'status-indicator status-offline' // red
                 } else if (isUpToDate) {
-                    statusClass = 'status-indicator status-online'
+                    statusClass = 'status-indicator status-online' // green
                 } else {
-                    statusClass = 'status-indicator status-outdated'
+                    statusClass = 'status-indicator status-outdated' // orange/yellow
                 }
                 indicator.className = statusClass
             }
@@ -1651,7 +1633,10 @@ function createConnection(switchId, buttonId, relayId, outputId) {
         return
     }
 
-    let connectionColor = '#6366f1'
+    console.log('Creating connection from loaded data:', { switchId, buttonId, relayId, outputId })
+
+    // Check if switch has custom color
+    let connectionColor = '#6366f1' // default blue
     if (switches[switchId] && switches[switchId].color) {
         connectionColor = switches[switchId].color
     }
@@ -1664,14 +1649,17 @@ function createConnection(switchId, buttonId, relayId, outputId) {
     })
 
     if (conn) {
+        // Store original paint style for hover
         conn._originalPaintStyle = { stroke: connectionColor, strokeWidth: 3 }
 
+        // Add hover effect
         addConnectionHoverEffect(conn)
 
         if (!connections[switchId]) connections[switchId] = {}
         if (!connections[switchId][buttonId]) connections[switchId][buttonId] = []
         connections[switchId][buttonId].push({ relayId, outputId, connection: conn })
 
+        // Update lookup map for fast highlighting
         const switchDeviceId = `switch-${switchId}`
         const relayDeviceId = `relay-${relayId}`
 
@@ -1683,6 +1671,7 @@ function createConnection(switchId, buttonId, relayId, outputId) {
     }
 }
 
+// Helper function to add both click and touch support
 function addClickAndTouchHandler(element, handler) {
     let touchHandled = false
 
@@ -1958,6 +1947,7 @@ async function saveNameEdit() {
             if (outputElement) outputElement.textContent = newName
         }
     } else if (currentEditTarget.type === 'switch') {
+        // Rename switch
         const buttonCount = parseInt(document.getElementById('editButtonNumber').value)
         const result = await postForm('/lights/rename_switch', {
             switch_id: currentEditTarget.id,
@@ -1973,6 +1963,7 @@ async function saveNameEdit() {
 
         document.getElementById('editButtonNumber').style.display = 'none'
     } else if (currentEditTarget.type === 'relay') {
+        // Rename relay
         const result = await postForm('/lights/rename_relay', {
             relay_id: currentEditTarget.id,
             relay_name: newName

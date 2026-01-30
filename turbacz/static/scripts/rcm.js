@@ -60,6 +60,7 @@ let zoomLevelElement = null
 let transformPending = false
 let lastDisplayedZoom = -1
 let rafId = null
+let isCardDragging = false
 
 const API_BASE_URL = `https://${window.location.host}`
 
@@ -1439,15 +1440,31 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
         containment: false,
         start: function () {
             isDragging = true
+            isCardDragging = true
         },
         stop: function () {
             saveDevicePositions()
             // Reset drag state after a short delay
             setTimeout(() => {
                 isDragging = false
+                isCardDragging = false
             }, 100)
         }
     })
+
+    // Prevent triggering any child clicks while dragging (capture phase)
+    switchDiv.addEventListener('click', function (e) {
+        if (isDragging || isCardDragging) {
+            e.stopPropagation()
+            e.preventDefault()
+        }
+    }, true)
+    switchDiv.addEventListener('touchend', function (e) {
+        if (isDragging || isCardDragging) {
+            e.stopPropagation()
+            e.preventDefault()
+        }
+    }, true)
 
     for (let i = 1; i <= buttonCount; i++) {
         const btnElement = document.getElementById(`switch-${switchId}-btn-${String.fromCharCode(96 + i)}`)
@@ -1636,15 +1653,31 @@ function createRelay(relayId, relayName, outputs, x, y) {
         containment: false,
         start: function () {
             isDragging = true
+            isCardDragging = true
         },
         stop: function () {
             saveDevicePositions()
             // Reset drag state after a short delay
             setTimeout(() => {
                 isDragging = false
+                isCardDragging = false
             }, 100)
         }
     })
+
+    // Prevent triggering any child clicks while dragging (capture phase)
+    relayDiv.addEventListener('click', function (e) {
+        if (isDragging || isCardDragging) {
+            e.stopPropagation()
+            e.preventDefault()
+        }
+    }, true)
+    relayDiv.addEventListener('touchend', function (e) {
+        if (isDragging || isCardDragging) {
+            e.stopPropagation()
+            e.preventDefault()
+        }
+    }, true)
 
     for (let i = 1; i <= 8; i++) {
         const outputElement = document.getElementById(`relay-${relayId}-output-${String.fromCharCode(96 + i)}`)
@@ -1757,12 +1790,14 @@ function addClickAndTouchHandler(element, handler) {
         e.preventDefault()
         e.stopPropagation()
         touchHandled = true
-        handler(e)
+        if (!isCardDragging) {
+            handler(e)
+        }
         setTimeout(() => { touchHandled = false }, 300)
     }, { passive: false })
 
     element.addEventListener('click', (e) => {
-        if (!touchHandled) {
+        if (!touchHandled && !isCardDragging) {
             handler(e)
         }
     })

@@ -25,24 +25,47 @@
                 </span>
             </div>
         </div>
-        <div id="toolbar">
-            <button class="toolbar-btn btn-primary" onclick="showAddSwitchModal()">
-                <span>➕</span> Add Switch
-            </button>
-            <button class="toolbar-btn btn-secondary" onclick="showAddRelayModal()">
-                <span>➕</span> Add Relay
-            </button>
-            <button class="toolbar-btn btn-refresh" onclick="loadConfiguration()">
-                <span>🔄</span> Refresh
-            </button>
-            <button class="toolbar-btn btn-danger" onclick="clearAllConnections()">
-                <span>🗑️</span> Clear All
-            </button>
+        <div class="header-controls">
+            <div id="toolbar">
+                <div class="toolbar-group">
+                    <button class="toolbar-btn btn-primary" onclick="showAddSwitchModal()">
+                        <span>➕</span> <span class="btn-text">Add Switch</span>
+                    </button>
+                    <button class="toolbar-btn btn-secondary" onclick="showAddRelayModal()">
+                        <span>➕</span> <span class="btn-text">Add Relay</span>
+                    </button>
+                </div>
+                <div class="toolbar-group">
+                    <button class="toolbar-btn btn-update-switches" onclick="updateAllSwitches()">
+                        <span>⟳</span> <span class="btn-text">Switches</span>
+                    </button>
+                    <button class="toolbar-btn btn-update-relays" onclick="updateAllRelays()">
+                        <span>⟳</span> <span class="btn-text">Relays</span>
+                    </button>
+                    <button class="toolbar-btn btn-update-root" onclick="updateRoot()">
+                        <span>⚡</span> <span class="btn-text">Root</span>
+                    </button>
+                </div>
+                <div class="toolbar-group">
+                    <button class="toolbar-btn btn-refresh" onclick="loadConfiguration()">
+                        <span>🔄</span> <span class="btn-text">Refresh</span>
+                    </button>
+                    <button class="toolbar-btn btn-show-hidden" onclick="showAllHiddenDevices()">
+                        <span>👁️</span> <span class="btn-text">Show</span>
+                    </button>
+                    <button class="toolbar-btn btn-reset-positions" onclick="resetAllPositions()">
+                        <span>⟲</span> <span class="btn-text">Reset</span>
+                    </button>
+                    <button class="toolbar-btn btn-danger" onclick="clearAllConnections()">
+                        <span>🗑️</span> <span class="btn-text">Clear</span>
+                    </button>
+                </div>
+            </div>
             <div class="zoom-controls">
-                <button class="zoom-btn" onclick="zoomOut()">−</button>
+                <button class="zoom-btn" onclick="zoomOut()" title="Zoom Out">−</button>
                 <span class="zoom-level" id="zoomLevel">100%</span>
-                <button class="zoom-btn" onclick="zoomIn()">+</button>
-                <button class="zoom-btn" onclick="resetZoom()" title="Reset">⟲</button>
+                <button class="zoom-btn" onclick="zoomIn()" title="Zoom In">+</button>
+                <button class="zoom-btn" onclick="resetZoom()" title="Reset Zoom">⟲</button>
             </div>
         </div>
     </div>

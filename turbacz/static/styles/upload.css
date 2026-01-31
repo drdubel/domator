@@ -64,8 +64,8 @@ body {
 .card select:focus,
 .card input[type="file"]:focus {
     outline: none;
-    border-color: var(--color-primary);
-    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
 }
 
 /* ============================================
@@ -75,7 +75,7 @@ body {
 .card button {
     width: 100%;
     padding: 0.8rem;
-    background: linear-gradient(135deg, var(--color-secondary) 0%, #2563eb 100%);
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
     color: white;
     border: none;
     border-radius: var(--radius-sm);

@@ -1,3 +1,4 @@
+import hashlib
 from time import time
 
 from turbacz.websocket import ws_manager
@@ -8,10 +9,16 @@ class StateManager:
         self._states: dict[int, dict[str, int]] = {}
         self._online_relays: dict[int, int] = {}
         self._online_switches: dict[int, int] = {}
+        self._firmware_versions: dict[int, str] = {}
+        self._up_to_date_devices: dict[int, bool] = {}
+        self._up_to_date_firmware_versions: dict[str, str] = {}
+
+        self.update_up_to_date_firmware_versions()
 
     async def update_state(self, relay_id: int, output_id: str, state: int):
         if relay_id not in self._states:
             self._states[relay_id] = {}
+
         self._states[relay_id][output_id] = state
         await ws_manager.broadcast(
             {
@@ -31,6 +38,23 @@ class StateManager:
             },
             "/lights/ws/",
         )
+
+    def set_up_to_date_firmware_version(self, device_type: str, version: str):
+        self._up_to_date_firmware_versions[device_type] = version
+
+    def update_up_to_date_firmware_versions(self):
+        for device_type in ["relay", "switch", "root"]:
+            with open(f"static/data/{device_type}/firmware.bin", "rb") as f:
+                version = hashlib.md5(f.read()).hexdigest()
+                self._up_to_date_firmware_versions[device_type] = version
+
+    def set_firmware_version(self, device_id: int, device_type: str, version: str):
+        self._firmware_versions[device_id] = version
+
+        if version == self._up_to_date_firmware_versions.get(device_type):
+            self._up_to_date_devices[device_id] = True
+        else:
+            self._up_to_date_devices[device_id] = False
 
     def mark_switch_offline(self, switch_id: str):
         if switch_id in self._online_switches:

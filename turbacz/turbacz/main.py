@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import os
@@ -70,9 +71,7 @@ app.mount("/static", StaticFiles(directory="./static", html=True), name="static"
 
 @app.exception_handler(StarletteHTTPException)
 async def custom_http_exception_handler(request: Request, exc):
-    return HTMLResponse(
-        '<h1>Sio!<br>Tu nic nie ma!</h1><a href="/auto">Strona Główna</a>'
-    )
+    return HTMLResponse('<h1>Sio!<br>Tu nic nie ma!</h1><a href="/auto">Strona Główna</a>')
 
 
 @app.get("/")
@@ -127,9 +126,7 @@ async def get_temperatures(request: Request, start: int, end: int, step: int):
     if response1.status_code != 200 or response2.status_code != 200:
         return "connection not working"
 
-    water_temperatures = (
-        response1.json()["data"]["result"] + response2.json()["data"]["result"]
-    )
+    water_temperatures = response1.json()["data"]["result"] + response2.json()["data"]["result"]
 
     result = [
         {
@@ -212,9 +209,7 @@ async def upload_firmware(
     logger.debug("Uploading firmware for device: %s", device)
 
     if device not in ["switch", "relay", "root"]:
-        return JSONResponse(
-            {"status": "error", "reason": "unknown device"}, status_code=400
-        )
+        return JSONResponse({"status": "error", "reason": "unknown device"}, status_code=400)
 
     try:
         save_path = Path(f"static/data/{device}/firmware.bin")
@@ -224,6 +219,9 @@ async def upload_firmware(
 
         with open(save_path, "wb") as buffer:
             buffer.write(contents)
+
+        hashlib_md5 = hashlib.md5(contents).hexdigest()
+        state_manager.set_up_to_date_firmware_version(device, hashlib_md5)
 
         logger.info(f"Successfully saved {len(contents)} bytes to {save_path}")
         return JSONResponse({"status": "ok", "device": device, "size": len(contents)})
@@ -269,9 +267,7 @@ async def websocket_blinds(websocket: WebSocket):
                 logger.error("Cannot parse %s %s", cmd, err)
                 continue
             logger.debug("putting %s in command queue", req)
-            mqtt.client.publish(
-                "/blind/cmd", f"{chr(int(req.blind[1]) + 96)}{req.position}"
-            )
+            mqtt.client.publish("/blind/cmd", f"{chr(int(req.blind[1]) + 96)}{req.position}")
 
     await receive_command(websocket)
 
@@ -388,6 +384,7 @@ async def websocket_rcm(websocket: WebSocket):
             "type": "online_status",
             "online_relays": list(state_manager._online_relays.keys()),
             "online_switches": list(state_manager._online_switches.keys()),
+            "up_to_date_devices": state_manager._up_to_date_devices,
         },
         websocket,
     )
@@ -397,12 +394,29 @@ async def websocket_rcm(websocket: WebSocket):
             logger.debug("putting %s in command queue", cmd)
 
             if cmd.get("type") == "update":
-                connections = (
-                    connection_manager.connection_manager.get_all_connections()
-                )
+                connections = connection_manager.connection_manager.get_all_connections()
 
                 mqtt.client.publish("/switch/cmd/root", json.dumps(connections))
                 await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
+                continue
+
+            if cmd.get("type") == "update_root":
+                mqtt.client.publish("/switch/cmd/root", "U")
+                continue
+
+            if cmd.get("type") == "update_all_relays":
+                mqtt.client.publish("/relay/cmd", "U")
+                continue
+
+            if cmd.get("type") == "update_all_switches":
+                mqtt.client.publish("/switch/cmd", "U")
+                continue
+
+            if cmd.get("type") == "update_device":
+                device_id = cmd.get("device_id")
+                device_type = cmd.get("device_type")
+
+                mqtt.client.publish(f"/{device_type}/cmd/{device_id}", "U")
                 continue
 
             if cmd.get("type") == "get_states":

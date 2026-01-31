@@ -8,7 +8,9 @@
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <credentials.h>
-#include <painlessMesh.h>
+#include <esp_now.h>
+#include <esp_wifi.h>
+#include <mbedtls/sha256.h>
 
 #include <algorithm>
 #include <cctype>
@@ -21,9 +23,8 @@
 #include <vector>
 
 #include "esp_task_wdt.h"
-#include "esp_wifi.h"
 
-#define HOSTNAME "mesh_root"
+#define HOSTNAME "espnow_root"
 #define NLIGHTS 8
 #define STATUS_REPORT_INTERVAL 15000
 #define MQTT_RECONNECT_INTERVAL 30000
@@ -32,8 +33,10 @@
 #define MAX_QUEUE_SIZE 50
 #define CRITICAL_HEAP_THRESHOLD 30000
 #define LOW_HEAP_THRESHOLD 50000
+#define ESPNOW_CHANNEL 1
+#define MAX_ESPNOW_PEERS 20
 
-#define DEBUG_LEVEL 1
+#define DEBUG_LEVEL 3
 
 #if DEBUG_LEVEL >= 1
 #define DEBUG_ERROR(fmt, ...) Serial.printf("[ERROR] " fmt "\n", ##__VA_ARGS__)
@@ -55,45 +58,53 @@
 #endif
 
 const int mqtt_port = 1883;
-uint32_t device_id;
+uint32_t deviceId;
+
+// ESP-NOW message structure
+typedef struct __attribute__((packed)) {
+    uint32_t nodeId;
+    uint8_t msgType;  // 'Q'=query, 'R'=relay, 'S'=switch, 'A'=ack, 'U'=update,
+                      // 'D'=data, 'C'=command
+    char data[200];
+} espnow_message_t;
+
+// Peer info structure
+typedef struct {
+    uint8_t mac[6];
+    uint32_t nodeId;
+    String nodeType;  // "relay" or "switch"
+    unsigned long lastSeen;
+    bool authenticated;
+} peer_info_t;
 
 std::queue<std::pair<String, String>> mqttMessageQueue;
 std::queue<std::pair<String, String>> mqttCallbackQueue;
-std::queue<std::pair<uint32_t, String>> meshMessageQueue;
-std::queue<std::pair<uint32_t, String>>
-    meshPriorityQueue;  // NEW: Fast path for relay commands
-std::queue<std::pair<uint32_t, String>> meshCallbackQueue;
-std::map<uint32_t, String> nodes;
+std::queue<std::pair<uint32_t, String>> espnowMessageQueue;
+std::queue<std::pair<uint32_t, String>> espnowPriorityQueue;
+std::queue<espnow_message_t> espnowCallbackQueue;
+std::map<uint32_t, peer_info_t> peers;
 std::map<String, std::map<char, std::vector<std::pair<String, String>>>>
     connections;
-std::map<uint32_t, uint32_t> nodeParentMap;
 
 SemaphoreHandle_t mqttMessageQueueMutex = NULL;
 SemaphoreHandle_t mqttCallbackQueueMutex = NULL;
-SemaphoreHandle_t meshMessageQueueMutex = NULL;
-SemaphoreHandle_t meshPriorityQueueMutex = NULL;  // NEW
-SemaphoreHandle_t meshCallbackQueueMutex = NULL;
-SemaphoreHandle_t nodesMapMutex = NULL;
+SemaphoreHandle_t espnowMessageQueueMutex = NULL;
+SemaphoreHandle_t espnowPriorityQueueMutex = NULL;
+SemaphoreHandle_t espnowCallbackQueueMutex = NULL;
+SemaphoreHandle_t peersMapMutex = NULL;
 SemaphoreHandle_t connectionsMapMutex = NULL;
 
 struct Statistics {
     uint32_t mqttDropped = 0;
-    uint32_t meshDropped = 0;
+    uint32_t espnowDropped = 0;
     uint32_t lowHeapEvents = 0;
     uint32_t criticalHeapEvents = 0;
+    uint32_t espnowSendFailed = 0;
+    uint32_t espnowSendSuccess = 0;
+    uint32_t buttonPresses = 0;
+    uint32_t commandsRouted = 0;
 } stats;
 
-void receivedCallback(const uint32_t& from, const String& msg);
-void droppedConnectionCallback(uint32_t nodeId);
-void newConnectionCallback(uint32_t nodeId);
-void mqttCallback(char* topic, byte* payload, unsigned int length);
-void mqttConnect();
-void meshInit();
-void performFirmwareUpdate();
-IPAddress getlocalIP();
-
-IPAddress myIP(0, 0, 0, 0);
-painlessMesh mesh;
 WiFiClient wifiClient;
 PubSubClient mqttClient(mqtt_broker, mqtt_port, wifiClient);
 
@@ -101,21 +112,27 @@ static unsigned long lastMqttReconnect = 0;
 volatile bool otaInProgress = false;
 String fw_md5;
 
+// Forward declarations
+void mqttCallback(char* topic, byte* payload, unsigned int length);
+void mqttConnect();
+void espnowInit();
+void performFirmwareUpdate();
+void onESPNowDataSent(const uint8_t* mac_addr, esp_now_send_status_t status);
+void onESPNowDataRecv(const uint8_t* mac_addr, const uint8_t* data, int len);
+
 template <typename T>
 bool safePush(std::queue<T>& q, const T& item, SemaphoreHandle_t mutex,
               uint32_t& dropCounter, const char* queueName) {
     if (!mutex) {
-        DEBUG_ERROR("Mutex is NULL for %s queue - dropping message", queueName);
+        DEBUG_ERROR("Mutex is NULL for %s queue", queueName);
         dropCounter++;
         return false;
     }
     if (xSemaphoreTake(mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         if (q.size() >= MAX_QUEUE_SIZE) {
             dropCounter++;
-            DEBUG_ERROR(
-                "%s queue full (%d items), dropping message (total dropped: "
-                "%u)",
-                queueName, q.size(), dropCounter);
+            DEBUG_ERROR("%s queue full (%d items), dropped %u total", queueName,
+                        q.size(), dropCounter);
             xSemaphoreGive(mutex);
             return false;
         }
@@ -123,16 +140,14 @@ bool safePush(std::queue<T>& q, const T& item, SemaphoreHandle_t mutex,
         xSemaphoreGive(mutex);
         return true;
     }
-    DEBUG_ERROR("Failed to acquire mutex for %s queue", queueName);
+    DEBUG_ERROR("Failed to acquire mutex for %s", queueName);
     dropCounter++;
     return false;
 }
 
 template <typename T>
 bool safePop(std::queue<T>& q, T& item, SemaphoreHandle_t mutex) {
-    if (!mutex) {
-        return false;
-    }
+    if (!mutex) return false;
     if (xSemaphoreTake(mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
         if (q.empty()) {
             xSemaphoreGive(mutex);
@@ -150,8 +165,7 @@ bool checkHeapHealth() {
     uint32_t freeHeap = ESP.getFreeHeap();
     if (freeHeap < CRITICAL_HEAP_THRESHOLD) {
         stats.criticalHeapEvents++;
-        DEBUG_ERROR("CRITICAL: Low heap %u bytes! Clearing queues...",
-                    freeHeap);
+        DEBUG_ERROR("CRITICAL: Low heap %u bytes!", freeHeap);
         if (xSemaphoreTake(mqttMessageQueueMutex, pdMS_TO_TICKS(100)) ==
             pdTRUE) {
             while (!mqttMessageQueue.empty()) mqttMessageQueue.pop();
@@ -177,11 +191,8 @@ void otaTask(void* pv) {
     DEBUG_INFO("OTA task started");
     otaInProgress = true;
     esp_task_wdt_deinit();
-    DEBUG_VERBOSE("Watchdog disabled for OTA");
     mqttClient.disconnect();
-    DEBUG_VERBOSE("MQTT disconnected");
-    mesh.stop();
-    DEBUG_VERBOSE("Mesh stopped");
+    esp_now_deinit();
     vTaskDelay(pdMS_TO_TICKS(1000));
     performFirmwareUpdate();
     esp_task_wdt_init(30, true);
@@ -194,126 +205,88 @@ void performFirmwareUpdate() {
     const int MAX_RETRIES = 3;
     int attemptCount = 0;
     bool updateSuccess = false;
+
     while (attemptCount < MAX_RETRIES && !updateSuccess) {
         attemptCount++;
-        DEBUG_INFO("OTA: Starting update attempt %d/%d...", attemptCount,
-                   MAX_RETRIES);
+        DEBUG_INFO("OTA: Attempt %d/%d", attemptCount, MAX_RETRIES);
+
         WiFi.disconnect(true);
         WiFi.mode(WIFI_STA);
         WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-        DEBUG_VERBOSE("OTA: Connecting to WiFi...");
+
         unsigned long startTime = millis();
         while (WiFi.status() != WL_CONNECTED) {
             if (millis() - startTime > WIFI_CONNECT_TIMEOUT) {
-                DEBUG_ERROR("OTA: WiFi timeout on attempt %d", attemptCount);
+                DEBUG_ERROR("OTA: WiFi timeout");
                 break;
             }
-            vTaskDelay(500 / portTICK_PERIOD_MS);
+            vTaskDelay(500);
         }
+
         if (WiFi.status() != WL_CONNECTED) {
             if (attemptCount < MAX_RETRIES) {
-                DEBUG_INFO("OTA: Retrying in 2 seconds...");
-                vTaskDelay(2000 / portTICK_PERIOD_MS);
-                continue;
-            } else {
-                DEBUG_ERROR("OTA: All WiFi connection attempts failed");
-                break;
-            }
-        }
-        DEBUG_VERBOSE("OTA: WiFi connected, IP: %s",
-                      WiFi.localIP().toString().c_str());
-        WiFiClientSecure* client = new WiFiClientSecure();
-        if (!client) {
-            DEBUG_ERROR("OTA: Client alloc failed on attempt %d", attemptCount);
-            if (attemptCount < MAX_RETRIES) {
-                vTaskDelay(2000 / portTICK_PERIOD_MS);
+                vTaskDelay(2000);
                 continue;
             }
             break;
         }
+
+        WiFiClientSecure* client = new WiFiClientSecure();
+        if (!client) {
+            if (attemptCount < MAX_RETRIES) {
+                vTaskDelay(2000);
+                continue;
+            }
+            break;
+        }
+
         client->setInsecure();
         HTTPClient http;
         http.setTimeout(30000);
+
         if (!http.begin(*client, firmware_url)) {
-            DEBUG_ERROR("OTA: HTTP begin failed on attempt %d", attemptCount);
             delete client;
             if (attemptCount < MAX_RETRIES) {
-                vTaskDelay(2000 / portTICK_PERIOD_MS);
+                vTaskDelay(2000);
                 continue;
             }
             break;
         }
-        DEBUG_VERBOSE("OTA: Downloading from %s", firmware_url);
+
         int httpCode = http.GET();
+
         if (httpCode == HTTP_CODE_OK) {
             int contentLength = http.getSize();
-            DEBUG_VERBOSE("OTA: Content length: %d bytes", contentLength);
-            if (contentLength <= 0 || !Update.begin(contentLength)) {
-                DEBUG_ERROR("OTA: Invalid size or begin failed on attempt %d",
-                            attemptCount);
-                http.end();
-                delete client;
-                if (attemptCount < MAX_RETRIES) {
-                    vTaskDelay(2000 / portTICK_PERIOD_MS);
-                    continue;
+
+            if (contentLength > 0 && Update.begin(contentLength)) {
+                WiFiClient* stream = http.getStreamPtr();
+                size_t written = Update.writeStream(*stream);
+
+                if (written == contentLength && Update.end() &&
+                    Update.isFinished()) {
+                    DEBUG_INFO("OTA: Success!");
+                    http.end();
+                    delete client;
+                    vTaskDelay(1000);
+                    ESP.restart();
+                    return;
                 }
-                break;
-            }
-            WiFiClient* stream = http.getStreamPtr();
-            size_t written = Update.writeStream(*stream);
-            DEBUG_VERBOSE("OTA: Written %d/%d bytes", written, contentLength);
-            if (written != contentLength) {
-                DEBUG_ERROR(
-                    "OTA: Write mismatch on attempt %d (written: %d, expected: "
-                    "%d)",
-                    attemptCount, written, contentLength);
                 Update.abort();
-                http.end();
-                delete client;
-                if (attemptCount < MAX_RETRIES) {
-                    vTaskDelay(2000 / portTICK_PERIOD_MS);
-                    continue;
-                }
-                break;
-            }
-            if (Update.end() && Update.isFinished()) {
-                DEBUG_INFO("OTA: Update successful on attempt %d!",
-                           attemptCount);
-                updateSuccess = true;
-                http.end();
-                delete client;
-                vTaskDelay(1000 / portTICK_PERIOD_MS);
-                ESP.restart();
-                return;
-            } else {
-                DEBUG_ERROR(
-                    "OTA: Update.end() failed on attempt %d (error: %s)",
-                    attemptCount, Update.errorString());
-                http.end();
-                delete client;
-                if (attemptCount < MAX_RETRIES) {
-                    vTaskDelay(2000 / portTICK_PERIOD_MS);
-                    continue;
-                }
-            }
-        } else {
-            DEBUG_ERROR("OTA: HTTP failed with code %d on attempt %d", httpCode,
-                        attemptCount);
-            http.end();
-            delete client;
-            if (attemptCount < MAX_RETRIES) {
-                vTaskDelay(2000 / portTICK_PERIOD_MS);
-                continue;
             }
         }
+
+        http.end();
+        delete client;
+
+        if (attemptCount < MAX_RETRIES) {
+            vTaskDelay(2000);
+        }
     }
-    DEBUG_ERROR("OTA: All %d update attempts failed. Restarting...",
-                MAX_RETRIES);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
+
+    DEBUG_ERROR("OTA: All attempts failed. Restarting...");
+    vTaskDelay(1000);
     ESP.restart();
 }
-
-IPAddress getlocalIP() { return IPAddress(mesh.getStationIP()); }
 
 bool isValidJson(const String& s) {
     JsonDocument doc;
@@ -327,19 +300,24 @@ void parseConnections(JsonObject root) {
         return;
     }
     DEBUG_INFO("Parsing connections configuration");
+
     if (xSemaphoreTake(connectionsMapMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
         DEBUG_ERROR("Failed to acquire connections mutex");
         return;
     }
+
     connections.clear();
+
     for (JsonPair idPair : root) {
         String id = idPair.key().c_str();
         JsonObject letterObj = idPair.value().as<JsonObject>();
+
         for (JsonPair letterPair : letterObj) {
             char letter = letterPair.key().c_str()[0];
             JsonArray arr = letterPair.value().as<JsonArray>();
             std::vector<std::pair<String, String>> vec;
             vec.reserve(arr.size());
+
             for (JsonArray item : arr) {
                 if (item.size() >= 2) {
                     String first;
@@ -355,94 +333,31 @@ void parseConnections(JsonObject root) {
             connections[id][letter] = std::move(vec);
         }
     }
+
     xSemaphoreGive(connectionsMapMutex);
-}
-
-void sendConnectionToNode(uint32_t nodeId) {
-    String nodeIdStr = String(nodeId);
-
-    // Check if this node has connections
-    if (xSemaphoreTake(connectionsMapMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
-        DEBUG_ERROR(
-            "sendConnectionToNode: Failed to acquire connections mutex");
-        return;
-    }
-
-    auto it = connections.find(nodeIdStr);
-    if (it == connections.end()) {
-        xSemaphoreGive(connectionsMapMutex);
-        DEBUG_VERBOSE("No connections configured for node %u", nodeId);
-        return;
-    }
-
-    // Build JSON for this specific node
-    JsonDocument doc;
-    JsonObject nodeObj = doc[nodeIdStr].to<JsonObject>();
-
-    for (const auto& letterPair : it->second) {
-        char letter = letterPair.first;
-        JsonArray letterArray = nodeObj[String(letter)].to<JsonArray>();
-
-        for (const auto& target : letterPair.second) {
-            JsonArray targetPair = letterArray.add<JsonArray>();
-            targetPair.add(target.first);
-            targetPair.add(target.second);
-        }
-    }
-
-    String jsonStr;
-    serializeJson(doc, jsonStr);
-    xSemaphoreGive(connectionsMapMutex);
-
-    // Send to this specific node
-    safePush(meshMessageQueue, std::make_pair(nodeId, jsonStr),
-             meshMessageQueueMutex, stats.meshDropped, "MESH-MSG");
-    DEBUG_INFO("Sent connections to node %u: %s", nodeId, jsonStr.c_str());
-}
-
-void sendConnectionsToAllNodes() {
-    // First, get list of all node IDs while holding nodes mutex
-    if (xSemaphoreTake(nodesMapMutex, pdMS_TO_TICKS(100)) != pdTRUE) {
-        DEBUG_ERROR("sendConnectionsToAllNodes: Failed to acquire nodes mutex");
-        return;
-    }
-
-    std::vector<uint32_t> nodeIds;
-    for (const auto& node : nodes) {
-        nodeIds.push_back(node.first);
-    }
-    xSemaphoreGive(nodesMapMutex);
-
-    DEBUG_INFO("Sending connections to %d nodes", nodeIds.size());
-
-    // Send to each node
-    for (uint32_t nodeId : nodeIds) {
-        sendConnectionToNode(nodeId);
-        vTaskDelay(pdMS_TO_TICKS(50));  // Small delay to avoid flooding mesh
-    }
-
-    DEBUG_INFO("Finished sending connections to all nodes");
+    DEBUG_INFO("Connections parsed successfully");
 }
 
 void mqttConnect() {
     if (WiFi.status() != WL_CONNECTED) {
-        DEBUG_VERBOSE("mqttConnect: WiFi not connected");
         return;
     }
-    DEBUG_INFO("Connecting to MQTT broker...");
+
+    DEBUG_INFO("Connecting to MQTT...");
     mqttClient.setCallback(mqttCallback);
     mqttClient.setKeepAlive(90);
     mqttClient.setSocketTimeout(30);
+
     int retries = 0;
     while (!mqttClient.connected() && retries < MQTT_CONNECT_TIMEOUT) {
-        String clientId = String(device_id);
+        String clientId = String(deviceId);
         if (mqttClient.connect(clientId.c_str(), MQTT_USER, MQTT_PASSWORD)) {
             DEBUG_INFO("MQTT connected");
             mqttClient.subscribe("/switch/cmd/+");
             mqttClient.subscribe("/switch/cmd");
             mqttClient.subscribe("/relay/cmd/+");
             mqttClient.subscribe("/relay/cmd");
-            DEBUG_VERBOSE("MQTT subscriptions completed");
+
             safePush(mqttMessageQueue,
                      std::make_pair(String("/switch/state/root"),
                                     String("connected")),
@@ -450,43 +365,225 @@ void mqttConnect() {
             return;
         }
         retries++;
-        DEBUG_VERBOSE("MQTT connection attempt %d/%d failed", retries,
-                      MQTT_CONNECT_TIMEOUT);
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        vTaskDelay(1000);
     }
-    DEBUG_ERROR("MQTT connection failed after %d attempts",
-                MQTT_CONNECT_TIMEOUT);
+
+    DEBUG_ERROR("MQTT connection failed");
 }
 
-void meshInit() {
-    DEBUG_INFO("Initializing mesh network...");
-    mesh.setDebugMsgTypes(ERROR | STARTUP | CONNECTION);
-    mesh.init(MESH_PREFIX, MESH_PASSWORD, MESH_PORT, WIFI_AP_STA);
-    esp_wifi_set_ps(WIFI_PS_NONE);
-    DEBUG_VERBOSE("WiFi power save disabled");
-    mesh.stationManual(WIFI_SSID, WIFI_PASSWORD);
-    mesh.setRoot(true);
-    mesh.setContainsRoot(true);
-    mesh.setHostname(HOSTNAME);
-    mesh.onReceive(&receivedCallback);
-    mesh.onDroppedConnection(&droppedConnectionCallback);
-    mesh.onNewConnection(&newConnectionCallback);
-    device_id = mesh.getNodeId();
-    DEBUG_INFO("Mesh initialized, device ID: %u", device_id);
-}
-
-void droppedConnectionCallback(uint32_t nodeId) {
-    DEBUG_INFO("Node disconnected: %u", nodeId);
-    if (xSemaphoreTake(nodesMapMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        nodes.erase(nodeId);
-        xSemaphoreGive(nodesMapMutex);
+void onESPNowDataSent(const uint8_t* mac_addr, esp_now_send_status_t status) {
+    if (status == ESP_NOW_SEND_SUCCESS) {
+        stats.espnowSendSuccess++;
+    } else {
+        stats.espnowSendFailed++;
     }
 }
 
-void newConnectionCallback(uint32_t nodeId) {
-    DEBUG_INFO("New node connected: %u", nodeId);
-    safePush(meshMessageQueue, std::make_pair(nodeId, String("Q")),
-             meshMessageQueueMutex, stats.meshDropped, "MESH-MSG");
+void onESPNowDataRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
+    if (len != sizeof(espnow_message_t)) {
+        DEBUG_ERROR("ESP-NOW: Invalid size: %d", len);
+        return;
+    }
+
+    espnow_message_t msg;
+    memcpy(&msg, data, sizeof(espnow_message_t));
+
+    if (!checkHeapHealth()) {
+        stats.espnowDropped++;
+        return;
+    }
+
+    // Update peer info
+    if (xSemaphoreTake(peersMapMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        auto it = peers.find(msg.nodeId);
+        if (it == peers.end()) {
+            peer_info_t info;
+            memcpy(info.mac, mac_addr, 6);
+            info.nodeId = msg.nodeId;
+            info.nodeType = "";
+            info.lastSeen = millis();
+            info.authenticated = false;
+            peers[msg.nodeId] = info;
+        } else {
+            memcpy(it->second.mac, mac_addr, 6);
+            it->second.lastSeen = millis();
+        }
+        xSemaphoreGive(peersMapMutex);
+    }
+
+    safePush(espnowCallbackQueue, msg, espnowCallbackQueueMutex,
+             stats.espnowDropped, "ESPNOW-CB");
+}
+
+void espnowInit() {
+    DEBUG_INFO("Initializing ESP-NOW...");
+
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+    int retries = 0;
+    while (WiFi.status() != WL_CONNECTED && retries < 20) {
+        vTaskDelay(500);
+        retries++;
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+        DEBUG_INFO("WiFi connected: %s", WiFi.localIP().toString().c_str());
+    }
+
+    wifi_ap_record_t ap_info;
+    uint8_t channel = ESPNOW_CHANNEL;
+    if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+        channel = ap_info.primary;
+        DEBUG_INFO("WiFi channel: %d", channel);
+    }
+
+    if (esp_now_init() != ESP_OK) {
+        DEBUG_ERROR("ESP-NOW init failed");
+        return;
+    }
+
+    DEBUG_INFO("ESP-NOW initialized (encryption disabled)");
+
+    esp_now_register_send_cb(onESPNowDataSent);
+    esp_now_register_recv_cb(onESPNowDataRecv);
+
+    uint8_t mac[6];
+    esp_wifi_get_mac(WIFI_IF_STA, mac);
+    deviceId = (mac[2] << 24) | (mac[3] << 16) | (mac[4] << 8) | mac[5];
+
+    DEBUG_INFO("Device ID: %u", deviceId);
+    DEBUG_INFO("Root MAC: %02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1],
+               mac[2], mac[3], mac[4], mac[5]);
+}
+
+bool addESPNowPeer(const uint8_t* mac) {
+    if (esp_now_is_peer_exist(mac)) {
+        return true;
+    }
+
+    esp_now_peer_info_t peerInfo = {};
+    memcpy(peerInfo.peer_addr, mac, 6);
+    peerInfo.channel = 0;
+    peerInfo.encrypt = false;
+
+    if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+        return false;
+    }
+
+    return true;
+}
+
+void sendESPNowMessage(uint32_t nodeId, const String& message,
+                       bool priority = false) {
+    if (xSemaphoreTake(peersMapMutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        return;
+    }
+
+    auto it = peers.find(nodeId);
+    if (it == peers.end()) {
+        xSemaphoreGive(peersMapMutex);
+        return;
+    }
+
+    // Only send to authenticated peers
+    if (!it->second.authenticated) {
+        DEBUG_VERBOSE("ESP-NOW send skipped; node %u unauthenticated", nodeId);
+        xSemaphoreGive(peersMapMutex);
+        return;
+    }
+
+    espnow_message_t msg;
+    msg.nodeId = deviceId;
+    msg.msgType = 'D';
+
+    if (message == "Q") {
+        msg.msgType = 'Q';
+    } else if (message == "A") {
+        msg.msgType = 'A';
+    } else if (message == "U") {
+        msg.msgType = 'U';
+    } else if (message.length() > 0 && message.length() < sizeof(msg.data)) {
+        msg.msgType = 'C';
+    }
+
+    strncpy(msg.data, message.c_str(), sizeof(msg.data) - 1);
+    msg.data[sizeof(msg.data) - 1] = '\0';
+
+    uint8_t mac[6];
+    memcpy(mac, it->second.mac, 6);
+
+    xSemaphoreGive(peersMapMutex);
+
+    addESPNowPeer(mac);
+
+    esp_err_t result =
+        esp_now_send(mac, (uint8_t*)&msg, sizeof(espnow_message_t));
+
+    if (result != ESP_OK) {
+        stats.espnowSendFailed++;
+    }
+}
+
+void handleSwitchMessage(const uint32_t& from, const char button,
+                         int state = -1) {
+    DEBUG_INFO("Button '%c' from switch %u", button, from);
+
+    stats.buttonPresses++;
+
+    // Publish to MQTT
+    String mqttTopic = "/switch/state/" + String(from);
+    safePush(mqttMessageQueue, std::make_pair(mqttTopic, String(button)),
+             mqttMessageQueueMutex, stats.mqttDropped, "MQTT-MSG");
+
+    // Route to target relays
+    if (xSemaphoreTake(connectionsMapMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        String fromIdStr = String(from);
+        auto nodeIt = connections.find(fromIdStr);
+
+        if (nodeIt != connections.end()) {
+            auto buttonIt = nodeIt->second.find(button);
+
+            if (buttonIt != nodeIt->second.end()) {
+                DEBUG_INFO("  Routing to %d targets:", buttonIt->second.size());
+
+                for (const auto& target : buttonIt->second) {
+                    uint32_t targetNodeId = target.first.toInt();
+                    String command = target.second;
+                    if (state != -1) {
+                        command += String(state);
+                    }
+
+                    DEBUG_INFO("    → %u: %s", targetNodeId, command.c_str());
+                    stats.commandsRouted++;
+
+                    xSemaphoreGive(connectionsMapMutex);
+                    safePush(espnowPriorityQueue,
+                             std::make_pair(targetNodeId, command),
+                             espnowPriorityQueueMutex, stats.espnowDropped,
+                             "ESPNOW-PRI");
+                    xSemaphoreTake(connectionsMapMutex, pdMS_TO_TICKS(100));
+                }
+            } else {
+                DEBUG_INFO("  No targets for button '%c'", button);
+            }
+        } else {
+            DEBUG_INFO("  No config for switch %u", from);
+        }
+
+        xSemaphoreGive(connectionsMapMutex);
+    }
+}
+
+void handleRelayMessage(const uint32_t& from, const String& msg) {
+    if (WiFi.status() != WL_CONNECTED || !mqttClient.connected()) {
+        return;
+    }
+
+    String topic = "/relay/state/" + String(from);
+
+    safePush(mqttMessageQueue, std::make_pair(topic, msg),
+             mqttMessageQueueMutex, stats.mqttDropped, "MQTT-MSG");
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
@@ -494,152 +591,108 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         stats.mqttDropped++;
         return;
     }
+
     String msg;
     msg.reserve(length + 1);
     msg.concat((char*)payload, length);
-    DEBUG_VERBOSE("MQTT RX: [%s] %s", topic, msg.c_str());
+
     safePush(mqttCallbackQueue, std::make_pair(String(topic), msg),
              mqttCallbackQueueMutex, stats.mqttDropped, "MQTT-CB");
 }
 
-void receivedCallback(const uint32_t& from, const String& msg) {
-    DEBUG_VERBOSE("MESH RX: [%u] %s", from, msg.c_str());
-    safePush(meshCallbackQueue, std::make_pair(from, msg),
-             meshCallbackQueueMutex, stats.meshDropped, "MESH-CB");
-}
-
-void handleRelayMessage(const uint32_t& from, const String& msg) {
-    if (WiFi.status() != WL_CONNECTED || !mqttClient.connected()) {
-        DEBUG_VERBOSE("handleRelayMessage: WiFi or MQTT not connected");
-        return;
-    }
-    String topic = "/relay/state/" + String(from);
-    DEBUG_VERBOSE("RELAY: Publishing state from %u: %s", from, msg.c_str());
-    safePush(mqttMessageQueue, std::make_pair(topic, msg),
-             mqttMessageQueueMutex, stats.mqttDropped, "MQTT-MSG");
-}
-
-void checkWiFi() {
-    IPAddress currentIP = getlocalIP();
-    if (myIP != currentIP && currentIP != IPAddress(0, 0, 0, 0)) {
-        myIP = currentIP;
-        DEBUG_INFO("Connected to WiFi, IP: %s", myIP.toString().c_str());
-    }
-}
-
 void checkWiFiAndMQTT(void* pvParameters) {
-    DEBUG_VERBOSE("checkWiFiAndMQTT task started");
     while (true) {
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
-        checkWiFi();
-        while (!WiFi.isConnected()) {
+
+        if (!WiFi.isConnected()) {
+            WiFi.reconnect();
             vTaskDelay(pdMS_TO_TICKS(2000));
             continue;
         }
+
         if (!mqttClient.connected()) {
             unsigned long now = millis();
             if (now - lastMqttReconnect > MQTT_RECONNECT_INTERVAL) {
                 lastMqttReconnect = now;
-                DEBUG_VERBOSE("Attempting MQTT reconnection");
                 mqttConnect();
             }
         } else {
             mqttClient.loop();
         }
+
         vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
 
-void checkMesh(void* pvParameters) {
-    DEBUG_VERBOSE("checkMesh task started");
+void checkPeers(void* pvParameters) {
     while (true) {
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
-        auto nowNodes = mesh.getNodeList();
-        if (xSemaphoreTake(nodesMapMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-            for (auto it = nodes.begin(); it != nodes.end();) {
-                if (std::find(nowNodes.begin(), nowNodes.end(), it->first) ==
-                    nowNodes.end()) {
-                    DEBUG_VERBOSE("Removing disconnected node: %u", it->first);
-                    it = nodes.erase(it);
+
+        unsigned long now = millis();
+
+        if (xSemaphoreTake(peersMapMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            for (auto it = peers.begin(); it != peers.end();) {
+                if (now - it->second.lastSeen > 60000) {
+                    DEBUG_INFO("Removing stale peer: %u", it->first);
+                    it = peers.erase(it);
                 } else {
                     ++it;
                 }
             }
-            for (auto nodeId : nowNodes) {
-                if (nodes.find(nodeId) == nodes.end()) {
-                    DEBUG_VERBOSE("Querying new node: %u", nodeId);
-                    xSemaphoreGive(nodesMapMutex);
-                    safePush(
-                        meshMessageQueue, std::make_pair(nodeId, String("Q")),
-                        meshMessageQueueMutex, stats.meshDropped, "MESH-MSG");
-                    vTaskDelay(pdMS_TO_TICKS(25));
-                    xSemaphoreTake(nodesMapMutex, pdMS_TO_TICKS(100));
-                }
-            }
-            xSemaphoreGive(nodesMapMutex);
+            xSemaphoreGive(peersMapMutex);
         }
-        vTaskDelay(pdMS_TO_TICKS(2000));
-    }
-}
 
-void buildParentMap(const painlessmesh::protocol::NodeTree& node,
-                    uint32_t parent = 0) {
-    nodeParentMap[node.nodeId] = parent;
-    DEBUG_VERBOSE("buildParentMap: node %u parent %u", node.nodeId, parent);
-    for (const auto& child : node.subs) {
-        buildParentMap(child, node.nodeId);
+        vTaskDelay(pdMS_TO_TICKS(5000));
     }
 }
 
 void statusReport(void* pvParameters) {
-    DEBUG_VERBOSE("statusReport task started");
     while (true) {
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
-        painlessmesh::protocol::NodeTree layout = mesh.asNodeTree();
-        nodeParentMap.clear();
-        buildParentMap(layout);
+
         JsonDocument doc;
         doc["rssi"] = WiFi.RSSI();
         doc["uptime"] = millis() / 1000;
         doc["freeHeap"] = ESP.getFreeHeap();
-        doc["deviceId"] = device_id;
-        doc["parentId"] = device_id;
+        doc["deviceId"] = deviceId;
+        doc["parentId"] = deviceId;
         doc["type"] = "root";
         doc["firmware"] = fw_md5;
-        doc["clicks"] = 0;
+        doc["clicks"] = stats.buttonPresses;
         doc["disconnects"] = 0;
-        doc["mqttDropped"] = stats.mqttDropped;
-        doc["meshDropped"] = stats.meshDropped;
         doc["lowHeap"] = stats.lowHeapEvents;
-        doc["criticalHeap"] = stats.criticalHeapEvents;
+
+        if (xSemaphoreTake(peersMapMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            doc["peerCount"] = peers.size();
+            xSemaphoreGive(peersMapMutex);
+        }
+
         String msg;
         serializeJson(doc, msg);
-        DEBUG_VERBOSE("Status report: %s", msg.c_str());
+
         if (WiFi.status() == WL_CONNECTED && mqttClient.connected()) {
             safePush(mqttMessageQueue,
                      std::make_pair(String("/switch/state/root"), msg),
                      mqttMessageQueueMutex, stats.mqttDropped, "MQTT-MSG");
-        } else {
-            DEBUG_VERBOSE("Status report: WiFi or MQTT not connected");
         }
+
         vTaskDelay(pdMS_TO_TICKS(STATUS_REPORT_INTERVAL));
     }
 }
 
 void handleUpdateMessage(const String& topic) {
-    DEBUG_INFO("Update requested for topic: %s", topic.c_str());
+    DEBUG_INFO("Update requested: %s", topic.c_str());
 
     if (topic == "/switch/cmd/root") {
-        DEBUG_INFO("Root OTA update triggered");
         otaInProgress = true;
         return;
     }
@@ -650,301 +703,359 @@ void handleUpdateMessage(const String& topic) {
     uint64_t nodeId;
 
     if (toUint64(last, nodeId)) {
-        DEBUG_INFO("Update requested for node: %llu", nodeId);
-        safePush(meshMessageQueue,
+        safePush(espnowMessageQueue,
                  std::make_pair((uint32_t)nodeId, String("U")),
-                 meshMessageQueueMutex, stats.meshDropped, "MESH-MSG");
+                 espnowMessageQueueMutex, stats.espnowDropped, "ESPNOW-MSG");
         return;
     }
 
-    DEBUG_INFO("Broadcasting update to all compatible nodes");
-    if (xSemaphoreTake(nodesMapMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        for (const auto& pair : nodes) {
+    if (xSemaphoreTake(peersMapMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        for (const auto& pair : peers) {
             uint32_t nodeId = pair.first;
-            String nodeType = pair.second;
+            String nodeType = pair.second.nodeType;
 
             if ((nodeType == "relay" && topic == "/switch/cmd") ||
                 (nodeType == "switch" && topic == "/relay/cmd")) {
                 continue;
             }
 
-            DEBUG_VERBOSE("Sending update to node %u (%s)", nodeId,
-                          nodeType.c_str());
-
-            xSemaphoreGive(nodesMapMutex);
-
-            safePush(meshMessageQueue, std::make_pair(nodeId, String("U")),
-                     meshMessageQueueMutex, stats.meshDropped, "MESH-MSG");
-            xSemaphoreTake(nodesMapMutex, pdMS_TO_TICKS(100));
+            DEBUG_INFO("Sending update to node %u", nodeId);
+            xSemaphoreGive(peersMapMutex);
+            safePush(espnowMessageQueue, std::make_pair(nodeId, String("U")),
+                     espnowMessageQueueMutex, stats.espnowDropped,
+                     "ESPNOW-MSG");
+            xSemaphoreTake(peersMapMutex, pdMS_TO_TICKS(100));
         }
-
-        xSemaphoreGive(nodesMapMutex);
+        xSemaphoreGive(peersMapMutex);
     }
 }
 
 void sendMQTTMessages(void* pvParameters) {
-    DEBUG_VERBOSE("sendMQTTMessages task started");
     while (true) {
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
+
         if (!mqttClient.connected()) {
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
+
         std::pair<String, String> message;
         if (!safePop(mqttMessageQueue, message, mqttMessageQueueMutex)) {
             vTaskDelay(pdMS_TO_TICKS(20));
             continue;
         }
+
         vTaskDelay(pdMS_TO_TICKS(10));
-        String topic = message.first;
-        String msg = message.second;
-        DEBUG_VERBOSE("MQTT TX: [%s] %s", topic.c_str(), msg.c_str());
-        mqttClient.publish(topic.c_str(), msg.c_str(), msg.length());
+        mqttClient.publish(message.first.c_str(), message.second.c_str());
     }
 }
 
-void sendMeshMessages(void* pvParameters) {
-    DEBUG_VERBOSE("sendMeshMessages task started");
+void sendESPNowMessages(void* pvParameters) {
     while (true) {
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
 
-        // Check priority queue FIRST (no delay for urgent commands)
         std::pair<uint32_t, String> message;
-        if (safePop(meshPriorityQueue, message, meshPriorityQueueMutex)) {
-            uint32_t to = message.first;
-            String msg = message.second;
-            DEBUG_VERBOSE("MESH TX PRIORITY: [%u] %s", to, msg.c_str());
-            mesh.sendSingle(to, msg);
-            vTaskDelay(pdMS_TO_TICKS(2));  // Minimal delay for priority
+        if (safePop(espnowPriorityQueue, message, espnowPriorityQueueMutex)) {
+            sendESPNowMessage(message.first, message.second, true);
+            vTaskDelay(pdMS_TO_TICKS(2));
             continue;
         }
 
-        // Then check regular queue
-        if (!safePop(meshMessageQueue, message, meshMessageQueueMutex)) {
-            vTaskDelay(pdMS_TO_TICKS(5));  // Reduced from 20ms
+        if (!safePop(espnowMessageQueue, message, espnowMessageQueueMutex)) {
+            vTaskDelay(pdMS_TO_TICKS(5));
             continue;
         }
-        vTaskDelay(pdMS_TO_TICKS(10));
-        uint32_t to = message.first;
-        String msg = message.second;
-        DEBUG_VERBOSE("MESH TX: [%u] %s", to, msg.c_str());
-        mesh.sendSingle(to, msg);
+
+        vTaskDelay(pdMS_TO_TICKS(5));
+        sendESPNowMessage(message.first, message.second, false);
     }
 }
 
 void mqttCallbackTask(void* pvParameters) {
-    DEBUG_VERBOSE("mqttCallbackTask started");
     while (true) {
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
+
         if (!mqttClient.connected()) {
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
+
         std::pair<String, String> message;
         if (!safePop(mqttCallbackQueue, message, mqttCallbackQueueMutex)) {
-            vTaskDelay(pdMS_TO_TICKS(5));  // Reduced from 20ms
+            vTaskDelay(pdMS_TO_TICKS(5));
             continue;
         }
-        // NO DELAY HERE - process immediately for relay commands
+
         String topic = message.first;
         String msg = message.second;
+
         if (msg == "U") {
             handleUpdateMessage(topic);
             continue;
         }
+
         if (topic == "/switch/cmd/root" && isValidJson(msg)) {
             DEBUG_INFO("Received connections config");
             JsonDocument doc;
             deserializeJson(doc, msg);
             parseConnections(doc.as<JsonObject>());
-
-            sendConnectionsToAllNodes();
             continue;
         }
 
-        // Fast path for relay commands
         bool isRelayCommand = topic.startsWith("/relay/cmd/");
 
         size_t lastSlash = topic.lastIndexOf('/');
         if (lastSlash != -1 && lastSlash < topic.length() - 1) {
             String idStr = topic.substring(lastSlash + 1);
             uint32_t nodeId = idStr.toInt();
+
             if (nodeId != 0 || idStr == "0") {
-                if (xSemaphoreTake(nodesMapMutex, pdMS_TO_TICKS(50)) !=
+                if (xSemaphoreTake(peersMapMutex, pdMS_TO_TICKS(50)) !=
                     pdTRUE) {
-                    DEBUG_ERROR("Failed to acquire nodes mutex");
                     continue;
                 }
 
-                bool found = (nodes.count(nodeId) > 0);
-                xSemaphoreGive(nodesMapMutex);
+                bool found = (peers.count(nodeId) > 0);
+                xSemaphoreGive(peersMapMutex);
+
                 if (!found) {
-                    DEBUG_VERBOSE("Node %u not found in node list", nodeId);
                     continue;
                 }
 
-                DEBUG_VERBOSE("Forwarding command to node %u: %s", nodeId,
-                              msg.c_str());
-                // Use priority queue for relay commands from MQTT
+                DEBUG_INFO("MQTT → Node %u: %s", nodeId, msg.c_str());
+
                 if (isRelayCommand) {
-                    safePush(meshPriorityQueue, std::make_pair(nodeId, msg),
-                             meshPriorityQueueMutex, stats.meshDropped,
-                             "MESH-PRIORITY");
+                    safePush(espnowPriorityQueue, std::make_pair(nodeId, msg),
+                             espnowPriorityQueueMutex, stats.espnowDropped,
+                             "ESPNOW-PRI");
                 } else {
-                    safePush(meshMessageQueue, std::make_pair(nodeId, msg),
-                             meshMessageQueueMutex, stats.meshDropped,
-                             "MESH-MSG");
+                    safePush(espnowMessageQueue, std::make_pair(nodeId, msg),
+                             espnowMessageQueueMutex, stats.espnowDropped,
+                             "ESPNOW-MSG");
                 }
             }
         }
     }
 }
 
-void meshCallbackTask(void* pvParameters) {
-    DEBUG_VERBOSE("meshCallbackTask started");
+void espnowCallbackTask(void* pvParameters) {
     while (true) {
         if (otaInProgress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
-        std::pair<uint32_t, String> message;
-        if (!safePop(meshCallbackQueue, message, meshCallbackQueueMutex)) {
+
+        espnow_message_t message;
+        if (!safePop(espnowCallbackQueue, message, espnowCallbackQueueMutex)) {
             vTaskDelay(pdMS_TO_TICKS(20));
             continue;
         }
 
         vTaskDelay(pdMS_TO_TICKS(5));
-        uint32_t from = message.first;
-        String msg = message.second;
 
-        if (msg == "R") {
-            DEBUG_INFO("Node %u identified as relay", from);
-            if (xSemaphoreTake(nodesMapMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-                nodes[from] = "relay";
-                xSemaphoreGive(nodesMapMutex);
+        uint32_t from = message.nodeId;
+        String msg = String(message.data);
+
+        // Update last seen
+        if (xSemaphoreTake(peersMapMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            auto it = peers.find(from);
+            if (it != peers.end()) {
+                it->second.lastSeen = millis();
             }
-            safePush(meshMessageQueue, std::make_pair(from, String("A")),
-                     meshMessageQueueMutex, stats.meshDropped, "MESH-MSG");
-
-            sendConnectionToNode(from);
-            continue;
+            xSemaphoreGive(peersMapMutex);
         }
 
-        if (msg == "S") {
-            DEBUG_INFO("Node %u identified as switch", from);
-            if (xSemaphoreTake(nodesMapMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-                nodes[from] = "switch";
-                xSemaphoreGive(nodesMapMutex);
+        // Authentication gate: only process non-handshake messages
+        bool isHandshake = (msg.length() == strlen(MESH_PASSWORD) + 2);
+        bool isAuthenticated = false;
+        if (xSemaphoreTake(peersMapMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+            auto it = peers.find(from);
+            isAuthenticated = (it != peers.end() && it->second.authenticated);
+            xSemaphoreGive(peersMapMutex);
+        }
+
+        // Handle handshake first
+        if (isHandshake) {
+            DEBUG_INFO("Handshake from node %u: msg='%s' len=%d expected=%d",
+                       from, msg.c_str(), msg.length(),
+                       strlen(MESH_PASSWORD) + 2);
+            String password = msg.substring(0, strlen(MESH_PASSWORD));
+            char cmdType = msg[msg.length() - 1];
+            DEBUG_INFO("  Extracted: password='%s' type='%c'", password.c_str(),
+                       cmdType);
+
+            if (password != MESH_PASSWORD) {
+                DEBUG_ERROR(
+                    "Invalid mesh password from node %u (got '%s', expected "
+                    "'%s')",
+                    from, password.c_str(), MESH_PASSWORD);
+                continue;
             }
-            safePush(meshMessageQueue, std::make_pair(from, String("A")),
-                     meshMessageQueueMutex, stats.meshDropped, "MESH-MSG");
 
-            sendConnectionToNode(from);
+            if (xSemaphoreTake(peersMapMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+                auto it = peers.find(from);
+                if (it != peers.end()) {
+                    it->second.authenticated = true;
+                    if (cmdType == 'R')
+                        it->second.nodeType = "relay";
+                    else if (cmdType == 'S')
+                        it->second.nodeType = "switch";
+                    DEBUG_INFO("Node %u authenticated as '%s'", from,
+                               it->second.nodeType.c_str());
+                } else {
+                    DEBUG_ERROR("Node %u not found in peers map!", from);
+                }
+                xSemaphoreGive(peersMapMutex);
+            }
+
+            // Ack and send connections
+            safePush(espnowMessageQueue, std::make_pair(from, String("A")),
+                     espnowMessageQueueMutex, stats.espnowDropped,
+                     "ESPNOW-MSG");
             continue;
         }
 
-        if (msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
-            safePush(mqttMessageQueue,
-                     std::make_pair(
-                         String(String("/switch/state/") + String(from)), msg),
-                     mqttMessageQueueMutex, stats.mqttDropped, "MQTT-MSG");
+        if (!isAuthenticated) {
+            // Drop messages from unauthenticated peers
+            DEBUG_VERBOSE(
+                "Dropping unauthenticated message from %u: '%s' (len=%d, "
+                "isHandshake=%d)",
+                from, msg.c_str(), msg.length(), isHandshake);
+            continue;
+        }
+
+        // **BUTTON PRESS ROUTING** - This is the key part!
+        if (msg.length() <= 2 && msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
+            char button = msg[0];
+
+            if (msg.length() == 2)
+                handleSwitchMessage(from, button, msg[1] - '0');
+            else
+                handleSwitchMessage(from, button);
 
             continue;
         }
 
+        // Relay state confirmation (e.g., "A0", "B1")
         if (msg.length() == 2 && msg[0] >= 'A' && msg[0] < 'A' + NLIGHTS) {
             handleRelayMessage(from, msg);
-
             continue;
         }
 
+        // JSON status reports
         if (isValidJson(msg)) {
-            DEBUG_VERBOSE("Processing JSON status from node %u", from);
             JsonDocument doc;
             deserializeJson(doc, msg.c_str());
-            doc["parentId"] = nodeParentMap[from];
+            doc["parentId"] = deviceId;
+
             String newMsg;
             serializeJson(doc, newMsg);
+
             if (WiFi.status() == WL_CONNECTED && mqttClient.connected()) {
                 safePush(mqttMessageQueue,
                          std::make_pair(String("/switch/state/root"), newMsg),
                          mqttMessageQueueMutex, stats.mqttDropped, "MQTT-MSG");
-            } else {
-                DEBUG_VERBOSE(
-                    "Cannot publish status: WiFi or MQTT not connected");
             }
             continue;
         }
 
-        DEBUG_VERBOSE("Unknown message from node %u: %s", from, msg.c_str());
+        // Handshake already handled above
+    }
+}
+
+void broadcastDiscovery(void* pvParameters) {
+    DEBUG_INFO("Discovery task started");
+
+    uint8_t broadcastMac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    esp_now_peer_info_t peerInfo = {};
+    memcpy(peerInfo.peer_addr, broadcastMac, 6);
+    peerInfo.channel = 0;
+    peerInfo.encrypt = false;
+
+    if (esp_now_add_peer(&peerInfo) == ESP_OK) {
+        DEBUG_INFO("Broadcast peer added");
+    }
+
+    while (true) {
+        if (otaInProgress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        espnow_message_t msg;
+        msg.nodeId = deviceId;
+        msg.msgType = 'Q';
+        strcpy(msg.data, "Q");
+
+        esp_now_send(broadcastMac, (uint8_t*)&msg, sizeof(espnow_message_t));
+
+        vTaskDelay(pdMS_TO_TICKS(10000));
     }
 }
 
 void setup() {
     Serial.begin(115200);
-    vTaskDelay(500 / portTICK_PERIOD_MS);
-    fw_md5 = ESP.getSketchMD5();
-    DEBUG_INFO("=== Mesh Root Starting ===");
-    DEBUG_INFO("Firmware MD5: %s", fw_md5.c_str());
-    DEBUG_INFO("Free heap: %u bytes", ESP.getFreeHeap());
+    vTaskDelay(500);
 
-    // CRITICAL: Create mutexes BEFORE meshInit() because callbacks can fire
-    // immediately
+    fw_md5 = ESP.getSketchMD5();
+    DEBUG_INFO("=== ESP-NOW Root Starting ===");
+    DEBUG_INFO("Firmware: %s", fw_md5.c_str());
+    DEBUG_INFO("Free heap: %u", ESP.getFreeHeap());
+
     DEBUG_INFO("Creating mutexes...");
     mqttMessageQueueMutex = xSemaphoreCreateMutex();
     mqttCallbackQueueMutex = xSemaphoreCreateMutex();
-    meshMessageQueueMutex = xSemaphoreCreateMutex();
-    meshPriorityQueueMutex = xSemaphoreCreateMutex();
-    meshCallbackQueueMutex = xSemaphoreCreateMutex();
-    nodesMapMutex = xSemaphoreCreateMutex();
+    espnowMessageQueueMutex = xSemaphoreCreateMutex();
+    espnowPriorityQueueMutex = xSemaphoreCreateMutex();
+    espnowCallbackQueueMutex = xSemaphoreCreateMutex();
+    peersMapMutex = xSemaphoreCreateMutex();
     connectionsMapMutex = xSemaphoreCreateMutex();
 
-    // Verify all mutexes were created
     if (!mqttMessageQueueMutex || !mqttCallbackQueueMutex ||
-        !meshMessageQueueMutex || !meshPriorityQueueMutex ||
-        !meshCallbackQueueMutex || !nodesMapMutex || !connectionsMapMutex) {
-        DEBUG_ERROR("FATAL: Failed to create mutexes!");
+        !espnowMessageQueueMutex || !espnowPriorityQueueMutex ||
+        !espnowCallbackQueueMutex || !peersMapMutex || !connectionsMapMutex) {
+        DEBUG_ERROR("FATAL: Mutex creation failed!");
         ESP.restart();
     }
-    DEBUG_INFO("All mutexes created successfully");
 
-    meshInit();
+    espnowInit();
+
     DEBUG_INFO("Creating tasks...");
     xTaskCreatePinnedToCore(checkWiFiAndMQTT, "WiFiMQTT", 8192, NULL, 2, NULL,
                             1);
     xTaskCreatePinnedToCore(statusReport, "Status", 4096, NULL, 1, NULL, 1);
-    xTaskCreatePinnedToCore(checkMesh, "MeshCheck", 8192, NULL, 1, NULL, 1);
-    xTaskCreatePinnedToCore(sendMQTTMessages, "sendMQTT", 4096, NULL, 2, NULL,
+    xTaskCreatePinnedToCore(checkPeers, "Peers", 4096, NULL, 1, NULL, 1);
+    xTaskCreatePinnedToCore(sendMQTTMessages, "MQTT_TX", 4096, NULL, 2, NULL,
                             1);
-    xTaskCreatePinnedToCore(sendMeshMessages, "sendMesh", 4096, NULL, 3, NULL,
-                            0);  // Higher priority
-    xTaskCreatePinnedToCore(mqttCallbackTask, "MQTTCallback", 12288, NULL, 4,
-                            NULL, 1);
-    xTaskCreatePinnedToCore(meshCallbackTask, "MeshCallback", 12288, NULL, 4,
+    xTaskCreatePinnedToCore(sendESPNowMessages, "ESPNOW_TX", 4096, NULL, 3,
                             NULL, 0);
-    DEBUG_INFO("=== Initialization complete ===");
+    xTaskCreatePinnedToCore(mqttCallbackTask, "MQTT_CB", 12288, NULL, 4, NULL,
+                            1);
+    xTaskCreatePinnedToCore(espnowCallbackTask, "ESPNOW_CB", 12288, NULL, 4,
+                            NULL, 0);
+    xTaskCreatePinnedToCore(broadcastDiscovery, "Discovery", 4096, NULL, 1,
+                            NULL, 1);
+
+    DEBUG_INFO("=== Init complete ===");
 }
 
 void loop() {
     static bool otaTaskStarted = false;
+
     if (otaInProgress && !otaTaskStarted) {
         otaTaskStarted = true;
-        DEBUG_INFO("Starting OTA task");
+        DEBUG_INFO("Starting OTA");
         xTaskCreatePinnedToCore(otaTask, "OTA", 16384, NULL, 5, NULL, 0);
     }
-    if (otaInProgress) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    } else {
-        mesh.update();
-        vTaskDelay(pdMS_TO_TICKS(1));
-    }
+
+    vTaskDelay(pdMS_TO_TICKS(otaInProgress ? 1000 : 10));
 }

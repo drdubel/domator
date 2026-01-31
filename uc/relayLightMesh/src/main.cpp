@@ -613,12 +613,9 @@ void processMeshMessage(const espnow_message_t& message) {
     }
 
     if (msg == "Q") {
-        if (registeredWithRoot) {
-            DEBUG_INFO("Re-registration query received from root");
-            return;
-        }
-
-        DEBUG_VERBOSE("Registration query received from root");
+        DEBUG_VERBOSE("Registration query received from root (registered=%d)",
+                      registeredWithRoot);
+        // Always respond to re-authenticate after root restart
         String regMessage = String(MESH_PASSWORD) + ":R";
         sendESPNowMessage(regMessage, false);
         DEBUG_VERBOSE("Sent registration request to root");

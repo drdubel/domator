@@ -660,12 +660,10 @@ void espnowCallbackTask(void* pvParameters) {
         }
 
         if (msg == "Q") {
-            if (registeredWithRoot) {
-                DEBUG_INFO("Re-registration query received from root");
-                continue;
-            }
-
-            DEBUG_VERBOSE("Registration query received from root");
+            DEBUG_VERBOSE(
+                "Registration query received from root (registered=%d)",
+                registeredWithRoot);
+            // Always respond to re-authenticate after root restart
             String regMessage = String(MESH_PASSWORD) + ":S";
             sendESPNowMessage(regMessage, false);
             DEBUG_VERBOSE("Sent registration request to root");

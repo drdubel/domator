@@ -960,11 +960,19 @@ void espnowCallbackTask(void* pvParameters) {
 
         // Handle handshake first
         if (isHandshake) {
+            DEBUG_INFO("Handshake from node %u: msg='%s' len=%d expected=%d",
+                       from, msg.c_str(), msg.length(),
+                       strlen(MESH_PASSWORD) + 2);
             String password = msg.substring(0, strlen(MESH_PASSWORD));
             char cmdType = msg[msg.length() - 1];
+            DEBUG_INFO("  Extracted: password='%s' type='%c'", password.c_str(),
+                       cmdType);
 
             if (password != MESH_PASSWORD) {
-                DEBUG_ERROR("Invalid mesh password from node %u", from);
+                DEBUG_ERROR(
+                    "Invalid mesh password from node %u (got '%s', expected "
+                    "'%s')",
+                    from, password.c_str(), MESH_PASSWORD);
                 continue;
             }
 
@@ -976,6 +984,10 @@ void espnowCallbackTask(void* pvParameters) {
                         it->second.nodeType = "relay";
                     else if (cmdType == 'S')
                         it->second.nodeType = "switch";
+                    DEBUG_INFO("Node %u authenticated as '%s'", from,
+                               it->second.nodeType.c_str());
+                } else {
+                    DEBUG_ERROR("Node %u not found in peers map!", from);
                 }
                 xSemaphoreGive(peersMapMutex);
             }
@@ -990,7 +1002,10 @@ void espnowCallbackTask(void* pvParameters) {
 
         if (!isAuthenticated) {
             // Drop messages from unauthenticated peers
-            DEBUG_VERBOSE("Dropping unauthenticated message from %u", from);
+            DEBUG_VERBOSE(
+                "Dropping unauthenticated message from %u: '%s' (len=%d, "
+                "isHandshake=%d)",
+                from, msg.c_str(), msg.length(), isHandshake);
             continue;
         }
 

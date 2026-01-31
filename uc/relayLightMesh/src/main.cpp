@@ -602,12 +602,16 @@ void processMeshMessage(const espnow_message_t& message) {
     }
 
     if (msg == "Q") {
-        // Only respond if NOT registered
-        if (!registeredWithRoot) {
-            DEBUG_INFO("Registration query from root");
-            sendESPNowMessage("R", false);
+        if (registeredWithRoot) {
+            DEBUG_INFO("Re-registration query received from root");
+            continue;
         }
-        return;
+
+        DEBUG_VERBOSE("Registration query received from root");
+        String regMessage = String(MESH_PASSWORD) + ":S";
+        sendESPNowMessage(regMessage, false);
+        DEBUG_VERBOSE("Sent registration request to root");
+        continue;
     }
 
     if (msg == "U") {

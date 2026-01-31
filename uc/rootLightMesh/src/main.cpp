@@ -923,44 +923,8 @@ void espnowCallbackTask(void* pvParameters) {
             xSemaphoreGive(peersMapMutex);
         }
 
-        if (msg == "R") {
-            DEBUG_INFO("Node %u = relay", from);
-
-            if (xSemaphoreTake(peersMapMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-                auto it = peers.find(from);
-                if (it != peers.end()) {
-                    it->second.nodeType = "relay";
-                }
-                xSemaphoreGive(peersMapMutex);
-            }
-
-            safePush(espnowMessageQueue, std::make_pair(from, String("A")),
-                     espnowMessageQueueMutex, stats.espnowDropped,
-                     "ESPNOW-MSG");
-            sendConnectionToNode(from);
-            continue;
-        }
-
-        if (msg == "S") {
-            DEBUG_INFO("Node %u = switch", from);
-
-            if (xSemaphoreTake(peersMapMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-                auto it = peers.find(from);
-                if (it != peers.end()) {
-                    it->second.nodeType = "switch";
-                }
-                xSemaphoreGive(peersMapMutex);
-            }
-
-            safePush(espnowMessageQueue, std::make_pair(from, String("A")),
-                     espnowMessageQueueMutex, stats.espnowDropped,
-                     "ESPNOW-MSG");
-            sendConnectionToNode(from);
-            continue;
-        }
-
         // **BUTTON PRESS ROUTING** - This is the key part!
-        if (msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
+        if (msg.length() <= 2 && msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
             char button = msg[0];
 
             if (msg.length() == 2)
@@ -992,6 +956,54 @@ void espnowCallbackTask(void* pvParameters) {
                          mqttMessageQueueMutex, stats.mqttDropped, "MQTT-MSG");
             }
             continue;
+        }
+
+        if (msg.length() == MESH_PASSWORD.length() + 2) {
+            String password = msg.substring(0, MESH_PASSWORD.length());
+            char cmdType = msg[msg.length() - 1];
+
+            if (password != MESH_PASSWORD) {
+                DEBUG_ERROR("Invalid mesh password from node %u", from);
+                continue;
+            }
+
+            if (cmdType == "R") {
+                DEBUG_INFO("Node %u = relay", from);
+
+                if (xSemaphoreTake(peersMapMutex, pdMS_TO_TICKS(100)) ==
+                    pdTRUE) {
+                    auto it = peers.find(from);
+                    if (it != peers.end()) {
+                        it->second.nodeType = "relay";
+                    }
+                    xSemaphoreGive(peersMapMutex);
+                }
+
+                safePush(espnowMessageQueue, std::make_pair(from, String("A")),
+                         espnowMessageQueueMutex, stats.espnowDropped,
+                         "ESPNOW-MSG");
+                sendConnectionToNode(from);
+                continue;
+            }
+
+            if (cmdType == "S") {
+                DEBUG_INFO("Node %u = switch", from);
+
+                if (xSemaphoreTake(peersMapMutex, pdMS_TO_TICKS(100)) ==
+                    pdTRUE) {
+                    auto it = peers.find(from);
+                    if (it != peers.end()) {
+                        it->second.nodeType = "switch";
+                    }
+                    xSemaphoreGive(peersMapMutex);
+                }
+
+                safePush(espnowMessageQueue, std::make_pair(from, String("A")),
+                         espnowMessageQueueMutex, stats.espnowDropped,
+                         "ESPNOW-MSG");
+                sendConnectionToNode(from);
+                continue;
+            }
         }
     }
 }

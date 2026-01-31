@@ -659,8 +659,9 @@ void espnowCallbackTask(void* pvParameters) {
             }
 
             DEBUG_VERBOSE("Registration query received from root");
-            sendESPNowMessage("S", false);
-            DEBUG_VERBOSE("Sent registration 'S' to root");
+            String regMessage = String(MESH_PASSWORD) + ":R";
+            sendESPNowMessage(regMessage, false);
+            DEBUG_VERBOSE("Sent registration request to root");
             continue;
         }
 

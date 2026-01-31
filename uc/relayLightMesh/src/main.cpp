@@ -6,6 +6,7 @@
 #include <credentials.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
+#include <mbedtls/sha256.h>
 
 #include <map>
 #include <queue>
@@ -409,6 +410,24 @@ void espnowInit() {
         return;
     }
 
+    // Derive PMK from password using SHA-256
+    uint8_t hash[32];
+    uint8_t pmk[16];
+
+    mbedtls_sha256_context ctx;
+    mbedtls_sha256_init(&ctx);
+    mbedtls_sha256_starts(&ctx, 0);  // 0 = SHA-256 (not SHA-224)
+    mbedtls_sha256_update(&ctx, (const unsigned char*)MESH_PASSWORD,
+                          strlen(MESH_PASSWORD));
+    mbedtls_sha256_finish(&ctx, hash);
+    mbedtls_sha256_free(&ctx);
+
+    // Use first 16 bytes as PMK
+    memcpy(pmk, hash, 16);
+
+    esp_now_set_pmk(pmk);
+    DEBUG_INFO("ESP-NOW encryption enabled (SHA-256 derived key)");
+
     DEBUG_INFO("ESP-NOW initialized successfully");
 
     esp_now_register_send_cb(onESPNowDataSent);
@@ -425,7 +444,18 @@ bool sendESPNowMessage(const String& message, bool priority = false) {
         esp_now_peer_info_t peerInfo = {};
         memcpy(peerInfo.peer_addr, rootMac, 6);
         peerInfo.channel = espnowChannel;
-        peerInfo.encrypt = false;
+        peerInfo.encrypt = true;
+
+        // Derive LMK from password using SHA-256
+        uint8_t hash[32];
+        mbedtls_sha256_context ctx;
+        mbedtls_sha256_init(&ctx);
+        mbedtls_sha256_starts(&ctx, 0);
+        mbedtls_sha256_update(&ctx, (const unsigned char*)MESH_PASSWORD,
+                              strlen(MESH_PASSWORD));
+        mbedtls_sha256_finish(&ctx, hash);
+        mbedtls_sha256_free(&ctx);
+        memcpy(peerInfo.lmk, hash, 16);
 
         esp_err_t result = esp_now_add_peer(&peerInfo);
         if (result != ESP_OK) {

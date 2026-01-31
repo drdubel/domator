@@ -10,6 +10,7 @@
 #include <credentials.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
+#include <mbedtls/sha256.h>
 
 #include <algorithm>
 #include <cctype>
@@ -337,81 +338,6 @@ void parseConnections(JsonObject root) {
     DEBUG_INFO("Connections parsed successfully");
 }
 
-void sendConnectionToNode(uint32_t nodeId) {
-    String nodeIdStr = String(nodeId);
-
-    // Only send to authenticated peers
-    bool isAuth = false;
-    if (xSemaphoreTake(peersMapMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        auto pit = peers.find(nodeId);
-        if (pit != peers.end()) {
-            isAuth = pit->second.authenticated;
-        }
-        xSemaphoreGive(peersMapMutex);
-    }
-    if (!isAuth) {
-        DEBUG_VERBOSE("sendConnectionToNode: Skipping unauthenticated node %u",
-                      nodeId);
-        return;
-    }
-
-    if (xSemaphoreTake(connectionsMapMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
-        DEBUG_ERROR("sendConnectionToNode: Failed to acquire mutex");
-        return;
-    }
-
-    auto it = connections.find(nodeIdStr);
-    if (it == connections.end()) {
-        xSemaphoreGive(connectionsMapMutex);
-        DEBUG_VERBOSE("No connections for node %u", nodeId);
-        return;
-    }
-
-    JsonDocument doc;
-    JsonObject nodeObj = doc[nodeIdStr].to<JsonObject>();
-
-    for (const auto& letterPair : it->second) {
-        char letter = letterPair.first;
-        JsonArray letterArray = nodeObj[String(letter)].to<JsonArray>();
-
-        for (const auto& target : letterPair.second) {
-            JsonArray targetPair = letterArray.add<JsonArray>();
-            targetPair.add(target.first);
-            targetPair.add(target.second);
-        }
-    }
-
-    String jsonStr;
-    serializeJson(doc, jsonStr);
-    xSemaphoreGive(connectionsMapMutex);
-
-    safePush(espnowMessageQueue, std::make_pair(nodeId, jsonStr),
-             espnowMessageQueueMutex, stats.espnowDropped, "ESPNOW-MSG");
-    DEBUG_INFO("Sent connections to node %u", nodeId);
-}
-
-void sendConnectionsToAllNodes() {
-    if (xSemaphoreTake(peersMapMutex, pdMS_TO_TICKS(100)) != pdTRUE) {
-        DEBUG_ERROR("sendConnectionsToAllNodes: Failed to acquire mutex");
-        return;
-    }
-
-    std::vector<uint32_t> nodeIds;
-    for (const auto& peer : peers) {
-        if (peer.second.authenticated) {
-            nodeIds.push_back(peer.first);
-        }
-    }
-    xSemaphoreGive(peersMapMutex);
-
-    DEBUG_INFO("Sending connections to %d authenticated nodes", nodeIds.size());
-
-    for (uint32_t nodeId : nodeIds) {
-        sendConnectionToNode(nodeId);
-        vTaskDelay(pdMS_TO_TICKS(50));
-    }
-}
-
 void mqttConnect() {
     if (WiFi.status() != WL_CONNECTED) {
         return;
@@ -517,6 +443,24 @@ void espnowInit() {
         return;
     }
 
+    // Derive PMK from password using SHA-256
+    uint8_t hash[32];
+    uint8_t pmk[16];
+
+    mbedtls_sha256_context ctx;
+    mbedtls_sha256_init(&ctx);
+    mbedtls_sha256_starts(&ctx, 0);  // 0 = SHA-256 (not SHA-224)
+    mbedtls_sha256_update(&ctx, (const unsigned char*)MESH_PASSWORD,
+                          strlen(MESH_PASSWORD));
+    mbedtls_sha256_finish(&ctx, hash);
+    mbedtls_sha256_free(&ctx);
+
+    // Use first 16 bytes as PMK
+    memcpy(pmk, hash, 16);
+
+    esp_now_set_pmk(pmk);
+    DEBUG_INFO("ESP-NOW encryption enabled (SHA-256 derived key)");
+
     DEBUG_INFO("ESP-NOW initialized");
 
     esp_now_register_send_cb(onESPNowDataSent);
@@ -539,7 +483,18 @@ bool addESPNowPeer(const uint8_t* mac) {
     esp_now_peer_info_t peerInfo = {};
     memcpy(peerInfo.peer_addr, mac, 6);
     peerInfo.channel = 0;
-    peerInfo.encrypt = false;
+    peerInfo.encrypt = true;
+
+    // Derive LMK from password using SHA-256
+    uint8_t hash[32];
+    mbedtls_sha256_context ctx;
+    mbedtls_sha256_init(&ctx);
+    mbedtls_sha256_starts(&ctx, 0);
+    mbedtls_sha256_update(&ctx, (const unsigned char*)MESH_PASSWORD,
+                          strlen(MESH_PASSWORD));
+    mbedtls_sha256_finish(&ctx, hash);
+    mbedtls_sha256_free(&ctx);
+    memcpy(peerInfo.lmk, hash, 16);
 
     if (esp_now_add_peer(&peerInfo) != ESP_OK) {
         return false;
@@ -882,7 +837,6 @@ void mqttCallbackTask(void* pvParameters) {
             JsonDocument doc;
             deserializeJson(doc, msg);
             parseConnections(doc.as<JsonObject>());
-            sendConnectionsToAllNodes();
             continue;
         }
 
@@ -996,7 +950,6 @@ void espnowCallbackTask(void* pvParameters) {
             safePush(espnowMessageQueue, std::make_pair(from, String("A")),
                      espnowMessageQueueMutex, stats.espnowDropped,
                      "ESPNOW-MSG");
-            sendConnectionToNode(from);
             continue;
         }
 

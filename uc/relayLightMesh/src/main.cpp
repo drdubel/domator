@@ -331,13 +331,23 @@ void onESPNowDataRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
     espnow_message_t msg;
     memcpy(&msg, data, sizeof(espnow_message_t));
 
-    // Update root MAC if this is from root
+    // Learn root MAC on discovery 'Q'; finalize on ACK 'A'
     if (!hasRootMac) {
-        memcpy(rootMac, mac_addr, 6);
-        hasRootMac = true;
-        DEBUG_INFO("ESP-NOW: Learned root MAC: %02X:%02X:%02X:%02X:%02X:%02X",
-                   rootMac[0], rootMac[1], rootMac[2], rootMac[3], rootMac[4],
-                   rootMac[5]);
+        String dataStr = String(msg.data);
+        if (msg.msgType == 'Q' || dataStr == "Q") {
+            memcpy(rootMac, mac_addr, 6);
+            hasRootMac = true;
+            DEBUG_VERBOSE("ESP-NOW: Discovered root MAC");
+        } else if (msg.msgType == 'A' || dataStr == "A") {
+            memcpy(rootMac, mac_addr, 6);
+            hasRootMac = true;
+            registeredWithRoot = true;
+            DEBUG_INFO(
+                "ESP-NOW: Registered with root MAC: "
+                "%02X:%02X:%02X:%02X:%02X:%02X",
+                rootMac[0], rootMac[1], rootMac[2], rootMac[3], rootMac[4],
+                rootMac[5]);
+        }
     }
 
     lastRootComm = millis();
@@ -475,7 +485,7 @@ void syncLightStates() {
 
 void sendStatusReport(void* pvParameters) {
     while (true) {
-        if (otaInProgress || !hasRootMac) {
+        if (otaInProgress || !hasRootMac || !registeredWithRoot) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
@@ -575,7 +585,8 @@ void registerTask(void* pvParameters) {
         if (!registeredWithRoot && hasRootMac) {
             DEBUG_INFO("Attempting registration with root...");
             digitalWrite(23, LOW);
-            sendESPNowMessage("R", false);
+            String regMessage = String(MESH_PASSWORD) + ":R";
+            sendESPNowMessage(regMessage, false);
         } else if (registeredWithRoot) {
             digitalWrite(23, HIGH);
         }
@@ -604,14 +615,14 @@ void processMeshMessage(const espnow_message_t& message) {
     if (msg == "Q") {
         if (registeredWithRoot) {
             DEBUG_INFO("Re-registration query received from root");
-            continue;
+            return;
         }
 
         DEBUG_VERBOSE("Registration query received from root");
-        String regMessage = String(MESH_PASSWORD) + ":S";
+        String regMessage = String(MESH_PASSWORD) + ":R";
         sendESPNowMessage(regMessage, false);
         DEBUG_VERBOSE("Sent registration request to root");
-        continue;
+        return;
     }
 
     if (msg == "U") {

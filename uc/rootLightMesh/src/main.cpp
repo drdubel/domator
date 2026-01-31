@@ -340,6 +340,21 @@ void parseConnections(JsonObject root) {
 void sendConnectionToNode(uint32_t nodeId) {
     String nodeIdStr = String(nodeId);
 
+    // Only send to authenticated peers
+    bool isAuth = false;
+    if (xSemaphoreTake(peersMapMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        auto pit = peers.find(nodeId);
+        if (pit != peers.end()) {
+            isAuth = pit->second.authenticated;
+        }
+        xSemaphoreGive(peersMapMutex);
+    }
+    if (!isAuth) {
+        DEBUG_VERBOSE("sendConnectionToNode: Skipping unauthenticated node %u",
+                      nodeId);
+        return;
+    }
+
     if (xSemaphoreTake(connectionsMapMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
         DEBUG_ERROR("sendConnectionToNode: Failed to acquire mutex");
         return;
@@ -383,11 +398,13 @@ void sendConnectionsToAllNodes() {
 
     std::vector<uint32_t> nodeIds;
     for (const auto& peer : peers) {
-        nodeIds.push_back(peer.first);
+        if (peer.second.authenticated) {
+            nodeIds.push_back(peer.first);
+        }
     }
     xSemaphoreGive(peersMapMutex);
 
-    DEBUG_INFO("Sending connections to %d nodes", nodeIds.size());
+    DEBUG_INFO("Sending connections to %d authenticated nodes", nodeIds.size());
 
     for (uint32_t nodeId : nodeIds) {
         sendConnectionToNode(nodeId);
@@ -539,6 +556,13 @@ void sendESPNowMessage(uint32_t nodeId, const String& message,
 
     auto it = peers.find(nodeId);
     if (it == peers.end()) {
+        xSemaphoreGive(peersMapMutex);
+        return;
+    }
+
+    // Only send to authenticated peers
+    if (!it->second.authenticated) {
+        DEBUG_VERBOSE("ESP-NOW send skipped; node %u unauthenticated", nodeId);
         xSemaphoreGive(peersMapMutex);
         return;
     }

@@ -166,19 +166,22 @@ const wsManager = new WebSocketManager('/rcm/ws/', function (event) {
     }
 
     if (msg.type === "light_state") {
-        State.pendingClicks.delete(`${msg.relay_id}-${msg.output_id}`)
-        State.lights[`${msg.relay_id}-${msg.output_id}`] = msg.state
+        pendingClicks.delete(`${msg.relay_id}-${msg.output_id}`)
+        lights[`${msg.relay_id}-${msg.output_id}`] = msg.state
         updateLightUI(msg.relay_id, msg.output_id, msg.state)
         return
     }
 
     if (msg.type === "online_status") {
-        State.onlineRelays = new Set(msg.online_relays)
-        State.onlineSwitches = new Set(msg.online_switches)
-        State.upToDateDevices = msg.up_to_date_devices || {}
-        console.log('Online relays:', State.onlineRelays)
-        console.log('Online switches:', State.onlineSwitches)
-        console.log('Up to date devices:', State.upToDateDevices)
+        online_relays = new Set(msg.online_relays)
+        online_switches = new Set(msg.online_switches)
+        up_to_date_devices = msg.up_to_date_devices || {}
+        State.onlineRelays = online_relays
+        State.onlineSwitches = online_switches
+        State.upToDateDevices = up_to_date_devices
+        console.log('Online relays:', online_relays)
+        console.log('Online switches:', online_switches)
+        console.log('Up to date devices:', up_to_date_devices)
         updateOnlineStatus()
         return
     }

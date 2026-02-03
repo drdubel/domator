@@ -1262,7 +1262,8 @@ function initJsPlumb() {
 
         // Clear highlights on click (desktop)
         canvas.addEventListener('click', function (e) {
-            if (e.target.id === 'canvas') {
+            // Clear highlights if clicking on canvas or canvas background (not on a device)
+            if (e.target.id === 'canvas' || e.target.closest('.device-box') === null) {
                 clearHighlights()
             }
         })
@@ -1270,7 +1271,7 @@ function initJsPlumb() {
         // Clear highlights on tap (touch screens)
         let canvasTouchStart = null
         canvas.addEventListener('touchstart', function (e) {
-            if (e.target.id === 'canvas' && e.touches.length === 1) {
+            if (e.touches.length === 1) {
                 canvasTouchStart = {
                     x: e.touches[0].clientX,
                     y: e.touches[0].clientY,
@@ -1280,14 +1281,15 @@ function initJsPlumb() {
         })
 
         canvas.addEventListener('touchend', function (e) {
-            if (e.target.id === 'canvas' && canvasTouchStart && e.changedTouches.length > 0) {
+            if (canvasTouchStart && e.changedTouches.length > 0) {
                 const touch = e.changedTouches[0]
                 const dx = Math.abs(touch.clientX - canvasTouchStart.x)
                 const dy = Math.abs(touch.clientY - canvasTouchStart.y)
                 const duration = Date.now() - canvasTouchStart.time
 
-                // Only clear if it was a tap (not a pan/swipe)
-                if (dx < 10 && dy < 10 && duration < 200) {
+                // Only clear if it was a tap (not a pan/swipe) and not on a device
+                const target = document.elementFromPoint(touch.clientX, touch.clientY)
+                if (dx < 10 && dy < 10 && duration < 200 && (!target || !target.closest('.device-box'))) {
                     clearHighlights()
                 }
             }

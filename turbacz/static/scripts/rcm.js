@@ -1025,13 +1025,15 @@ function highlightDevice(deviceId) {
 }
 
 function clearHighlights() {
+    console.log('clearHighlights called')
+
     document.querySelectorAll('.device-box.highlighted').forEach(el => {
         el.classList.remove('highlighted')
     })
 
-    // Restore full opacity to all devices
+    // Restore full opacity to all devices by removing inline style
     document.querySelectorAll('.device-box').forEach(el => {
-        el.style.opacity = '1'
+        el.style.removeProperty('opacity')
     })
 
     if (!jsPlumbInstance) return

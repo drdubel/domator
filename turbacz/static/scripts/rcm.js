@@ -1034,6 +1034,8 @@ function clearHighlights() {
         el.style.opacity = '1'
     })
 
+    if (!jsPlumbInstance) return
+
     const allConnections = jsPlumbInstance.getAllConnections()
     allConnections.forEach(conn => {
         // Get the source switch ID to check for custom color
@@ -1262,8 +1264,8 @@ function initJsPlumb() {
 
         // Clear highlights on click (desktop)
         canvas.addEventListener('click', function (e) {
-            // Clear highlights if clicking on canvas or canvas background (not on a device)
-            if (e.target.id === 'canvas' || e.target.closest('.device-box') === null) {
+            // Clear highlights if not clicking on a device box
+            if (!e.target.closest('.device-box')) {
                 clearHighlights()
             }
         })

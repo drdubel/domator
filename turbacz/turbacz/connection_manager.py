@@ -4,10 +4,10 @@ import psycopg
 from fastapi import APIRouter, Cookie, Form, Request
 from fastapi.responses import JSONResponse
 
-from turbacz import auth
+import turbacz.auth as auth
 from turbacz.settings import config
 
-router = APIRouter(prefix="/lights")
+connection_router = APIRouter(prefix="/lights")
 
 
 class ConnectionManager:
@@ -160,7 +160,7 @@ class ConnectionManager:
 
         self.conn.commit()
 
-    def get_switches(self) -> dict[int, tuple[str, int]] | None:
+    def get_switches(self) -> dict[int, tuple[str, int]]:
         with self.conn.cursor() as cur:
             cur.execute("SELECT id, name, buttons FROM switches;")
             switches = cur.fetchall()
@@ -239,7 +239,7 @@ class ConnectionManager:
 
         self.conn.commit()
 
-    def get_outputs(self) -> dict[int, dict[str, tuple[str, int]]] | None:
+    def get_outputs(self) -> dict[int, dict[str, tuple[str, int]]]:
         with self.conn.cursor() as cur:
             cur.execute("SELECT relay_id, output_id, name, section_id FROM outputs;")
             outputs = cur.fetchall()
@@ -253,7 +253,7 @@ class ConnectionManager:
 
         return output_dict
 
-    def get_named_outputs(self) -> dict[int, dict[str, tuple[str, int]]] | None:
+    def get_named_outputs(self) -> dict[int, dict[str, tuple[str, int]]]:
         named_outputs = {}
 
         for relay_id, outputs in self.get_outputs().items():
@@ -375,7 +375,7 @@ class ConnectionManager:
         return connection_dict
 
 
-@router.post("/add_relay")
+@connection_router.post("/add_relay")
 def add_relay(
     request: Request,
     relay_id: int = Form(...),
@@ -393,7 +393,7 @@ def add_relay(
     return {"status": "Relay added"}
 
 
-@router.post("/name_output")
+@connection_router.post("/name_output")
 def add_output(
     request: Request,
     relay_id: int = Form(...),
@@ -411,7 +411,7 @@ def add_output(
     return {"status": "Output added"}
 
 
-@router.post("/rename_relay")
+@connection_router.post("/rename_relay")
 def rename_relay(
     request: Request,
     relay_id: int = Form(...),
@@ -429,7 +429,7 @@ def rename_relay(
     return {"status": "Relay renamed"}
 
 
-@router.post("/rename_switch")
+@connection_router.post("/rename_switch")
 def rename_switch(
     request: Request,
     switch_id: int = Form(...),
@@ -447,7 +447,7 @@ def rename_switch(
     return {"status": "Switch renamed"}
 
 
-@router.post("/add_switch")
+@connection_router.post("/add_switch")
 def add_switch(
     request: Request,
     switch_id: int = Form(...),
@@ -465,7 +465,7 @@ def add_switch(
     return {"status": "Switch added"}
 
 
-@router.post("/add_connection")
+@connection_router.post("/add_connection")
 def add_connection(
     request: Request,
     switch_id: int = Form(...),
@@ -484,7 +484,7 @@ def add_connection(
     return {"status": "Connection added"}
 
 
-@router.get("/get_connections")
+@connection_router.get("/get_connections")
 def get_connections(
     request: Request,
     access_token: Optional[str] = Cookie(None),
@@ -498,7 +498,7 @@ def get_connections(
     return JSONResponse(content=connections)
 
 
-@router.get("/get_relays")
+@connection_router.get("/get_relays")
 def get_relays(
     request: Request,
     access_token: Optional[str] = Cookie(None),
@@ -512,7 +512,7 @@ def get_relays(
     return JSONResponse(content=relays)
 
 
-@router.get("/get_switches")
+@connection_router.get("/get_switches")
 def get_switches(
     request: Request,
     access_token: Optional[str] = Cookie(None),
@@ -526,7 +526,7 @@ def get_switches(
     return JSONResponse(content=switches)
 
 
-@router.get("/get_outputs")
+@connection_router.get("/get_outputs")
 def get_outputs(
     request: Request,
     access_token: Optional[str] = Cookie(None),
@@ -540,7 +540,7 @@ def get_outputs(
     return JSONResponse(content=outputs)
 
 
-@router.post("/remove_connection")
+@connection_router.post("/remove_connection")
 def remove_connection(
     request: Request,
     switch_id: int = Form(...),
@@ -558,7 +558,7 @@ def remove_connection(
     return {"status": "Connection removed"}
 
 
-@router.post("/remove_relay")
+@connection_router.post("/remove_relay")
 def remove_relay(
     request: Request,
     relay_id: int = Form(...),
@@ -573,7 +573,7 @@ def remove_relay(
     return {"status": "Relay removed"}
 
 
-@router.post("/remove_switch")
+@connection_router.post("/remove_switch")
 def remove_switch(
     request: Request,
     switch_id: int = Form(...),

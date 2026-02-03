@@ -1,7 +1,6 @@
 from typing import Optional
 
 from pydantic import BaseModel
-from pydantic.functional_validators import ModelAfterValidator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -14,9 +13,7 @@ class OIDCSettings(BaseModel):
     provider: str = "google"
     client_id: str
     client_secret: str
-    server_metadata_url: str = (
-        "https://accounts.google.com/.well-known/openid-configuration"
-    )
+    server_metadata_url: str = "https://accounts.google.com/.well-known/openid-configuration"
 
 
 class MQTTServerSettings(BaseModel):
@@ -47,13 +44,13 @@ class Monitoring(BaseModel):
 
 
 class TurbaczSettings(BaseSettings):
-    authorized: set[str]
-    jwt_secret: str
-    mqtt: MQTTServerSettings
-    oidc: OIDCSettings
-    monitoring: Monitoring
-    server: ServerSettings
-    psql: PSQLSettings
+    authorized: set[str] = set()
+    jwt_secret: str = ""
+    mqtt: MQTTServerSettings = MQTTServerSettings(password="")
+    oidc: OIDCSettings = OIDCSettings(client_id="", client_secret="")
+    monitoring: Monitoring = Monitoring()
+    server: ServerSettings = ServerSettings()
+    psql: PSQLSettings = PSQLSettings()
     use_mqtt: bool = True
 
     model_config = SettingsConfigDict(toml_file="turbacz.toml")

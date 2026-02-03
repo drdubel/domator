@@ -3,7 +3,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import httpx
 import sentry_sdk
@@ -20,7 +20,8 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
 from starlette.types import ASGIApp
 
-from turbacz import auth, connection_manager
+import turbacz.auth as auth
+from turbacz.connection_manager import connection_manager, connection_router
 from turbacz.broker import mqtt
 from turbacz.settings import config
 from turbacz.state import state_manager
@@ -34,7 +35,7 @@ class CustomRequestSizeMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.max_content_size = max_content_size
 
-    async def dispatch(self, request: Request, call_next: callable) -> Response:
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
         content_length = int(request.headers.get("content-length", 0))
         if content_length > self.max_content_size:
             return Response(
@@ -61,7 +62,7 @@ app.add_middleware(SessionMiddleware, secret_key="!secret")
 app.add_middleware(MetricsMiddleware)
 app.add_route("/metrics", metrics)
 app.include_router(auth.router)
-app.include_router(connection_manager.router)
+app.include_router(connection_router)
 mqtt.init_app(app)
 
 background_task_started = False
@@ -305,13 +306,13 @@ async def websocket_lights(websocket: WebSocket):
     await ws_manager.send_personal_message(
         {
             "type": "configuration",
-            "sections": connection_manager.connection_manager.get_sections(),
-            "named_outputs": connection_manager.connection_manager.get_named_outputs(),
+            "sections": connection_manager.get_sections(),
+            "named_outputs": connection_manager.get_named_outputs(),
         },
         websocket,
     )
 
-    for relay_id in connection_manager.connection_manager.get_relays():
+    for relay_id in connection_manager.get_relays():
         mqtt.client.publish(f"/relay/cmd/{relay_id}", "S")
 
     current_states = state_manager.get_all()
@@ -330,26 +331,24 @@ async def websocket_lights(websocket: WebSocket):
     async def receive_command(websocket: WebSocket):
         async for cmd in websocket.iter_json():
             if cmd.get("type") == "add_section":
-                connection_manager.connection_manager.add_section(cmd["name"])
+                connection_manager.add_section(cmd["name"])
                 await ws_manager.broadcast(
                     {
                         "type": "configuration",
-                        "sections": connection_manager.connection_manager.get_sections(),
-                        "named_outputs": connection_manager.connection_manager.get_named_outputs(),
+                        "sections": connection_manager.get_sections(),
+                        "named_outputs": connection_manager.get_named_outputs(),
                     },
                     "/lights/ws/",
                 )
                 continue
 
             if cmd.get("type") == "change_section":
-                connection_manager.connection_manager.change_output_section(
-                    int(cmd["relay_id"]), cmd["output_id"], int(cmd["section"])
-                )
+                connection_manager.change_output_section(int(cmd["relay_id"]), cmd["output_id"], int(cmd["section"]))
                 await ws_manager.broadcast(
                     {
                         "type": "configuration",
-                        "sections": connection_manager.connection_manager.get_sections(),
-                        "named_outputs": connection_manager.connection_manager.get_named_outputs(),
+                        "sections": connection_manager.get_sections(),
+                        "named_outputs": connection_manager.get_named_outputs(),
                     },
                     "/lights/ws/",
                 )
@@ -376,7 +375,7 @@ async def websocket_rcm(websocket: WebSocket):
 
     await ws_manager.connect(websocket)
 
-    for relay_id in connection_manager.connection_manager.get_relays():
+    for relay_id in connection_manager.get_relays():
         mqtt.client.publish(f"/relay/cmd/{relay_id}", "S")
 
     await ws_manager.send_personal_message(
@@ -394,7 +393,7 @@ async def websocket_rcm(websocket: WebSocket):
             logger.debug("putting %s in command queue", cmd)
 
             if cmd.get("type") == "update":
-                connections = connection_manager.connection_manager.get_all_connections()
+                connections = connection_manager.get_all_connections()
 
                 mqtt.client.publish("/switch/cmd/root", json.dumps(connections))
                 await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")

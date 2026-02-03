@@ -1,77 +1,125 @@
-// Global variables
-let jsPlumbInstance
-let switches = {}
-let relays = {}
-let online_relays = new Set()
-let online_switches = new Set()
-let up_to_date_devices = {} // Maps device_id to boolean indicating if firmware is up to date
-let connections = {}
-var lights = {}
-var pendingClicks = new Set()
-let currentEditTarget = null
-let highlightedDevice = null
-let isLoadingConnections = false
-let connectionLookupMap = {} // Maps device IDs to their connections for fast lookup
-let zoomUpdateScheduled = false
-let cachedElements = {}
-let hiddenDevices = new Set() // Track hidden devices
+// ============================================
+// RELAY CONTROL MANAGER (RCM)
+// Main application for managing switches and relays
+// ============================================
 
-// Detect Firefox for performance optimizations
+// ========== GLOBAL STATE ==========
+const State = {
+    // Core instances
+    jsPlumb: null,
+    wsManager: null,
+
+    // Device collections
+    switches: {},
+    relays: {},
+    connections: {},
+    lights: {},
+
+    // Status tracking
+    onlineRelays: new Set(),
+    onlineSwitches: new Set(),
+    upToDateDevices: {},
+    hiddenDevices: new Set(),
+
+    // UI state
+    pendingClicks: new Set(),
+    currentEditTarget: null,
+    highlightedDevice: null,
+    isLoadingConnections: false,
+    isCardDragging: false,
+
+    // Caching
+    cachedElements: {},
+    connectionLookupMap: {}
+}
+
+// Browser detection for performance optimizations
 const isFirefox = navigator.userAgent.toLowerCase().includes('firefox')
 if (isFirefox) {
-    // Disable backdrop-filter on Firefox for better performance
     document.documentElement.classList.add('firefox')
 }
 
-// Zoom and Pan System - GPU Accelerated
-function loadCanvasView() {
-    const saved = localStorage.getItem('rcm_canvas_view')
-    if (saved) {
-        const view = JSON.parse(saved)
-        return {
-            zoomLevel: view.zoomLevel || 0.4,
-            panX: view.panX !== undefined ? view.panX : getDefaultPanX(),
-            panY: view.panY !== undefined ? view.panY : getDefaultPanY()
+// ========== CANVAS VIEW & ZOOM SYSTEM ==========
+const CanvasView = {
+    // Constants
+    DEFAULT_ZOOM: 0.4,
+    DEVICE_CENTER_X: 25000,
+    DEVICE_CENTER_Y: 25000,
+    MIN_ZOOM: 0.2,
+    MAX_ZOOM: 3,
+
+    // State
+    zoomLevel: 0.4,
+    panX: 0,
+    panY: 0,
+    isPanning: false,
+    isPinching: false,
+    startX: 0,
+    startY: 0,
+    lastPinchDistance: 0,
+    lastTransformTime: 0,
+    rafId: null,
+    lastDisplayedZoom: -1,
+
+    // DOM elements
+    canvasElement: null,
+    zoomLevelElement: null,
+
+    init() {
+        const saved = localStorage.getItem('rcm_canvas_view')
+        if (saved) {
+            const view = JSON.parse(saved)
+            this.zoomLevel = view.zoomLevel || this.DEFAULT_ZOOM
+            this.panX = view.panX !== undefined ? view.panX : this.getDefaultPanX()
+            this.panY = view.panY !== undefined ? view.panY : this.getDefaultPanY()
+        } else {
+            this.zoomLevel = this.DEFAULT_ZOOM
+            this.panX = this.getDefaultPanX()
+            this.panY = this.getDefaultPanY()
         }
+    },
+
+    getDefaultPanX() {
+        const viewportCenterX = window.innerWidth / 2
+        return viewportCenterX - (this.DEVICE_CENTER_X * this.DEFAULT_ZOOM)
+    },
+
+    getDefaultPanY() {
+        const viewportCenterY = (window.innerHeight - 90) / 2
+        return viewportCenterY - (this.DEVICE_CENTER_Y * this.DEFAULT_ZOOM)
+    },
+
+    save() {
+        localStorage.setItem('rcm_canvas_view', JSON.stringify({
+            zoomLevel: this.zoomLevel,
+            panX: this.panX,
+            panY: this.panY
+        }))
     }
-    return { zoomLevel: 0.4, panX: getDefaultPanX(), panY: getDefaultPanY() }
 }
 
-function getDefaultPanX() {
-    const deviceCenterX = 25000
-    const viewportCenterX = window.innerWidth / 2
-    const defaultZoom = 0.4
-    return viewportCenterX - (deviceCenterX * defaultZoom)
-}
+// Initialize canvas view
+CanvasView.init()
 
-function getDefaultPanY() {
-    const deviceCenterY = 25000
-    const viewportCenterY = (window.innerHeight - 90) / 2
-    const defaultZoom = 0.4
-    return viewportCenterY - (deviceCenterY * defaultZoom)
-}
-
-const initialView = loadCanvasView()
-let zoomLevel = initialView.zoomLevel
-let panX = initialView.panX
-let panY = initialView.panY
-let isPanning = false
-let isPinching = false
-let startX = 0
-let startY = 0
-let lastPinchDistance = 0
-
-// Cached DOM elements
-let canvasElement = null
-let zoomLevelElement = null
-let transformPending = false
-let lastDisplayedZoom = -1
-let rafId = null
-let isCardDragging = false
+// Legacy variables for compatibility
+let zoomLevel = CanvasView.zoomLevel
+let panX = CanvasView.panX
+let panY = CanvasView.panY
+let isPanning = CanvasView.isPanning
+let isPinching = CanvasView.isPinching
+let startX = CanvasView.startX
+let startY = CanvasView.startY
+let lastPinchDistance = CanvasView.lastPinchDistance
+let canvasElement = CanvasView.canvasElement
+let zoomLevelElement = CanvasView.zoomLevelElement
+let lastDisplayedZoom = CanvasView.lastDisplayedZoom
+let rafId = CanvasView.rafId
+let isCardDragging = State.isCardDragging
 
 const API_BASE_URL = `https://${window.location.host}`
+const FIREFOX_THROTTLE_MS = 16
 
-// Performance utilities
+// ========== UTILITY FUNCTIONS ==========
 function throttle(func, delay) {
     let lastCall = 0
     return function (...args) {
@@ -92,40 +140,38 @@ function debounce(func, delay) {
 }
 
 // Initialize WebSocket manager
-var wsManager = new WebSocketManager('/rcm/ws/', function (event) {
-    var msg = JSON.parse(event.data)
+const wsManager = new WebSocketManager('/rcm/ws/', function (event) {
+    const msg = JSON.parse(event.data)
     console.log(msg)
 
-
-    if (msg.type == "update") {
+    // Handle different message types
+    if (msg.type === "update") {
         loadConfiguration()
+        return
     }
 
-    if (msg.type == "light_state") {
-        pendingClicks.delete(`${msg.relay_id}-${msg.output_id}`)
-        lights[`${msg.relay_id}-${msg.output_id}`] = msg.state
+    if (msg.type === "light_state") {
+        State.pendingClicks.delete(`${msg.relay_id}-${msg.output_id}`)
+        State.lights[`${msg.relay_id}-${msg.output_id}`] = msg.state
         updateLightUI(msg.relay_id, msg.output_id, msg.state)
+        return
     }
 
-    if (msg.type == "online_status") {
-        online_relays = new Set(msg.online_relays)
-        online_switches = new Set(msg.online_switches)
-        up_to_date_devices = msg.up_to_date_devices || {}
-
-        console.log('Online relays:', online_relays)
-        console.log('Online switches:', online_switches)
-        console.log('Up to date devices:', up_to_date_devices)
-
+    if (msg.type === "online_status") {
+        State.onlineRelays = new Set(msg.online_relays)
+        State.onlineSwitches = new Set(msg.online_switches)
+        State.upToDateDevices = msg.up_to_date_devices || {}
+        console.log('Online relays:', State.onlineRelays)
+        console.log('Online switches:', State.onlineSwitches)
+        console.log('Up to date devices:', State.upToDateDevices)
         updateOnlineStatus()
+        return
     }
 
-    if (msg.type == "switch_state" && msg.switch_id && msg.button_id) {
+    if (msg.type === "switch_state" && msg.switch_id && msg.button_id) {
         highlightButton(msg.switch_id, msg.button_id)
-
-        // Auto-clear highlight after 5 seconds
-        setTimeout(() => {
-            clearButtonHighlight(msg.switch_id, msg.button_id)
-        }, 5000)
+        setTimeout(() => clearButtonHighlight(msg.switch_id, msg.button_id), 5000)
+        return
     }
 })
 
@@ -145,7 +191,6 @@ function hideLoading() {
 
 // ------------------- GPU TRANSFORM -------------------
 let lastTransformTime = 0
-const FIREFOX_THROTTLE_MS = 16 // ~60fps for Firefox
 
 function applyCanvasTransform() {
     if (rafId) return // Already scheduled
@@ -1384,6 +1429,8 @@ function getDemoConnections() {
     }
 }
 
+// ========== DEVICE CREATION ==========
+
 function createSwitch(switchId, switchName, buttonCount, x, y) {
     const savedPos = getSavedPosition(`switch-${switchId}`, x, y)
     const savedColor = getSavedColor(`switch-${switchId}`)
@@ -1749,6 +1796,8 @@ function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
     relays[relayId] = { name: relayName, outputs, outputsCount, element: relayDiv }
 }
 
+// ========== UI UPDATES ==========
+
 function updateOnlineStatus() {
     // Update all switches
     for (let switchId in switches) {
@@ -1933,6 +1982,8 @@ function updateLightUI(relay_id, output_id, state) {
     }
 }
 
+// ========== MODAL DIALOGS ==========
+
 function showAddSwitchModal() {
     document.getElementById('addSwitchModal').classList.add('active')
     document.getElementById('switchId').value = ''
@@ -1969,6 +2020,8 @@ function showAddRelayModal() {
 function closeModal(modalId) {
     document.getElementById(modalId).classList.remove('active')
 }
+
+// ========== DEVICE CRUD OPERATIONS ==========
 
 async function addSwitch() {
     const switchId = parseInt(document.getElementById('switchId').value)

@@ -357,20 +357,20 @@ function initPanning() {
     document.addEventListener('touchmove', touchMoveHandler, { passive: false })
 
     document.addEventListener('touchend', e => {
-            if (isPanning) {
-                isPanning = false
-                wrapper.classList.remove('grabbing')
-                resumeJsPlumb()
-                saveCanvasView()
-            }
-            if (isPinching) {
-                isPinching = false
-                lastPinchDistance = 0
-                // Resume jsPlumb and apply current zoom
-                resumeJsPlumb()
-                setTimeout(saveCanvasView, 150)
-            }
-        })
+        if (isPanning) {
+            isPanning = false
+            wrapper.classList.remove('grabbing')
+            resumeJsPlumb()
+            saveCanvasView()
+        }
+        if (isPinching) {
+            isPinching = false
+            lastPinchDistance = 0
+            // Resume jsPlumb and apply current zoom
+            resumeJsPlumb()
+            setTimeout(saveCanvasView, 150)
+        }
+    })
 
     // ----------------- MOUSE WHEEL ZOOM -----------------
     let wheelTimeout = null
@@ -1506,19 +1506,19 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
             setTimeout(() => {
                 isDragging = false
                 isCardDragging = false
-            }, 100)
+            }, 50)
         }
     })
 
     // Prevent triggering any child clicks while dragging (capture phase)
     switchDiv.addEventListener('click', function (e) {
-        if (isDragging || isCardDragging) {
+        if ((isDragging || isCardDragging) && e.target === switchDiv) {
             e.stopPropagation()
             e.preventDefault()
         }
     }, true)
     switchDiv.addEventListener('touchend', function (e) {
-        if (isDragging || isCardDragging) {
+        if ((isDragging || isCardDragging) && e.target === switchDiv) {
             e.stopPropagation()
             e.preventDefault()
         }
@@ -1719,19 +1719,19 @@ function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
             setTimeout(() => {
                 isDragging = false
                 isCardDragging = false
-            }, 100)
+            }, 50)
         }
     })
 
     // Prevent triggering any child clicks while dragging (capture phase)
     relayDiv.addEventListener('click', function (e) {
-        if (isDragging || isCardDragging) {
+        if ((isDragging || isCardDragging) && e.target === relayDiv) {
             e.stopPropagation()
             e.preventDefault()
         }
     }, true)
     relayDiv.addEventListener('touchend', function (e) {
-        if (isDragging || isCardDragging) {
+        if ((isDragging || isCardDragging) && e.target === relayDiv) {
             e.stopPropagation()
             e.preventDefault()
         }
@@ -1843,15 +1843,42 @@ function createConnection(switchId, buttonId, relayId, outputId) {
 // Helper function to add both click and touch support
 function addClickAndTouchHandler(element, handler) {
     let touchHandled = false
+    let touchStartTime = 0
+    let touchStartPos = null
+
+    element.addEventListener('touchstart', (e) => {
+        touchStartTime = Date.now()
+        if (e.touches.length === 1) {
+            touchStartPos = {
+                x: e.touches[0].clientX,
+                y: e.touches[0].clientY
+            }
+        }
+    }, { passive: true })
 
     element.addEventListener('touchend', (e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        touchHandled = true
-        if (!isCardDragging) {
-            handler(e)
+        const touchDuration = Date.now() - touchStartTime
+        let wasTap = touchDuration < 300
+
+        // Check if touch moved significantly
+        if (touchStartPos && e.changedTouches.length > 0) {
+            const touch = e.changedTouches[0]
+            const dx = Math.abs(touch.clientX - touchStartPos.x)
+            const dy = Math.abs(touch.clientY - touchStartPos.y)
+            if (dx > 10 || dy > 10) {
+                wasTap = false
+            }
         }
-        setTimeout(() => { touchHandled = false }, 300)
+
+        touchStartPos = null
+
+        if (wasTap && !isCardDragging) {
+            e.preventDefault()
+            e.stopPropagation()
+            touchHandled = true
+            handler(e)
+            setTimeout(() => { touchHandled = false }, 300)
+        }
     }, { passive: false })
 
     element.addEventListener('click', (e) => {

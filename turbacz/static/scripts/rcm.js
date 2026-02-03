@@ -1218,8 +1218,10 @@ async function loadConfiguration() {
 
         // create relays (centered on canvas by default)
         let relayX = 25000, relayY = 25000
-        for (let [relayId, relayName] of Object.entries(relays_config)) {
-            createRelay(parseInt(relayId), relayName, outputs_config[relayId] || {}, relayX, relayY)
+        for (let [relayId, relayData] of Object.entries(relays_config)) {
+            const relayName = Array.isArray(relayData) ? relayData[0] : relayData
+            const outputsCount = Array.isArray(relayData) ? relayData[1] : 8
+            createRelay(parseInt(relayId), relayName, outputs_config[relayId] || {}, relayX, relayY, outputsCount)
             relayY += 770
             if (relayY > 29000) { relayY = 25000; relayX += 350; }
         }
@@ -1520,7 +1522,7 @@ function copyIdToClipboard(id, element) {
     })
 }
 
-function createRelay(relayId, relayName, outputs, x, y) {
+function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
     const savedPos = getSavedPosition(`relay-${relayId}`, x, y)
 
     const relayDiv = document.createElement('div')
@@ -1530,7 +1532,7 @@ function createRelay(relayId, relayName, outputs, x, y) {
     relayDiv.style.top = `${savedPos.y}px`
 
     let outputsHTML = ''
-    for (let i = 1; i <= 8; i++) {
+    for (let i = 1; i <= outputsCount; i++) {
         let outputName = outputs[String.fromCharCode(96 + i)] || `Output ${i}`
         if (Array.isArray(outputName)) {
             outputName = outputName[0]
@@ -1574,7 +1576,7 @@ function createRelay(relayId, relayName, outputs, x, y) {
     document.getElementById('canvas').appendChild(relayDiv)
 
     // Add click and touch handlers for light bulbs and output names
-    for (let i = 1; i <= 8; i++) {
+    for (let i = 1; i <= outputsCount; i++) {
         const outputId = String.fromCharCode(96 + i)
 
         // Light bulb toggle
@@ -1679,7 +1681,7 @@ function createRelay(relayId, relayName, outputs, x, y) {
         }
     }, true)
 
-    for (let i = 1; i <= 8; i++) {
+    for (let i = 1; i <= outputsCount; i++) {
         const outputElement = document.getElementById(`relay-${relayId}-output-${String.fromCharCode(96 + i)}`)
         jsPlumbInstance.makeTarget(outputElement, {
             anchor: "Left",
@@ -1688,7 +1690,7 @@ function createRelay(relayId, relayName, outputs, x, y) {
         })
     }
 
-    relays[relayId] = { name: relayName, outputs, element: relayDiv }
+    relays[relayId] = { name: relayName, outputs, outputsCount, element: relayDiv }
 }
 
 function updateOnlineStatus() {
@@ -1918,6 +1920,7 @@ async function addSwitch() {
 async function addRelay() {
     const relayId = parseInt(document.getElementById('relayId').value)
     const relayName = document.getElementById('relayName').value
+    const outputsCount = parseInt(document.getElementById('relayOutputs').value) || 8
 
     if (!relayId || !relayName) {
         alert('Please fill all fields')
@@ -1929,21 +1932,27 @@ async function addRelay() {
         return
     }
 
+    if (outputsCount !== 8 && outputsCount !== 16) {
+        alert('Outputs must be either 8 or 16')
+        return
+    }
+
     const result = await postForm('/lights/add_relay', {
         relay_id: relayId,
-        relay_name: relayName
+        relay_name: relayName,
+        outputs: outputsCount
     })
 
     if (result !== null) {
         const outputs = {}
-        for (let i = 1; i <= 8; i++) {
-            outputs[i] = `Output ${i}`
+        for (let i = 1; i <= outputsCount; i++) {
+            outputs[String.fromCharCode(96 + i)] = `Output ${i}`
         }
 
         const numRelays = Object.keys(relays).length
         const x = 1200 + (numRelays % 3) * 350
         const y = 100 + Math.floor(numRelays / 3) * 450
-        createRelay(relayId, relayName, outputs, x, y)
+        createRelay(relayId, relayName, outputs, x, y, outputsCount)
         closeModal('addRelayModal')
     }
 }
@@ -2004,6 +2013,9 @@ function editDeviceName(type, id) {
     if (type === 'switch') {
         document.getElementById('editButtonNumber').style.display = 'block'
         document.getElementById('editButtonNumber').value = switches[id].buttonCount
+    } else if (type === 'relay') {
+        document.getElementById('editButtonNumber').style.display = 'block'
+        document.getElementById('editButtonNumber').value = relays[id].outputsCount || 8
     }
 
     document.addEventListener('keydown', function handler(e) {
@@ -2077,9 +2089,17 @@ async function saveNameEdit() {
         document.getElementById('editButtonNumber').style.display = 'none'
     } else if (currentEditTarget.type === 'relay') {
         // Rename relay
+        const outputsCount = parseInt(document.getElementById('editButtonNumber').value) || relays[currentEditTarget.id].outputsCount || 8
+
+        if (outputsCount !== 8 && outputsCount !== 16) {
+            alert('Outputs must be either 8 or 16')
+            return
+        }
+
         const result = await postForm('/lights/rename_relay', {
             relay_id: currentEditTarget.id,
-            relay_name: newName
+            relay_name: newName,
+            outputs: outputsCount
         })
 
         if (result !== null) {
@@ -2087,6 +2107,8 @@ async function saveNameEdit() {
             const nameElement = document.querySelector(`#relay-${currentEditTarget.id} .device-name`)
             if (nameElement) nameElement.textContent = newName
         }
+
+        document.getElementById('editButtonNumber').style.display = 'none'
     }
 
     closeModal('editNameModal')

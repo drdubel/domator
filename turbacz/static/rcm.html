@@ -119,6 +119,13 @@
                 <label>Relay Name</label>
                 <input type="text" id="relayName" placeholder="Enter relay name">
             </div>
+            <div class="form-group">
+                <label>Number of Outputs</label>
+                <select id="relayOutputs">
+                    <option value="8" selected>8 outputs</option>
+                    <option value="16">16 outputs</option>
+                </select>
+            </div>
             <div class="modal-buttons">
                 <button class="modal-btn save" onclick="addRelay()">Save</button>
                 <button class="modal-btn cancel" onclick="closeModal('addRelayModal')">Cancel</button>

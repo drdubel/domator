@@ -200,11 +200,11 @@ async def handle_root_state(payload_str):
 
     elif data["type"] == "relay":
         if data["deviceId"] in relays:
-            data["name"] = relays[data["deviceId"]]
+            data["name"] = relays[data["deviceId"]][0]  # Extract name from tuple
         else:
             name = namer.generate(category="animals")
             data["name"] = name
-            connection_manager.connection_manager.add_relay(data["deviceId"], name)
+            connection_manager.connection_manager.add_relay(data["deviceId"], name, data.get("outputs", 8))
             await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
 
     elif data["type"] == "root":
@@ -225,7 +225,7 @@ async def handle_root_state(payload_str):
     data["name"] = data["name"].replace(" ", "\\ ")
 
     if data["parentId"] in relays:
-        parent_name = relays[data["parentId"]]
+        parent_name = relays[data["parentId"]][0]  # Extract name from tuple
 
     elif data["parentId"] in switches:
         parent_name = switches[data["parentId"]][0]

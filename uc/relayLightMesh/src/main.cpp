@@ -14,12 +14,6 @@
 
 #include "esp_task_wdt.h"
 
-// Hardware definitions
-#define USE_BOARD 75
-#define NO_PWMPIN
-const byte wifiActivityPin = 255;
-#define NLIGHTS 8
-
 // Timing constants
 #define STATUS_PRINT_INTERVAL 10000
 #define WIFI_CONNECT_TIMEOUT 20000
@@ -34,7 +28,7 @@ const byte wifiActivityPin = 255;
 #define LOW_HEAP_THRESHOLD 50000
 
 // Debug levels
-#define DEBUG_LEVEL 1  // 0=none, 1=errors only, 2=info, 3=verbose
+#define DEBUG_LEVEL 3  // 0=none, 1=errors only, 2=info, 3=verbose
 
 #if DEBUG_LEVEL >= 1
 #define DEBUG_ERROR(fmt, ...) Serial.printf("[ERROR] " fmt "\n", ##__VA_ARGS__)
@@ -70,11 +64,21 @@ uint32_t disconnects = 0;
 uint32_t clicks = 0;
 String fw_md5;
 
-const int relays[NLIGHTS] = {32, 33, 25, 26, 27, 14, 12, 13};
-const int buttons[NLIGHTS] = {2, 15, 4, 0, 17, 16, 18, 5};
-int lights[NLIGHTS] = {0, 0, 0, 0, 0, 0, 0, 0};
-volatile bool buttonState[NLIGHTS] = {0, 0, 0, 0, 0, 0, 0, 0};
-volatile uint32_t lastPress[NLIGHTS] = {0, 0, 0, 0, 0, 0, 0, 0};
+// Relay and button configuration
+const int PIN_DATA = 14;   // SER
+const int PIN_CLOCK = 13;  // SRCLK
+const int PIN_LATCH = 12;  // RCLK
+const int PIN_OE = 5;      // active LOW
+
+uint16_t outputs = 0;  // 16-bit state for shift register relays
+
+const int NBUTTONS = 8;
+int NLIGHTS = 8;
+
+const int outPins8[8] = {32, 33, 25, 26, 27, 14, 12, 13};
+const int buttons[8] = {16, 17, 18, 19, 21, 22, 34, 35};
+volatile bool buttonState[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+volatile uint32_t lastPress[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 volatile uint8_t pressed = 0;
 
 // Queues
@@ -85,6 +89,10 @@ std::queue<std::pair<String, bool>> espnowMessageQueue;  // message, isPriority
 SemaphoreHandle_t espnowCallbackQueueMutex = NULL;
 SemaphoreHandle_t espnowMessageQueueMutex = NULL;
 SemaphoreHandle_t lightsArrayMutex = NULL;
+
+enum BoardType { BOARD_8, BOARD_16 };
+
+BoardType boardType = BOARD_8;
 
 // Statistics
 struct Statistics {
@@ -115,7 +123,7 @@ bool safePush(std::queue<T>& q, const T& item, SemaphoreHandle_t mutex,
         dropCounter++;
         return false;
     }
-    if (xSemaphoreTake(mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+    if (xSemaphoreTake(mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
         if (q.size() >= MAX_QUEUE_SIZE) {
             dropCounter++;
             DEBUG_ERROR(
@@ -150,13 +158,54 @@ bool safePop(std::queue<T>& q, T& item, SemaphoreHandle_t mutex) {
     return false;
 }
 
+void writeShiftRegisters(uint16_t bits) {
+    digitalWrite(PIN_OE, HIGH);  // disable outputs while shifting
+    digitalWrite(PIN_LATCH, LOW);
+
+    for (int i = 15; i >= 0; i--) {
+        digitalWrite(PIN_CLOCK, LOW);
+        digitalWrite(PIN_DATA, (bits & (1u << i)) ? HIGH : LOW);
+        digitalWrite(PIN_CLOCK, HIGH);
+    }
+
+    digitalWrite(PIN_LATCH, HIGH);
+    digitalWrite(PIN_OE, LOW);  // enable outputs
+}
+
+void setRelay(int idx, bool on) {
+    if (boardType == BOARD_8) {
+        if (idx < 0 || idx >= 8) return;
+        digitalWrite(outPins8[idx], on ? HIGH : LOW);
+        bitWrite(outputs, idx, on ? 1 : 0);  // Keep outputs in sync
+    } else {
+        if (idx < 0 || idx >= 16) return;
+        bitWrite(outputs, idx, on ? 1 : 0);
+        writeShiftRegisters(outputs);
+    }
+}
+
+void detectBoard() {
+    pinMode(PIN_DATA, INPUT_PULLUP);
+    pinMode(PIN_CLOCK, INPUT_PULLUP);
+    pinMode(PIN_LATCH, INPUT_PULLUP);
+
+    if (digitalRead(PIN_DATA) != LOW && digitalRead(PIN_CLOCK) != LOW &&
+        digitalRead(PIN_LATCH) != LOW) {
+        boardType = BOARD_16;
+        NLIGHTS = 16;
+        Serial.println("Detected 16-relay board");
+    } else {
+        Serial.println("Detected 8-relay board");
+    }
+}
+
 bool checkHeapHealth() {
     uint32_t freeHeap = ESP.getFreeHeap();
     if (freeHeap < CRITICAL_HEAP_THRESHOLD) {
         stats.criticalHeapEvents++;
         DEBUG_ERROR("CRITICAL: Low heap %u bytes! Clearing queues...",
                     freeHeap);
-        if (xSemaphoreTake(espnowMessageQueueMutex, pdMS_TO_TICKS(100)) ==
+        if (xSemaphoreTake(espnowMessageQueueMutex, pdMS_TO_TICKS(10)) ==
             pdTRUE) {
             while (!espnowMessageQueue.empty()) espnowMessageQueue.pop();
             xSemaphoreGive(espnowMessageQueueMutex);
@@ -171,7 +220,7 @@ bool checkHeapHealth() {
 }
 
 void otaTask(void* pv) {
-    for (int i = 0; i < NLIGHTS; i++) {
+    for (int i = 0; i < NBUTTONS; i++) {
         detachInterrupt(buttons[i]);
     }
     DEBUG_INFO("[OTA] Stopping ESP-NOW...");
@@ -469,11 +518,11 @@ bool sendESPNowMessage(const String& message, bool priority = false) {
 
 void syncLightStates() {
     DEBUG_INFO("RELAY: Syncing all light states to root");
-    if (xSemaphoreTake(lightsArrayMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+    if (xSemaphoreTake(lightsArrayMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
         for (int i = 0; i < NLIGHTS; i++) {
             char message[3];
             message[0] = 'A' + i;
-            message[1] = lights[i] ? '1' : '0';
+            message[1] = outputs & (1 << i) ? '1' : '0';
             message[2] = '\0';
 
             safePush(espnowMessageQueue, std::make_pair(String(message), true),
@@ -502,6 +551,7 @@ void sendStatusReport(void* pvParameters) {
         doc["type"] = "relay";
         doc["firmware"] = fw_md5;
         doc["lowHeap"] = stats.lowHeapEvents;
+        doc["outputs"] = NLIGHTS;  // Report number of outputs (8 or 16)
 
         String msg;
         serializeJson(doc, msg);
@@ -543,7 +593,7 @@ void buttonPressTask(void* pvParameters) {
 
         if (!pressed) continue;
 
-        for (int i = 0; i < NLIGHTS; i++) {
+        for (int i = 0; i < NBUTTONS; i++) {
             if (pressed & (1 << i)) {
                 pressed &= ~(1 << i);
             } else {
@@ -552,13 +602,16 @@ void buttonPressTask(void* pvParameters) {
 
             char button = 'a' + i;
 
-            if (xSemaphoreTake(lightsArrayMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-                lights[i] = buttonState[i] ? HIGH : LOW;
+            if (xSemaphoreTake(lightsArrayMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
                 clicks++;
+
+                // Toggle the relay state
+                bool newState = buttonState[i];
+                setRelay(i, newState);
 
                 char response[3];
                 response[0] = 'a' + i;
-                response[1] = lights[i] ? '1' : '0';
+                response[1] = newState ? '1' : '0';
                 response[2] = '\0';
 
                 xSemaphoreGive(lightsArrayMutex);
@@ -568,7 +621,7 @@ void buttonPressTask(void* pvParameters) {
                     espnowMessageQueueMutex, stats.espnowDropped, "ESPNOW-PRI");
 
                 DEBUG_INFO("Light %c set to %s by button", button,
-                           lights[i] ? "ON" : "OFF");
+                           newState ? "ON" : "OFF");
             }
         }
     }
@@ -585,11 +638,11 @@ void registerTask(void* pvParameters) {
 
         if (!registeredWithRoot && hasRootMac) {
             DEBUG_INFO("Attempting registration with root...");
-            digitalWrite(23, LOW);
+            if (boardType == BOARD_8) digitalWrite(23, LOW);
             String regMessage = String(MESH_PASSWORD) + ":R";
             sendESPNowMessage(regMessage, false);
         } else if (registeredWithRoot) {
-            digitalWrite(23, HIGH);
+            if (boardType == BOARD_8) digitalWrite(23, HIGH);
         }
     }
 }
@@ -638,9 +691,8 @@ void processMeshMessage(const espnow_message_t& message) {
             return;
         }
 
-        if (xSemaphoreTake(lightsArrayMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-            lights[lightIndex] = newState;
-            digitalWrite(relays[lightIndex], newState ? HIGH : LOW);
+        if (xSemaphoreTake(lightsArrayMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            setRelay(lightIndex, newState);
             clicks++;
 
             char response[3];
@@ -661,14 +713,14 @@ void processMeshMessage(const espnow_message_t& message) {
     if (msg.length() == 1 && msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
         int lightIndex = msg[0] - 'a';
 
-        if (xSemaphoreTake(lightsArrayMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-            lights[lightIndex] = !lights[lightIndex];
-            digitalWrite(relays[lightIndex], lights[lightIndex] ? HIGH : LOW);
+        if (xSemaphoreTake(lightsArrayMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            bool newState = !(outputs & (1 << lightIndex));
+            setRelay(lightIndex, newState);
             clicks++;
 
             char response[3];
             response[0] = 'A' + lightIndex;
-            response[1] = lights[lightIndex] ? '1' : '0';
+            response[1] = (outputs & (1 << lightIndex)) ? '1' : '0';
             response[2] = '\0';
 
             xSemaphoreGive(lightsArrayMutex);
@@ -731,11 +783,15 @@ void setup() {
     Serial.begin(115200);
     vTaskDelay(1000 / portTICK_PERIOD_MS);
 
+    detectBoard();
+
     fw_md5 = ESP.getSketchMD5();
     DEBUG_INFO("\n========================================");
     DEBUG_INFO("ESP32 ESP-NOW Relay Node Starting...");
     DEBUG_INFO("Sketch MD5: %s", fw_md5.c_str());
     DEBUG_INFO("Free Heap: %d bytes", ESP.getFreeHeap());
+    DEBUG_INFO("Device Type: %s",
+               boardType == BOARD_8 ? "8-Relay Board" : "16-Relay Board");
     DEBUG_INFO("========================================\n");
 
     DEBUG_INFO("Creating mutexes...");
@@ -749,17 +805,27 @@ void setup() {
         ESP.restart();
     }
 
-    for (int i = 0; i < NLIGHTS; i++) {
-        pinMode(relays[i], OUTPUT);
-        digitalWrite(relays[i], LOW);
-    }
+    if (boardType == BOARD_8) {
+        for (int i = 0; i < 8; i++) {
+            pinMode(outPins8[i], OUTPUT);
+            digitalWrite(outPins8[i], LOW);
+        }
 
-    pinMode(23, OUTPUT);
-    digitalWrite(23, LOW);
+        pinMode(23, OUTPUT);
+        digitalWrite(23, LOW);
+    } else {
+        pinMode(PIN_DATA, OUTPUT);
+        pinMode(PIN_CLOCK, OUTPUT);
+        pinMode(PIN_LATCH, OUTPUT);
+        pinMode(PIN_OE, OUTPUT);
+        digitalWrite(PIN_OE, LOW);
+        outputs = 0;
+        writeShiftRegisters(outputs);
+    }
 
     espnowInit();
 
-    for (int i = 0; i < NLIGHTS; i++) {
+    for (int i = 0; i < NBUTTONS; i++) {
         pinMode(buttons[i], INPUT_PULLDOWN);
         attachInterruptArg(digitalPinToInterrupt(buttons[i]), buttonISR,
                            (void*)i, CHANGE);

@@ -16,6 +16,13 @@ let zoomUpdateScheduled = false
 let cachedElements = {}
 let hiddenDevices = new Set() // Track hidden devices
 
+// Detect Firefox for performance optimizations
+const isFirefox = navigator.userAgent.toLowerCase().includes('firefox')
+if (isFirefox) {
+    // Disable backdrop-filter on Firefox for better performance
+    document.documentElement.classList.add('firefox')
+}
+
 // Zoom and Pan System - GPU Accelerated
 function loadCanvasView() {
     const saved = localStorage.getItem('rcm_canvas_view')
@@ -137,10 +144,23 @@ function hideLoading() {
 // =================== OPTIMIZED PAN/ZOOM SYSTEM ===================
 
 // ------------------- GPU TRANSFORM -------------------
+let lastTransformTime = 0
+const FIREFOX_THROTTLE_MS = 16 // ~60fps for Firefox
+
 function applyCanvasTransform() {
     if (rafId) return // Already scheduled
+
+    // Throttle more aggressively on Firefox at high zoom
+    if (isFirefox && zoomLevel > 0.8) {
+        const now = Date.now()
+        if (now - lastTransformTime < FIREFOX_THROTTLE_MS) {
+            return
+        }
+        lastTransformTime = now
+    }
+
     rafId = requestAnimationFrame(() => {
-        canvasElement.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`
+        canvasElement.style.transform = `translate3d(${panX}px, ${panY}px, 0) scale(${zoomLevel})`
         rafId = null
     })
 }
@@ -150,7 +170,7 @@ function applyCanvasTransformImmediate() {
         cancelAnimationFrame(rafId)
         rafId = null
     }
-    canvasElement.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`
+    canvasElement.style.transform = `translate3d(${panX}px, ${panY}px, 0) scale(${zoomLevel})`
 }
 
 function updateZoomDisplay() {
@@ -170,6 +190,10 @@ function suspendJsPlumb() {
     if (jsPlumbInstance) {
         jsPlumbInstance.setSuspendDrawing(true)
     }
+    // Disable pointer events during transform for better Firefox performance
+    if (isFirefox && canvasElement) {
+        canvasElement.style.pointerEvents = 'none'
+    }
 }
 
 function resumeJsPlumb() {
@@ -178,10 +202,22 @@ function resumeJsPlumb() {
         rafId = null
     }
     applyCanvasTransformImmediate()
+
+    // Re-enable pointer events
+    if (isFirefox && canvasElement) {
+        canvasElement.style.pointerEvents = ''
+    }
+
     if (jsPlumbInstance) {
         // Ensure jsPlumb uses the current zoom before resuming drawing
         jsPlumbInstance.setZoom(zoomLevel)
-        jsPlumbInstance.setSuspendDrawing(false, true) // second param = repaint immediately
+        // On Firefox, delay repaint slightly to avoid blocking the UI
+        if (isFirefox) {
+            jsPlumbInstance.setSuspendDrawing(false, false)
+            setTimeout(() => jsPlumbInstance.repaintEverything(), 50)
+        } else {
+            jsPlumbInstance.setSuspendDrawing(false, true)
+        }
     }
 }
 
@@ -237,9 +273,9 @@ function initPanning() {
     zoomLevelElement = document.getElementById('zoomLevel')
 
     // Add GPU acceleration hints
-    canvasElement.style.willChange = 'transform'
     canvasElement.style.backfaceVisibility = 'hidden'
     canvasElement.style.transformOrigin = '0 0'
+    canvasElement.style.transform = 'translateZ(0)'
 
     // ----------------- MOUSE PANNING -----------------
     wrapper.addEventListener('mousedown', e => {
@@ -250,12 +286,18 @@ function initPanning() {
         wrapper.classList.add('grabbing')
         suspendJsPlumb()
     })
-    document.addEventListener('mousemove', e => {
+    const mouseMoveHandler = isFirefox ? throttle((e) => {
         if (!isPanning) return
         panX = e.clientX - startX
         panY = e.clientY - startY
         applyCanvasTransform()
-    })
+    }, 16) : (e) => {
+        if (!isPanning) return
+        panX = e.clientX - startX
+        panY = e.clientY - startY
+        applyCanvasTransform()
+    }
+    document.addEventListener('mousemove', mouseMoveHandler)
     document.addEventListener('mouseup', () => {
         if (!isPanning) return
         isPanning = false
@@ -287,12 +329,14 @@ function initPanning() {
         }
     }, { passive: false })
 
-    document.addEventListener('touchmove', e => {
+    const touchMoveHandler = (e) => {
         if (isPanning && e.touches.length === 1) {
             const touch = e.touches[0]
             panX = touch.clientX - startX
             panY = touch.clientY - startY
-            applyCanvasTransform()
+            if (!isFirefox || Date.now() - lastTransformTime >= FIREFOX_THROTTLE_MS) {
+                applyCanvasTransform()
+            }
             e.preventDefault()
         }
         if (isPinching && e.touches.length === 2) {
@@ -309,7 +353,8 @@ function initPanning() {
             lastPinchDistance = distance
             e.preventDefault()
         }
-    }, { passive: false })
+    }
+    document.addEventListener('touchmove', touchMoveHandler, { passive: false })
 
     document.addEventListener('touchend', e => {
         if (isPanning) {
@@ -329,7 +374,18 @@ function initPanning() {
 
     // ----------------- MOUSE WHEEL ZOOM -----------------
     let wheelTimeout = null
+    let lastWheelTime = 0
     const wheelHandler = e => {
+        // Throttle wheel events on Firefox
+        if (isFirefox) {
+            const now = Date.now()
+            if (now - lastWheelTime < 30) {
+                e.preventDefault()
+                return
+            }
+            lastWheelTime = now
+        }
+
         if (!wheelTimeout) suspendJsPlumb()
         clearTimeout(wheelTimeout)
 
@@ -351,7 +407,7 @@ function initPanning() {
             resumeJsPlumb()
             saveCanvasView()
             wheelTimeout = null
-        }, 200)
+        }, isFirefox ? 300 : 200)
 
         e.preventDefault()
     }
@@ -1218,8 +1274,10 @@ async function loadConfiguration() {
 
         // create relays (centered on canvas by default)
         let relayX = 25000, relayY = 25000
-        for (let [relayId, relayName] of Object.entries(relays_config)) {
-            createRelay(parseInt(relayId), relayName, outputs_config[relayId] || {}, relayX, relayY)
+        for (let [relayId, relayData] of Object.entries(relays_config)) {
+            const relayName = Array.isArray(relayData) ? relayData[0] : relayData
+            const outputsCount = Array.isArray(relayData) ? relayData[1] : 8
+            createRelay(parseInt(relayId), relayName, outputs_config[relayId] || {}, relayX, relayY, outputsCount)
             relayY += 770
             if (relayY > 29000) { relayY = 25000; relayX += 350; }
         }
@@ -1448,19 +1506,19 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
             setTimeout(() => {
                 isDragging = false
                 isCardDragging = false
-            }, 100)
+            }, 50)
         }
     })
 
     // Prevent triggering any child clicks while dragging (capture phase)
     switchDiv.addEventListener('click', function (e) {
-        if (isDragging || isCardDragging) {
+        if ((isDragging || isCardDragging) && e.target === switchDiv) {
             e.stopPropagation()
             e.preventDefault()
         }
     }, true)
     switchDiv.addEventListener('touchend', function (e) {
-        if (isDragging || isCardDragging) {
+        if ((isDragging || isCardDragging) && e.target === switchDiv) {
             e.stopPropagation()
             e.preventDefault()
         }
@@ -1520,7 +1578,7 @@ function copyIdToClipboard(id, element) {
     })
 }
 
-function createRelay(relayId, relayName, outputs, x, y) {
+function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
     const savedPos = getSavedPosition(`relay-${relayId}`, x, y)
 
     const relayDiv = document.createElement('div')
@@ -1530,7 +1588,7 @@ function createRelay(relayId, relayName, outputs, x, y) {
     relayDiv.style.top = `${savedPos.y}px`
 
     let outputsHTML = ''
-    for (let i = 1; i <= 8; i++) {
+    for (let i = 1; i <= outputsCount; i++) {
         let outputName = outputs[String.fromCharCode(96 + i)] || `Output ${i}`
         if (Array.isArray(outputName)) {
             outputName = outputName[0]
@@ -1574,7 +1632,7 @@ function createRelay(relayId, relayName, outputs, x, y) {
     document.getElementById('canvas').appendChild(relayDiv)
 
     // Add click and touch handlers for light bulbs and output names
-    for (let i = 1; i <= 8; i++) {
+    for (let i = 1; i <= outputsCount; i++) {
         const outputId = String.fromCharCode(96 + i)
 
         // Light bulb toggle
@@ -1661,25 +1719,25 @@ function createRelay(relayId, relayName, outputs, x, y) {
             setTimeout(() => {
                 isDragging = false
                 isCardDragging = false
-            }, 100)
+            }, 50)
         }
     })
 
     // Prevent triggering any child clicks while dragging (capture phase)
     relayDiv.addEventListener('click', function (e) {
-        if (isDragging || isCardDragging) {
+        if ((isDragging || isCardDragging) && e.target === relayDiv) {
             e.stopPropagation()
             e.preventDefault()
         }
     }, true)
     relayDiv.addEventListener('touchend', function (e) {
-        if (isDragging || isCardDragging) {
+        if ((isDragging || isCardDragging) && e.target === relayDiv) {
             e.stopPropagation()
             e.preventDefault()
         }
     }, true)
 
-    for (let i = 1; i <= 8; i++) {
+    for (let i = 1; i <= outputsCount; i++) {
         const outputElement = document.getElementById(`relay-${relayId}-output-${String.fromCharCode(96 + i)}`)
         jsPlumbInstance.makeTarget(outputElement, {
             anchor: "Left",
@@ -1688,7 +1746,7 @@ function createRelay(relayId, relayName, outputs, x, y) {
         })
     }
 
-    relays[relayId] = { name: relayName, outputs, element: relayDiv }
+    relays[relayId] = { name: relayName, outputs, outputsCount, element: relayDiv }
 }
 
 function updateOnlineStatus() {
@@ -1785,15 +1843,42 @@ function createConnection(switchId, buttonId, relayId, outputId) {
 // Helper function to add both click and touch support
 function addClickAndTouchHandler(element, handler) {
     let touchHandled = false
+    let touchStartTime = 0
+    let touchStartPos = null
+
+    element.addEventListener('touchstart', (e) => {
+        touchStartTime = Date.now()
+        if (e.touches.length === 1) {
+            touchStartPos = {
+                x: e.touches[0].clientX,
+                y: e.touches[0].clientY
+            }
+        }
+    }, { passive: true })
 
     element.addEventListener('touchend', (e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        touchHandled = true
-        if (!isCardDragging) {
-            handler(e)
+        const touchDuration = Date.now() - touchStartTime
+        let wasTap = touchDuration < 300
+
+        // Check if touch moved significantly
+        if (touchStartPos && e.changedTouches.length > 0) {
+            const touch = e.changedTouches[0]
+            const dx = Math.abs(touch.clientX - touchStartPos.x)
+            const dy = Math.abs(touch.clientY - touchStartPos.y)
+            if (dx > 10 || dy > 10) {
+                wasTap = false
+            }
         }
-        setTimeout(() => { touchHandled = false }, 300)
+
+        touchStartPos = null
+
+        if (wasTap && !isCardDragging) {
+            e.preventDefault()
+            e.stopPropagation()
+            touchHandled = true
+            handler(e)
+            setTimeout(() => { touchHandled = false }, 300)
+        }
     }, { passive: false })
 
     element.addEventListener('click', (e) => {
@@ -1918,6 +2003,7 @@ async function addSwitch() {
 async function addRelay() {
     const relayId = parseInt(document.getElementById('relayId').value)
     const relayName = document.getElementById('relayName').value
+    const outputsCount = parseInt(document.getElementById('relayOutputs').value) || 8
 
     if (!relayId || !relayName) {
         alert('Please fill all fields')
@@ -1929,21 +2015,27 @@ async function addRelay() {
         return
     }
 
+    if (outputsCount !== 8 && outputsCount !== 16) {
+        alert('Outputs must be either 8 or 16')
+        return
+    }
+
     const result = await postForm('/lights/add_relay', {
         relay_id: relayId,
-        relay_name: relayName
+        relay_name: relayName,
+        outputs: outputsCount
     })
 
     if (result !== null) {
         const outputs = {}
-        for (let i = 1; i <= 8; i++) {
-            outputs[i] = `Output ${i}`
+        for (let i = 1; i <= outputsCount; i++) {
+            outputs[String.fromCharCode(96 + i)] = `Output ${i}`
         }
 
         const numRelays = Object.keys(relays).length
         const x = 1200 + (numRelays % 3) * 350
         const y = 100 + Math.floor(numRelays / 3) * 450
-        createRelay(relayId, relayName, outputs, x, y)
+        createRelay(relayId, relayName, outputs, x, y, outputsCount)
         closeModal('addRelayModal')
     }
 }
@@ -2004,6 +2096,9 @@ function editDeviceName(type, id) {
     if (type === 'switch') {
         document.getElementById('editButtonNumber').style.display = 'block'
         document.getElementById('editButtonNumber').value = switches[id].buttonCount
+    } else if (type === 'relay') {
+        document.getElementById('editButtonNumber').style.display = 'block'
+        document.getElementById('editButtonNumber').value = relays[id].outputsCount || 8
     }
 
     document.addEventListener('keydown', function handler(e) {
@@ -2055,7 +2150,10 @@ async function saveNameEdit() {
         })
 
         if (result !== null) {
-            relays[currentEditTarget.relayId].outputs[currentEditTarget.outputId] = newName
+            // Keep the tuple structure (name, section_id)
+            const currentOutput = relays[currentEditTarget.relayId].outputs[currentEditTarget.outputId]
+            const sectionId = Array.isArray(currentOutput) ? currentOutput[1] : null
+            relays[currentEditTarget.relayId].outputs[currentEditTarget.outputId] = [newName, sectionId]
             const outputElement = document.querySelector(`#relay-${currentEditTarget.relayId}-output-${currentEditTarget.outputId} .output-name`)
             if (outputElement) outputElement.textContent = newName
         }
@@ -2077,9 +2175,17 @@ async function saveNameEdit() {
         document.getElementById('editButtonNumber').style.display = 'none'
     } else if (currentEditTarget.type === 'relay') {
         // Rename relay
+        const outputsCount = parseInt(document.getElementById('editButtonNumber').value) || relays[currentEditTarget.id].outputsCount || 8
+
+        if (outputsCount !== 8 && outputsCount !== 16) {
+            alert('Outputs must be either 8 or 16')
+            return
+        }
+
         const result = await postForm('/lights/rename_relay', {
             relay_id: currentEditTarget.id,
-            relay_name: newName
+            relay_name: newName,
+            outputs: outputsCount
         })
 
         if (result !== null) {
@@ -2087,6 +2193,8 @@ async function saveNameEdit() {
             const nameElement = document.querySelector(`#relay-${currentEditTarget.id} .device-name`)
             if (nameElement) nameElement.textContent = newName
         }
+
+        document.getElementById('editButtonNumber').style.display = 'none'
     }
 
     closeModal('editNameModal')

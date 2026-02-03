@@ -25,7 +25,6 @@
 #include "esp_task_wdt.h"
 
 #define HOSTNAME "espnow_root"
-#define NLIGHTS 8
 #define STATUS_REPORT_INTERVAL 15000
 #define MQTT_RECONNECT_INTERVAL 30000
 #define WIFI_CONNECT_TIMEOUT 20000
@@ -75,6 +74,8 @@ typedef struct {
     String nodeType;  // "relay" or "switch"
     unsigned long lastSeen;
     bool authenticated;
+    int outputs;  // Number of outputs (8 or 16 for relays, button count for
+                  // switches)
 } peer_info_t;
 
 std::queue<std::pair<String, String>> mqttMessageQueue;
@@ -403,6 +404,7 @@ void onESPNowDataRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
             info.nodeType = "";
             info.lastSeen = millis();
             info.authenticated = false;
+            info.outputs = 8;  // Default to 8 outputs
             peers[msg.nodeId] = info;
         } else {
             memcpy(it->second.mac, mac_addr, 6);
@@ -811,14 +813,15 @@ void mqttCallbackTask(void* pvParameters) {
             continue;
         }
 
-        bool isRelayCommand = topic.startsWith("/relay/cmd/");
-
         size_t lastSlash = topic.lastIndexOf('/');
         if (lastSlash != -1 && lastSlash < topic.length() - 1) {
             String idStr = topic.substring(lastSlash + 1);
-            uint32_t nodeId = idStr.toInt();
 
-            if (nodeId != 0 || idStr == "0") {
+            // Use strtoul for proper unsigned 32-bit parsing
+            char* end;
+            uint32_t nodeId = strtoul(idStr.c_str(), &end, 10);
+
+            if (*end == '\0' || idStr == "0") {
                 if (xSemaphoreTake(peersMapMutex, pdMS_TO_TICKS(50)) !=
                     pdTRUE) {
                     continue;
@@ -828,20 +831,15 @@ void mqttCallbackTask(void* pvParameters) {
                 xSemaphoreGive(peersMapMutex);
 
                 if (!found) {
+                    DEBUG_VERBOSE("Node %u not found in peers", nodeId);
                     continue;
                 }
 
                 DEBUG_INFO("MQTT → Node %u: %s", nodeId, msg.c_str());
 
-                if (isRelayCommand) {
-                    safePush(espnowPriorityQueue, std::make_pair(nodeId, msg),
-                             espnowPriorityQueueMutex, stats.espnowDropped,
-                             "ESPNOW-PRI");
-                } else {
-                    safePush(espnowMessageQueue, std::make_pair(nodeId, msg),
-                             espnowMessageQueueMutex, stats.espnowDropped,
-                             "ESPNOW-MSG");
-                }
+                safePush(espnowPriorityQueue, std::make_pair(nodeId, msg),
+                         espnowPriorityQueueMutex, stats.espnowDropped,
+                         "ESPNOW-PRI");
             }
         }
     }
@@ -934,7 +932,7 @@ void espnowCallbackTask(void* pvParameters) {
         }
 
         // **BUTTON PRESS ROUTING** - This is the key part!
-        if (msg.length() <= 2 && msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
+        if (msg.length() <= 2 && msg[0] >= 'a' && msg[0] <= 'p') {
             char button = msg[0];
 
             if (msg.length() == 2)
@@ -945,8 +943,9 @@ void espnowCallbackTask(void* pvParameters) {
             continue;
         }
 
-        // Relay state confirmation (e.g., "A0", "B1")
-        if (msg.length() == 2 && msg[0] >= 'A' && msg[0] < 'A' + NLIGHTS) {
+        // Relay state confirmation (e.g., "A0", "B1") - support up to 'P' (16
+        // outputs)
+        if (msg.length() == 2 && msg[0] >= 'A' && msg[0] <= 'P') {
             handleRelayMessage(from, msg);
             continue;
         }
@@ -956,6 +955,22 @@ void espnowCallbackTask(void* pvParameters) {
             JsonDocument doc;
             deserializeJson(doc, msg.c_str());
             doc["parentId"] = deviceId;
+
+            // Update outputs count from relay status report
+            if (doc["outputs"].is<int>() && doc["type"].is<const char*>() &&
+                doc["type"] == "relay") {
+                int outputs = doc["outputs"];
+                if (xSemaphoreTake(peersMapMutex, pdMS_TO_TICKS(50)) ==
+                    pdTRUE) {
+                    auto it = peers.find(from);
+                    if (it != peers.end()) {
+                        it->second.outputs = outputs;
+                        DEBUG_VERBOSE("Updated relay %u outputs count to %d",
+                                      from, outputs);
+                    }
+                    xSemaphoreGive(peersMapMutex);
+                }
+            }
 
             String newMsg;
             serializeJson(doc, newMsg);

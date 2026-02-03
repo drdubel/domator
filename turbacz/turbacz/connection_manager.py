@@ -21,7 +21,6 @@ class ConnectionManager:
             self.add_section("Default")
 
     def _init_db(self):
-        print(config.psql.user)
         self.conn = psycopg.connect(
             f"dbname={config.psql.dbname} user={config.psql.user} password={config.psql.password} host={config.psql.host} port={config.psql.port}"
         )
@@ -32,7 +31,8 @@ class ConnectionManager:
                 """
                 CREATE TABLE IF NOT EXISTS relays (
                     id BIGINT PRIMARY KEY,
-                    name TEXT NOT NULL
+                    name TEXT NOT NULL,
+                    outputs INTEGER NOT NULL DEFAULT 8
                 );
                 """
             )
@@ -78,35 +78,45 @@ class ConnectionManager:
 
         self.conn.commit()
 
-    def add_relay(self, relay_id: int, relay_name: str):
+    def add_relay(self, relay_id: int, relay_name: str, outputs: int = 8):
+        if outputs not in (8, 16):
+            raise ValueError("Outputs must be either 8 or 16")
+
         with self.conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO relays (id, name)
-                VALUES (%s, %s)
-                ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name;
+                INSERT INTO relays (id, name, outputs)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, outputs = EXCLUDED.outputs;
                 """,
-                (relay_id, relay_name),
+                (relay_id, relay_name, outputs),
             )
+
+        for i in range(outputs):
+            output_name = f"Output {i + 1}"
+            self.add_output(relay_id, str(chr(97 + i)), output_name)
 
         self.conn.commit()
 
-    def get_relays(self) -> dict[int, str]:
+    def get_relays(self) -> dict[int, tuple[str, int]]:
         with self.conn.cursor() as cur:
-            cur.execute("SELECT id, name FROM relays;")
+            cur.execute("SELECT id, name, outputs FROM relays;")
             relays = cur.fetchall()
 
-        return {row[0]: row[1] for row in relays}
+        return {row[0]: (row[1], row[2]) for row in relays}
 
-    def rename_relay(self, relay_id: int, relay_name: str):
+    def rename_relay(self, relay_id: int, relay_name: str, outputs: int):
+        if outputs not in (8, 16):
+            raise ValueError("Outputs must be either 8 or 16")
+
         with self.conn.cursor() as cur:
             cur.execute(
                 """
                 UPDATE relays
-                SET name = %s
+                SET name = %s, outputs = %s
                 WHERE id = %s;
                 """,
-                (relay_name, relay_id),
+                (relay_name, outputs, relay_id),
             )
 
         self.conn.commit()
@@ -190,9 +200,7 @@ class ConnectionManager:
 
         self.conn.commit()
 
-    def add_output(
-        self, relay_id: int, output_id: str, output_name: str, section_id: int = 0
-    ):
+    def add_output(self, relay_id: int, output_id: str, output_name: str, section_id: int = 0):
         with self.conn.cursor() as cur:
             cur.execute(
                 """
@@ -310,9 +318,7 @@ class ConnectionManager:
 
         return {row[0]: row[1] for row in sections}
 
-    def add_connection(
-        self, switch_id: int, button_id: str, relay_id: int, output_id: str
-    ):
+    def add_connection(self, switch_id: int, button_id: str, relay_id: int, output_id: str):
         with self.conn.cursor() as cur:
             cur.execute(
                 """
@@ -325,9 +331,7 @@ class ConnectionManager:
 
         self.conn.commit()
 
-    def remove_connection(
-        self, switch_id: int, button_id: str, relay_id: int, output_id: str
-    ):
+    def remove_connection(self, switch_id: int, button_id: str, relay_id: int, output_id: str):
         with self.conn.cursor() as cur:
             cur.execute(
                 """
@@ -354,9 +358,7 @@ class ConnectionManager:
 
     def get_all_connections(self) -> dict[int, dict[str, tuple[int, str]]]:
         with self.conn.cursor() as cur:
-            cur.execute(
-                "SELECT switch_id, button_id, relay_id, output_id FROM connections;"
-            )
+            cur.execute("SELECT switch_id, button_id, relay_id, output_id FROM connections;")
             connections = cur.fetchall()
 
         connection_dict = {}
@@ -378,6 +380,7 @@ def add_relay(
     request: Request,
     relay_id: int = Form(...),
     relay_name: str = Form(...),
+    outputs: int = Form(8),
     access_token: Optional[str] = Cookie(None),
 ):
     user = auth.get_current_user(access_token)
@@ -385,7 +388,7 @@ def add_relay(
     if not user:
         return {"error": "Unauthorized"}
 
-    connection_manager.add_relay(relay_id, relay_name)
+    connection_manager.add_relay(relay_id, relay_name, outputs)
 
     return {"status": "Relay added"}
 
@@ -413,6 +416,7 @@ def rename_relay(
     request: Request,
     relay_id: int = Form(...),
     relay_name: str = Form(...),
+    outputs: int = Form(...),
     access_token: Optional[str] = Cookie(None),
 ):
     user = auth.get_current_user(access_token)
@@ -420,7 +424,7 @@ def rename_relay(
     if not user:
         return {"error": "Unauthorized"}
 
-    connection_manager.rename_relay(relay_id, relay_name)
+    connection_manager.rename_relay(relay_id, relay_name, outputs)
 
     return {"status": "Relay renamed"}
 

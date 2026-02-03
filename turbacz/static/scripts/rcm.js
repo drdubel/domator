@@ -102,6 +102,21 @@ const CanvasView = {
 CanvasView.init()
 
 // Legacy variables for compatibility
+let jsPlumbInstance = State.jsPlumb
+let switches = State.switches
+let relays = State.relays
+let connections = State.connections
+let lights = State.lights
+let online_relays = State.onlineRelays
+let online_switches = State.onlineSwitches
+let up_to_date_devices = State.upToDateDevices
+let hiddenDevices = State.hiddenDevices
+let pendingClicks = State.pendingClicks
+let currentEditTarget = State.currentEditTarget
+let highlightedDevice = State.highlightedDevice
+let isLoadingConnections = State.isLoadingConnections
+let cachedElements = State.cachedElements
+let connectionLookupMap = State.connectionLookupMap
 let zoomLevel = CanvasView.zoomLevel
 let panX = CanvasView.panX
 let panY = CanvasView.panY

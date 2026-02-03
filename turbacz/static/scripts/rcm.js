@@ -353,9 +353,10 @@ function initPanning() {
             lastPinchDistance = distance
             e.preventDefault()
         }
-    }, { passive: false })
+    }
+    document.addEventListener('touchmove', touchMoveHandler, { passive: false })
 
-        document.addEventListener('touchend', e => {
+    document.addEventListener('touchend', e => {
             if (isPanning) {
                 isPanning = false
                 wrapper.classList.remove('grabbing')

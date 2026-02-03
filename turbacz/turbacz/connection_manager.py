@@ -21,7 +21,6 @@ class ConnectionManager:
             self.add_section("Default")
 
     def _init_db(self):
-        print(config.psql.user)
         self.conn = psycopg.connect(
             f"dbname={config.psql.dbname} user={config.psql.user} password={config.psql.password} host={config.psql.host} port={config.psql.port}"
         )
@@ -216,7 +215,6 @@ class ConnectionManager:
 
     def name_output(self, relay_id: int, output_id: str, output_name: str):
         with self.conn.cursor() as cur:
-            print(relay_id, output_id, output_name)
             cur.execute(
                 """
                 UPDATE outputs

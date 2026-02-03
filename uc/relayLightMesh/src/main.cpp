@@ -551,6 +551,7 @@ void sendStatusReport(void* pvParameters) {
         doc["type"] = "relay";
         doc["firmware"] = fw_md5;
         doc["lowHeap"] = stats.lowHeapEvents;
+        doc["outputs"] = NLIGHTS;  // Report number of outputs (8 or 16)
 
         String msg;
         serializeJson(doc, msg);

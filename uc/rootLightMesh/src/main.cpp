@@ -25,7 +25,6 @@
 #include "esp_task_wdt.h"
 
 #define HOSTNAME "espnow_root"
-#define NLIGHTS 8
 #define STATUS_REPORT_INTERVAL 15000
 #define MQTT_RECONNECT_INTERVAL 30000
 #define WIFI_CONNECT_TIMEOUT 20000
@@ -75,6 +74,8 @@ typedef struct {
     String nodeType;  // "relay" or "switch"
     unsigned long lastSeen;
     bool authenticated;
+    int outputs;  // Number of outputs (8 or 16 for relays, button count for
+                  // switches)
 } peer_info_t;
 
 std::queue<std::pair<String, String>> mqttMessageQueue;
@@ -403,6 +404,7 @@ void onESPNowDataRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
             info.nodeType = "";
             info.lastSeen = millis();
             info.authenticated = false;
+            info.outputs = 8;  // Default to 8 outputs
             peers[msg.nodeId] = info;
         } else {
             memcpy(it->second.mac, mac_addr, 6);
@@ -934,7 +936,7 @@ void espnowCallbackTask(void* pvParameters) {
         }
 
         // **BUTTON PRESS ROUTING** - This is the key part!
-        if (msg.length() <= 2 && msg[0] >= 'a' && msg[0] < 'a' + NLIGHTS) {
+        if (msg.length() <= 2 && msg[0] >= 'a' && msg[0] <= 'p') {
             char button = msg[0];
 
             if (msg.length() == 2)
@@ -945,8 +947,9 @@ void espnowCallbackTask(void* pvParameters) {
             continue;
         }
 
-        // Relay state confirmation (e.g., "A0", "B1")
-        if (msg.length() == 2 && msg[0] >= 'A' && msg[0] < 'A' + NLIGHTS) {
+        // Relay state confirmation (e.g., "A0", "B1") - support up to 'P' (16
+        // outputs)
+        if (msg.length() == 2 && msg[0] >= 'A' && msg[0] <= 'P') {
             handleRelayMessage(from, msg);
             continue;
         }
@@ -956,6 +959,22 @@ void espnowCallbackTask(void* pvParameters) {
             JsonDocument doc;
             deserializeJson(doc, msg.c_str());
             doc["parentId"] = deviceId;
+
+            // Update outputs count from relay status report
+            if (doc.containsKey("outputs") && doc.containsKey("type") &&
+                doc["type"] == "relay") {
+                int outputs = doc["outputs"];
+                if (xSemaphoreTake(peersMapMutex, pdMS_TO_TICKS(50)) ==
+                    pdTRUE) {
+                    auto it = peers.find(from);
+                    if (it != peers.end()) {
+                        it->second.outputs = outputs;
+                        DEBUG_VERBOSE("Updated relay %u outputs count to %d",
+                                      from, outputs);
+                    }
+                    xSemaphoreGive(peersMapMutex);
+                }
+            }
 
             String newMsg;
             serializeJson(doc, newMsg);

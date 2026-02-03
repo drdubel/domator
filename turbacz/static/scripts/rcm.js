@@ -144,8 +144,21 @@ function hideLoading() {
 // =================== OPTIMIZED PAN/ZOOM SYSTEM ===================
 
 // ------------------- GPU TRANSFORM -------------------
+let lastTransformTime = 0
+const FIREFOX_THROTTLE_MS = 16 // ~60fps for Firefox
+
 function applyCanvasTransform() {
     if (rafId) return // Already scheduled
+
+    // Throttle more aggressively on Firefox at high zoom
+    if (isFirefox && zoomLevel > 0.8) {
+        const now = Date.now()
+        if (now - lastTransformTime < FIREFOX_THROTTLE_MS) {
+            return
+        }
+        lastTransformTime = now
+    }
+
     rafId = requestAnimationFrame(() => {
         canvasElement.style.transform = `translate3d(${panX}px, ${panY}px, 0) scale(${zoomLevel})`
         rafId = null
@@ -177,6 +190,10 @@ function suspendJsPlumb() {
     if (jsPlumbInstance) {
         jsPlumbInstance.setSuspendDrawing(true)
     }
+    // Disable pointer events during transform for better Firefox performance
+    if (isFirefox && canvasElement) {
+        canvasElement.style.pointerEvents = 'none'
+    }
 }
 
 function resumeJsPlumb() {
@@ -185,10 +202,22 @@ function resumeJsPlumb() {
         rafId = null
     }
     applyCanvasTransformImmediate()
+
+    // Re-enable pointer events
+    if (isFirefox && canvasElement) {
+        canvasElement.style.pointerEvents = ''
+    }
+
     if (jsPlumbInstance) {
         // Ensure jsPlumb uses the current zoom before resuming drawing
         jsPlumbInstance.setZoom(zoomLevel)
-        jsPlumbInstance.setSuspendDrawing(false, true) // second param = repaint immediately
+        // On Firefox, delay repaint slightly to avoid blocking the UI
+        if (isFirefox) {
+            jsPlumbInstance.setSuspendDrawing(false, false)
+            setTimeout(() => jsPlumbInstance.repaintEverything(), 50)
+        } else {
+            jsPlumbInstance.setSuspendDrawing(false, true)
+        }
     }
 }
 
@@ -257,12 +286,18 @@ function initPanning() {
         wrapper.classList.add('grabbing')
         suspendJsPlumb()
     })
-    document.addEventListener('mousemove', e => {
+    const mouseMoveHandler = isFirefox ? throttle((e) => {
         if (!isPanning) return
         panX = e.clientX - startX
         panY = e.clientY - startY
         applyCanvasTransform()
-    })
+    }, 16) : (e) => {
+        if (!isPanning) return
+        panX = e.clientX - startX
+        panY = e.clientY - startY
+        applyCanvasTransform()
+    }
+    document.addEventListener('mousemove', mouseMoveHandler)
     document.addEventListener('mouseup', () => {
         if (!isPanning) return
         isPanning = false
@@ -294,12 +329,14 @@ function initPanning() {
         }
     }, { passive: false })
 
-    document.addEventListener('touchmove', e => {
+    const touchMoveHandler = (e) => {
         if (isPanning && e.touches.length === 1) {
             const touch = e.touches[0]
             panX = touch.clientX - startX
             panY = touch.clientY - startY
-            applyCanvasTransform()
+            if (!isFirefox || Date.now() - lastTransformTime >= FIREFOX_THROTTLE_MS) {
+                applyCanvasTransform()
+            }
             e.preventDefault()
         }
         if (isPinching && e.touches.length === 2) {
@@ -318,25 +355,36 @@ function initPanning() {
         }
     }, { passive: false })
 
-    document.addEventListener('touchend', e => {
-        if (isPanning) {
-            isPanning = false
-            wrapper.classList.remove('grabbing')
-            resumeJsPlumb()
-            saveCanvasView()
-        }
-        if (isPinching) {
-            isPinching = false
-            lastPinchDistance = 0
-            // Resume jsPlumb and apply current zoom
-            resumeJsPlumb()
-            setTimeout(saveCanvasView, 150)
-        }
-    })
+        document.addEventListener('touchend', e => {
+            if (isPanning) {
+                isPanning = false
+                wrapper.classList.remove('grabbing')
+                resumeJsPlumb()
+                saveCanvasView()
+            }
+            if (isPinching) {
+                isPinching = false
+                lastPinchDistance = 0
+                // Resume jsPlumb and apply current zoom
+                resumeJsPlumb()
+                setTimeout(saveCanvasView, 150)
+            }
+        })
 
     // ----------------- MOUSE WHEEL ZOOM -----------------
     let wheelTimeout = null
+    let lastWheelTime = 0
     const wheelHandler = e => {
+        // Throttle wheel events on Firefox
+        if (isFirefox) {
+            const now = Date.now()
+            if (now - lastWheelTime < 30) {
+                e.preventDefault()
+                return
+            }
+            lastWheelTime = now
+        }
+
         if (!wheelTimeout) suspendJsPlumb()
         clearTimeout(wheelTimeout)
 
@@ -358,7 +406,7 @@ function initPanning() {
             resumeJsPlumb()
             saveCanvasView()
             wheelTimeout = null
-        }, 200)
+        }, isFirefox ? 300 : 200)
 
         e.preventDefault()
     }

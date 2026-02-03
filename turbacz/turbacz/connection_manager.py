@@ -93,6 +93,10 @@ class ConnectionManager:
                 (relay_id, relay_name, outputs),
             )
 
+        for i in range(outputs):
+            output_name = f"Output {i + 1}"
+            self.add_output(relay_id, str(chr(97 + i)), output_name)
+
         self.conn.commit()
 
     def get_relays(self) -> dict[int, tuple[str, int]]:
@@ -212,6 +216,7 @@ class ConnectionManager:
 
     def name_output(self, relay_id: int, output_id: str, output_name: str):
         with self.conn.cursor() as cur:
+            print(relay_id, output_id, output_name)
             cur.execute(
                 """
                 UPDATE outputs

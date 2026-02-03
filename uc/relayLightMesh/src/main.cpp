@@ -76,7 +76,7 @@ const int NBUTTONS = 8;
 int NLIGHTS = 8;
 
 const int outPins8[8] = {32, 33, 25, 26, 27, 14, 12, 13};
-const int buttons[8] = {2, 15, 4, 0, 17, 16, 18, 5};
+const int buttons[8] = {16, 17, 18, 19, 21, 22, 23, 34};
 volatile bool buttonState[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 volatile uint32_t lastPress[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 volatile uint8_t pressed = 0;

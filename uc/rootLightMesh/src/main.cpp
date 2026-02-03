@@ -813,14 +813,15 @@ void mqttCallbackTask(void* pvParameters) {
             continue;
         }
 
-        bool isRelayCommand = topic.startsWith("/relay/cmd/");
-
         size_t lastSlash = topic.lastIndexOf('/');
         if (lastSlash != -1 && lastSlash < topic.length() - 1) {
             String idStr = topic.substring(lastSlash + 1);
-            uint32_t nodeId = idStr.toInt();
 
-            if (nodeId != 0 || idStr == "0") {
+            // Use strtoul for proper unsigned 32-bit parsing
+            char* end;
+            uint32_t nodeId = strtoul(idStr.c_str(), &end, 10);
+
+            if (*end == '\0' || idStr == "0") {
                 if (xSemaphoreTake(peersMapMutex, pdMS_TO_TICKS(50)) !=
                     pdTRUE) {
                     continue;
@@ -830,20 +831,15 @@ void mqttCallbackTask(void* pvParameters) {
                 xSemaphoreGive(peersMapMutex);
 
                 if (!found) {
+                    DEBUG_VERBOSE("Node %u not found in peers", nodeId);
                     continue;
                 }
 
                 DEBUG_INFO("MQTT → Node %u: %s", nodeId, msg.c_str());
 
-                if (isRelayCommand) {
-                    safePush(espnowPriorityQueue, std::make_pair(nodeId, msg),
-                             espnowPriorityQueueMutex, stats.espnowDropped,
-                             "ESPNOW-PRI");
-                } else {
-                    safePush(espnowMessageQueue, std::make_pair(nodeId, msg),
-                             espnowMessageQueueMutex, stats.espnowDropped,
-                             "ESPNOW-MSG");
-                }
+                safePush(espnowPriorityQueue, std::make_pair(nodeId, msg),
+                         espnowPriorityQueueMutex, stats.espnowDropped,
+                         "ESPNOW-PRI");
             }
         }
     }
@@ -961,7 +957,7 @@ void espnowCallbackTask(void* pvParameters) {
             doc["parentId"] = deviceId;
 
             // Update outputs count from relay status report
-            if (doc.containsKey("outputs") && doc.containsKey("type") &&
+            if (doc["outputs"].is<int>() && doc["type"].is<const char*>() &&
                 doc["type"] == "relay") {
                 int outputs = doc["outputs"];
                 if (xSemaphoreTake(peersMapMutex, pdMS_TO_TICKS(50)) ==

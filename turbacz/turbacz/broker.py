@@ -204,7 +204,7 @@ async def handle_root_state(payload_str):
         else:
             name = namer.generate(category="animals")
             data["name"] = name
-            connection_manager.connection_manager.add_relay(data["deviceId"], name)
+            connection_manager.connection_manager.add_relay(data["deviceId"], name, data.get("outputs", 8))
             await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
 
     elif data["type"] == "root":

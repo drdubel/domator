@@ -16,6 +16,13 @@ let zoomUpdateScheduled = false
 let cachedElements = {}
 let hiddenDevices = new Set() // Track hidden devices
 
+// Detect Firefox for performance optimizations
+const isFirefox = navigator.userAgent.toLowerCase().includes('firefox')
+if (isFirefox) {
+    // Disable backdrop-filter on Firefox for better performance
+    document.documentElement.classList.add('firefox')
+}
+
 // Zoom and Pan System - GPU Accelerated
 function loadCanvasView() {
     const saved = localStorage.getItem('rcm_canvas_view')
@@ -140,7 +147,7 @@ function hideLoading() {
 function applyCanvasTransform() {
     if (rafId) return // Already scheduled
     rafId = requestAnimationFrame(() => {
-        canvasElement.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`
+        canvasElement.style.transform = `translate3d(${panX}px, ${panY}px, 0) scale(${zoomLevel})`
         rafId = null
     })
 }
@@ -150,7 +157,7 @@ function applyCanvasTransformImmediate() {
         cancelAnimationFrame(rafId)
         rafId = null
     }
-    canvasElement.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`
+    canvasElement.style.transform = `translate3d(${panX}px, ${panY}px, 0) scale(${zoomLevel})`
 }
 
 function updateZoomDisplay() {
@@ -237,9 +244,9 @@ function initPanning() {
     zoomLevelElement = document.getElementById('zoomLevel')
 
     // Add GPU acceleration hints
-    canvasElement.style.willChange = 'transform'
     canvasElement.style.backfaceVisibility = 'hidden'
     canvasElement.style.transformOrigin = '0 0'
+    canvasElement.style.transform = 'translateZ(0)'
 
     // ----------------- MOUSE PANNING -----------------
     wrapper.addEventListener('mousedown', e => {

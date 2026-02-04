@@ -60,9 +60,10 @@
 // ESP-NOW message structure
 typedef struct __attribute__((packed)) {
     uint32_t nodeId;
-    uint8_t msgType;  // 'Q'=query, 'S'=switch registration, 'A'=ack,
-                      // 'U'=update, 'D'=data, 'C'=command
-    char data[200];
+    uint32_t networkId;  // Network identifier derived from MESH_PASSWORD hash
+    uint8_t msgType;     // 'Q'=query, 'S'=switch registration, 'A'=ack,
+                         // 'U'=update, 'D'=data, 'C'=command
+    char data[196];      // Reduced by 4 bytes for networkId
 } espnow_message_t;
 
 Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
@@ -70,6 +71,7 @@ Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 uint8_t rootMac[6] = {0};  // Root node MAC address
 uint8_t espnowChannel = 1;
 uint32_t deviceId = 0;
+uint32_t networkId = 0;  // Network identifier derived from MESH_PASSWORD hash
 uint32_t disconnects = 0;
 uint32_t clicks = 0;
 String fw_md5;
@@ -109,6 +111,20 @@ void performFirmwareUpdate();
 void setLedColor(uint8_t r, uint8_t g, uint8_t b);
 void onESPNowDataSent(const uint8_t* mac_addr, esp_now_send_status_t status);
 void onESPNowDataRecv(const uint8_t* mac_addr, const uint8_t* data, int len);
+
+// Compute network ID from MESH_PASSWORD to isolate different mesh networks
+uint32_t computeNetworkId(const char* password) {
+    unsigned char hash[32];
+    mbedtls_sha256_context ctx;
+    mbedtls_sha256_init(&ctx);
+    mbedtls_sha256_starts(&ctx, 0);  // SHA-256 (not SHA-224)
+    mbedtls_sha256_update(&ctx, (const unsigned char*)password, strlen(password));
+    mbedtls_sha256_finish(&ctx, hash);
+    mbedtls_sha256_free(&ctx);
+    
+    // Use first 4 bytes of hash as network ID
+    return (hash[0] << 24) | (hash[1] << 16) | (hash[2] << 8) | hash[3];
+}
 
 template <typename T>
 bool safePush(std::queue<T>& q, const T& item, SemaphoreHandle_t mutex,
@@ -373,6 +389,7 @@ bool sendESPNowMessage(const String& message, bool priority = false,
 
     espnow_message_t msg;
     msg.nodeId = deviceId;
+    msg.networkId = networkId;  // Include network ID for isolation
 
     // Determine message type
     if (message == "S") {
@@ -409,6 +426,13 @@ void onESPNowDataRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
     espnow_message_t msg;
     memcpy(&msg, data, sizeof(espnow_message_t));
 
+    // Validate network ID to prevent cross-network interference
+    if (msg.networkId != networkId) {
+        DEBUG_VERBOSE("ESP-NOW: Rejected msg from different network (ID: 0x%08X, expected: 0x%08X)",
+                      msg.networkId, networkId);
+        return;
+    }
+
     // Learn root MAC on discovery 'Q'; finalize on ACK 'A'
     if (!hasRootMac) {
         String dataStr = String(msg.data);
@@ -442,6 +466,10 @@ void onESPNowDataRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
 
 void espnowInit() {
     DEBUG_INFO("Initializing ESP-NOW...");
+
+    // Compute network ID from MESH_PASSWORD for network isolation
+    networkId = computeNetworkId(MESH_PASSWORD);
+    DEBUG_INFO("Network ID: 0x%08X (derived from MESH_PASSWORD)", networkId);
 
     // Set WiFi mode but don't connect
     WiFi.mode(WIFI_STA);

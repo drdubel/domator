@@ -1502,7 +1502,10 @@ function initJsPlumb() {
             const isDeviceBox = e.target.closest('.device-box')
             const isConnectionLine = e.target.tagName === 'svg' || e.target.tagName === 'path' || e.target.classList.contains('jtk-connector') || e.target.classList.contains('jtk-endpoint')
 
+            console.log('Canvas click:', { target: e.target, isDeviceBox, isConnectionLine })
+
             if (!isDeviceBox && !isConnectionLine) {
+                console.log('Clearing highlights from canvas click')
                 clearHighlights()
             }
         })

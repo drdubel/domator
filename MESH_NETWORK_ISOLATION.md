@@ -137,9 +137,9 @@ The following components have been updated with network isolation:
 
 ### Performance Impact
 
-- **Minimal overhead**: Network ID validation adds ~10 CPU cycles per message
+- **Minimal overhead**: Network ID validation adds negligible processing overhead (single 32-bit comparison)
 - **No additional network traffic**: Network ID is included in existing message structure
-- **Same memory footprint**: Message structure size unchanged
+- **Same memory footprint**: Message structure size unchanged (205 bytes total)
 
 ## Testing Checklist
 

@@ -114,6 +114,13 @@ void onESPNowDataRecv(const uint8_t* mac_addr, const uint8_t* data, int len);
 
 // Compute network ID from MESH_PASSWORD to isolate different mesh networks
 uint32_t computeNetworkId(const char* password) {
+    // Validate input
+    if (!password || strlen(password) == 0) {
+        DEBUG_ERROR("FATAL: MESH_PASSWORD is null or empty!");
+        // Return a deterministic but invalid network ID
+        return 0xFFFFFFFF;
+    }
+    
     unsigned char hash[32];
     mbedtls_sha256_context ctx;
     mbedtls_sha256_init(&ctx);

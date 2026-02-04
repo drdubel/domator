@@ -86,6 +86,7 @@ std::queue<espnow_message_t> espnowCallbackQueue;
 std::map<uint32_t, peer_info_t> peers;
 std::map<String, std::map<char, std::vector<std::pair<String, String>>>>
     connections;
+std::map<uint32_t, std::map<char, uint8_t>> button_types;
 
 SemaphoreHandle_t mqttMessageQueueMutex = NULL;
 SemaphoreHandle_t mqttCallbackQueueMutex = NULL;
@@ -94,6 +95,7 @@ SemaphoreHandle_t espnowPriorityQueueMutex = NULL;
 SemaphoreHandle_t espnowCallbackQueueMutex = NULL;
 SemaphoreHandle_t peersMapMutex = NULL;
 SemaphoreHandle_t connectionsMapMutex = NULL;
+SemaphoreHandle_t buttonTypesMapMutex = NULL;
 
 struct Statistics {
     uint32_t mqttDropped = 0;
@@ -302,7 +304,7 @@ void parseConnections(JsonObject root) {
     }
     DEBUG_INFO("Parsing connections configuration");
 
-    if (xSemaphoreTake(connectionsMapMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+    if (xSemaphoreTake(connectionsMapMutex, pdMS_TO_TICKS(200)) != pdTRUE) {
         DEBUG_ERROR("Failed to acquire connections mutex");
         return;
     }
@@ -337,6 +339,40 @@ void parseConnections(JsonObject root) {
 
     xSemaphoreGive(connectionsMapMutex);
     DEBUG_INFO("Connections parsed successfully");
+}
+
+void parseButtonTypes(JsonObject root) {
+    if (root.isNull()) {
+        DEBUG_ERROR("parseButtonTypes: root is null");
+        return;
+    }
+    DEBUG_INFO("Parsing button types configuration");
+
+    if (xSemaphoreTake(buttonTypesMapMutex, pdMS_TO_TICKS(200)) != pdTRUE) {
+        DEBUG_ERROR("Failed to acquire button types mutex");
+        return;
+    }
+
+    button_types.clear();
+
+    for (JsonPair idPair : root) {
+        uint64_t idNum;
+        String idStr = idPair.key().c_str();
+        if (!toUint64(idStr, idNum)) {
+            DEBUG_ERROR("Invalid switch ID in button types: %s", idStr.c_str());
+            continue;
+        }
+        JsonObject buttonObj = idPair.value().as<JsonObject>();
+
+        for (JsonPair buttonPair : buttonObj) {
+            char buttonId = buttonPair.key().c_str()[0];
+            uint8_t type = buttonPair.value().as<uint8_t>();
+            button_types[(uint32_t)idNum][buttonId] = type;
+        }
+    }
+
+    xSemaphoreGive(buttonTypesMapMutex);
+    DEBUG_INFO("Button types parsed successfully");
 }
 
 void mqttConnect() {
@@ -806,10 +842,21 @@ void mqttCallbackTask(void* pvParameters) {
         }
 
         if (topic == "/switch/cmd/root" && isValidJson(msg)) {
-            DEBUG_INFO("Received connections config");
+            DEBUG_INFO("Received config");
+            DEBUG_INFO("Config JSON: %s", msg.c_str());
             JsonDocument doc;
             deserializeJson(doc, msg);
-            parseConnections(doc.as<JsonObject>());
+
+            if (doc["type"].is<const char*>()) {
+                String configType = doc["type"].as<const char*>();
+                if (configType == "connections" &&
+                    doc["data"].is<JsonObject>()) {
+                    parseConnections(doc["data"].as<JsonObject>());
+                } else if (configType == "button_types" &&
+                           doc["data"].is<JsonObject>()) {
+                    parseButtonTypes(doc["data"].as<JsonObject>());
+                }
+            }
             continue;
         }
 
@@ -934,11 +981,25 @@ void espnowCallbackTask(void* pvParameters) {
         // **BUTTON PRESS ROUTING** - This is the key part!
         if (msg.length() <= 2 && msg[0] >= 'a' && msg[0] <= 'p') {
             char button = msg[0];
+            uint8_t type = 0;  // Default to momentary
 
-            if (msg.length() == 2)
+            if (xSemaphoreTake(buttonTypesMapMutex, pdMS_TO_TICKS(50)) ==
+                pdTRUE) {
+                auto it = button_types.find(from);
+                if (it != button_types.end()) {
+                    auto btnIt = it->second.find(button);
+                    if (btnIt != it->second.end()) {
+                        type = btnIt->second;
+                    }
+                }
+                xSemaphoreGive(buttonTypesMapMutex);
+            }
+
+            if (type == 1) {
                 handleSwitchMessage(from, button, msg[1] - '0');
-            else
+            } else {
                 handleSwitchMessage(from, button);
+            }
 
             continue;
         }
@@ -947,6 +1008,7 @@ void espnowCallbackTask(void* pvParameters) {
         // outputs)
         if (msg.length() == 2 && msg[0] >= 'A' && msg[0] <= 'P') {
             handleRelayMessage(from, msg);
+
             continue;
         }
 
@@ -1034,10 +1096,12 @@ void setup() {
     espnowCallbackQueueMutex = xSemaphoreCreateMutex();
     peersMapMutex = xSemaphoreCreateMutex();
     connectionsMapMutex = xSemaphoreCreateMutex();
+    buttonTypesMapMutex = xSemaphoreCreateMutex();
 
     if (!mqttMessageQueueMutex || !mqttCallbackQueueMutex ||
         !espnowMessageQueueMutex || !espnowPriorityQueueMutex ||
-        !espnowCallbackQueueMutex || !peersMapMutex || !connectionsMapMutex) {
+        !espnowCallbackQueueMutex || !peersMapMutex || !connectionsMapMutex ||
+        !buttonTypesMapMutex) {
         DEBUG_ERROR("FATAL: Mutex creation failed!");
         ESP.restart();
     }

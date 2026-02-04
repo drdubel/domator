@@ -19,7 +19,7 @@
 #define WIFI_CONNECT_TIMEOUT 20000
 #define REGISTRATION_RETRY_INTERVAL 10000
 #define STATUS_REPORT_INTERVAL 15000
-#define BUTTON_DEBOUNCE_TIME 1000
+#define BUTTON_DEBOUNCE_TIME 250
 #define OTA_START_DELAY 5000
 
 // Queue size limits
@@ -604,10 +604,7 @@ void buttonPressTask(void* pvParameters) {
 
             if (xSemaphoreTake(lightsArrayMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
                 clicks++;
-
-                // Toggle the relay state
-                bool newState = buttonState[i];
-                setRelay(i, newState);
+                bool newState = digitalRead(buttons[i]);
 
                 char response[3];
                 response[0] = 'a' + i;

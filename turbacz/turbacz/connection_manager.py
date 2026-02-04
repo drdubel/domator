@@ -4,10 +4,10 @@ import psycopg
 from fastapi import APIRouter, Cookie, Form, Request
 from fastapi.responses import JSONResponse
 
-from turbacz import auth
+import turbacz.auth as auth
 from turbacz.settings import config
 
-router = APIRouter(prefix="/lights")
+connection_router = APIRouter(prefix="/lights")
 
 
 class ConnectionManager:
@@ -72,6 +72,15 @@ class ConnectionManager:
                     relay_id BIGINT REFERENCES relays(id),
                     output_id TEXT,
                     PRIMARY KEY (switch_id, button_id, relay_id, output_id)
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS buttons (
+                    switch_id BIGINT REFERENCES switches(id),
+                    button_id TEXT,
+                    type INT
                 );
                 """
             )
@@ -160,7 +169,11 @@ class ConnectionManager:
 
         self.conn.commit()
 
-    def get_switches(self) -> dict[int, tuple[str, int]] | None:
+        for i in range(buttons):
+            button_id = chr(97 + i)
+            self.add_button(switch_id, button_id)
+
+    def get_switches(self) -> dict[int, tuple[str, int]]:
         with self.conn.cursor() as cur:
             cur.execute("SELECT id, name, buttons FROM switches;")
             switches = cur.fetchall()
@@ -169,6 +182,27 @@ class ConnectionManager:
 
     def rename_switch(self, switch_id: int, switch_name: str, buttons: int):
         with self.conn.cursor() as cur:
+            for i in range(buttons, self.get_switches()[switch_id][1]):
+                button_id = chr(97 + i)
+                cur.execute(
+                    """
+                    DELETE FROM buttons
+                    WHERE switch_id = %s AND button_id = %s;
+                    """,
+                    (switch_id, button_id),
+                )
+
+            for i in range(self.get_switches()[switch_id][1], buttons):
+                button_id = chr(97 + i)
+                cur.execute(
+                    """
+                    INSERT INTO buttons (switch_id, button_id, type)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (switch_id, button_id) DO NOTHING;
+                    """,
+                    (switch_id, button_id, 0),
+                )
+
             cur.execute(
                 """
                 UPDATE switches
@@ -185,6 +219,14 @@ class ConnectionManager:
             cur.execute(
                 """
                 DELETE FROM connections
+                WHERE switch_id = %s;
+                """,
+                (switch_id,),
+            )
+
+            cur.execute(
+                """
+                DELETE FROM buttons
                 WHERE switch_id = %s;
                 """,
                 (switch_id,),
@@ -239,7 +281,7 @@ class ConnectionManager:
 
         self.conn.commit()
 
-    def get_outputs(self) -> dict[int, dict[str, tuple[str, int]]] | None:
+    def get_outputs(self) -> dict[int, dict[str, tuple[str, int]]]:
         with self.conn.cursor() as cur:
             cur.execute("SELECT relay_id, output_id, name, section_id FROM outputs;")
             outputs = cur.fetchall()
@@ -253,7 +295,7 @@ class ConnectionManager:
 
         return output_dict
 
-    def get_named_outputs(self) -> dict[int, dict[str, tuple[str, int]]] | None:
+    def get_named_outputs(self) -> dict[int, dict[str, tuple[str, int]]]:
         named_outputs = {}
 
         for relay_id, outputs in self.get_outputs().items():
@@ -318,6 +360,89 @@ class ConnectionManager:
 
         return {row[0]: row[1] for row in sections}
 
+    def add_button(self, switch_id: int, button_id: str, button_type: int = 0):
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO buttons (switch_id, button_id, type)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (switch_id, button_id) DO UPDATE SET type = EXCLUDED.type;
+                """,
+                (switch_id, button_id, button_type),
+            )
+
+        self.conn.commit()
+
+    def get_buttons(self, switch_id: int) -> dict[str, int]:
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT button_id, type FROM buttons
+                WHERE switch_id = %s;
+                """,
+                (switch_id,),
+            )
+            buttons = cur.fetchall()
+
+        return {row[0]: row[1] for row in buttons}
+
+    def get_all_buttons(self) -> dict[int, dict[str, int]]:
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT switch_id, button_id, type FROM buttons;")
+            buttons = cur.fetchall()
+
+        button_dict = {}
+        for row in buttons:
+            switch_id, button_id, button_type = row
+            if switch_id not in button_dict:
+                button_dict[switch_id] = {}
+
+            button_dict[switch_id][button_id] = button_type
+
+        return button_dict
+
+    def set_button_type(self, switch_id: int, button_id: str, button_type: int):
+        with self.conn.cursor() as cur:
+            exists = cur.execute(
+                """
+                SELECT 1 FROM buttons
+                WHERE switch_id = %s AND button_id = %s;
+                """,
+                (switch_id, button_id),
+            ).fetchone()
+
+            if not exists:
+                cur.execute(
+                    """
+                    INSERT INTO buttons (switch_id, button_id, type)
+                    VALUES (%s, %s, %s);
+                    """,
+                    (switch_id, button_id, button_type),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE buttons
+                    SET type = %s
+                    WHERE switch_id = %s AND button_id = %s;
+                    """,
+                    (button_type, switch_id, button_id),
+                )
+
+        self.conn.commit()
+
+    def remove_button(self, switch_id: int, button_id: str):
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM buttons
+                WHERE switch_id = %s AND button_id = %s;
+                """,
+                (switch_id, button_id),
+            )
+
+        self.conn.commit()
+
     def add_connection(self, switch_id: int, button_id: str, relay_id: int, output_id: str):
         with self.conn.cursor() as cur:
             cur.execute(
@@ -375,7 +500,7 @@ class ConnectionManager:
         return connection_dict
 
 
-@router.post("/add_relay")
+@connection_router.post("/add_relay")
 def add_relay(
     request: Request,
     relay_id: int = Form(...),
@@ -393,7 +518,7 @@ def add_relay(
     return {"status": "Relay added"}
 
 
-@router.post("/name_output")
+@connection_router.post("/name_output")
 def add_output(
     request: Request,
     relay_id: int = Form(...),
@@ -411,7 +536,7 @@ def add_output(
     return {"status": "Output added"}
 
 
-@router.post("/rename_relay")
+@connection_router.post("/rename_relay")
 def rename_relay(
     request: Request,
     relay_id: int = Form(...),
@@ -429,7 +554,7 @@ def rename_relay(
     return {"status": "Relay renamed"}
 
 
-@router.post("/rename_switch")
+@connection_router.post("/rename_switch")
 def rename_switch(
     request: Request,
     switch_id: int = Form(...),
@@ -447,7 +572,7 @@ def rename_switch(
     return {"status": "Switch renamed"}
 
 
-@router.post("/add_switch")
+@connection_router.post("/add_switch")
 def add_switch(
     request: Request,
     switch_id: int = Form(...),
@@ -465,7 +590,7 @@ def add_switch(
     return {"status": "Switch added"}
 
 
-@router.post("/add_connection")
+@connection_router.post("/add_connection")
 def add_connection(
     request: Request,
     switch_id: int = Form(...),
@@ -484,7 +609,7 @@ def add_connection(
     return {"status": "Connection added"}
 
 
-@router.get("/get_connections")
+@connection_router.get("/get_connections")
 def get_connections(
     request: Request,
     access_token: Optional[str] = Cookie(None),
@@ -498,7 +623,7 @@ def get_connections(
     return JSONResponse(content=connections)
 
 
-@router.get("/get_relays")
+@connection_router.get("/get_relays")
 def get_relays(
     request: Request,
     access_token: Optional[str] = Cookie(None),
@@ -512,7 +637,7 @@ def get_relays(
     return JSONResponse(content=relays)
 
 
-@router.get("/get_switches")
+@connection_router.get("/get_switches")
 def get_switches(
     request: Request,
     access_token: Optional[str] = Cookie(None),
@@ -526,7 +651,7 @@ def get_switches(
     return JSONResponse(content=switches)
 
 
-@router.get("/get_outputs")
+@connection_router.get("/get_outputs")
 def get_outputs(
     request: Request,
     access_token: Optional[str] = Cookie(None),
@@ -540,7 +665,21 @@ def get_outputs(
     return JSONResponse(content=outputs)
 
 
-@router.post("/remove_connection")
+@connection_router.get("/get_all_buttons")
+def get_all_buttons(
+    request: Request,
+    access_token: Optional[str] = Cookie(None),
+):
+    user = auth.get_current_user(access_token)
+
+    if not user:
+        return {"error": "Unauthorized"}
+
+    buttons = connection_manager.get_all_buttons()
+    return JSONResponse(content=buttons)
+
+
+@connection_router.post("/remove_connection")
 def remove_connection(
     request: Request,
     switch_id: int = Form(...),
@@ -558,7 +697,7 @@ def remove_connection(
     return {"status": "Connection removed"}
 
 
-@router.post("/remove_relay")
+@connection_router.post("/remove_relay")
 def remove_relay(
     request: Request,
     relay_id: int = Form(...),
@@ -573,7 +712,7 @@ def remove_relay(
     return {"status": "Relay removed"}
 
 
-@router.post("/remove_switch")
+@connection_router.post("/remove_switch")
 def remove_switch(
     request: Request,
     switch_id: int = Form(...),
@@ -586,6 +725,21 @@ def remove_switch(
 
     connection_manager.remove_switch(switch_id)
     return {"status": "Switch removed"}
+
+
+@connection_router.post("/remove_button")
+def remove_button(
+    request: Request,
+    button_id: str = Form(...),
+    access_token: Optional[str] = Cookie(None),
+):
+    user = auth.get_current_user(access_token)
+
+    if not user:
+        return {"error": "Unauthorized"}
+
+    connection_manager.remove_button(button_id)
+    return {"status": "Button removed"}
 
 
 connection_manager = ConnectionManager()

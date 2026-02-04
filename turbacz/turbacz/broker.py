@@ -7,7 +7,8 @@ import httpx
 import namer
 from fastapi_mqtt import FastMQTT, MQTTConfig
 
-from turbacz import connection_manager, metrics
+import turbacz.metrics as metrics
+from turbacz.connection_manager import connection_manager
 from turbacz.settings import config
 from turbacz.state import state_manager
 from turbacz.websocket import ws_manager
@@ -164,14 +165,17 @@ async def handle_root_state(payload_str):
     """
     Process root switch state payload.
     """
-    connections = connection_manager.connection_manager.get_all_connections()
-    relays = connection_manager.connection_manager.get_relays()
-    switches = connection_manager.connection_manager.get_switches()
+    connections = connection_manager.get_all_connections()
+    relays = connection_manager.get_relays()
+    switches = connection_manager.get_switches()
 
     if payload_str == "connected":
         logger.debug("Connections: %s", connections)  # Debug log
 
-        mqtt.client.publish("/switch/cmd/root", connections)
+        mqtt.client.publish("/switch/cmd/root", json.dumps({"type": "connections", "data": connections}))
+        mqtt.client.publish(
+            "/switch/cmd/root", json.dumps({"type": "button_types", "data": connection_manager.get_all_buttons()})
+        )
 
         return
 
@@ -195,7 +199,7 @@ async def handle_root_state(payload_str):
         else:
             name = namer.generate(category="astronomy")
             data["name"] = name
-            connection_manager.connection_manager.add_switch(data["deviceId"], name, 3)
+            connection_manager.add_switch(data["deviceId"], name, 3)
             await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
 
     elif data["type"] == "relay":
@@ -204,13 +208,13 @@ async def handle_root_state(payload_str):
         else:
             name = namer.generate(category="animals")
             data["name"] = name
-            connection_manager.connection_manager.add_relay(data["deviceId"], name, data.get("outputs", 8))
+            connection_manager.add_relay(data["deviceId"], name, data.get("outputs", 8))
             await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
 
     elif data["type"] == "root":
         data["name"] = "root"
 
-        connection_manager.connection_manager.rootId = data["deviceId"]
+        connection_manager.rootId = data["deviceId"]
 
     else:
         logger.warning(f"Unknown device type for ID {data['deviceId']}: {data['type']}")
@@ -218,8 +222,8 @@ async def handle_root_state(payload_str):
     if "name" not in data:
         return
 
-    state_manager.mark_relay_online(data["deviceId"], time())
-    state_manager.mark_switch_online(data["deviceId"], time())
+    state_manager.mark_relay_online(data["deviceId"], int(time()))
+    state_manager.mark_switch_online(data["deviceId"], int(time()))
     state_manager.set_firmware_version(data["deviceId"], data["type"], data["firmware"])
 
     data["name"] = data["name"].replace(" ", "\\ ")
@@ -230,7 +234,7 @@ async def handle_root_state(payload_str):
     elif data["parentId"] in switches:
         parent_name = switches[data["parentId"]][0]
 
-    elif data["parentId"] == data["deviceId"] or data["parentId"] == connection_manager.connection_manager.rootId:
+    elif data["parentId"] == data["deviceId"] or data["parentId"] == connection_manager.rootId:
         parent_name = "root"
 
     else:

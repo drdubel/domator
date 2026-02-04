@@ -1266,8 +1266,11 @@ function initJsPlumb() {
 
         // Clear highlights on click (desktop)
         canvas.addEventListener('click', function (e) {
-            // Clear highlights if not clicking on a device box
-            if (!e.target.closest('.device-box')) {
+            // Clear highlights only if clicking on empty canvas (not on device box or connection line)
+            const isDeviceBox = e.target.closest('.device-box')
+            const isConnectionLine = e.target.tagName === 'svg' || e.target.tagName === 'path' || e.target.classList.contains('jtk-connector') || e.target.classList.contains('jtk-endpoint')
+
+            if (!isDeviceBox && !isConnectionLine) {
                 clearHighlights()
             }
         })
@@ -1291,9 +1294,12 @@ function initJsPlumb() {
                 const dy = Math.abs(touch.clientY - canvasTouchStart.y)
                 const duration = Date.now() - canvasTouchStart.time
 
-                // Only clear if it was a tap (not a pan/swipe) and not on a device
+                // Only clear if it was a tap (not a pan/swipe) and not on a device or connection line
                 const target = document.elementFromPoint(touch.clientX, touch.clientY)
-                if (dx < 10 && dy < 10 && duration < 200 && (!target || !target.closest('.device-box'))) {
+                const isDeviceBox = target && target.closest('.device-box')
+                const isConnectionLine = target && (target.tagName === 'svg' || target.tagName === 'path' || target.classList.contains('jtk-connector') || target.classList.contains('jtk-endpoint'))
+
+                if (dx < 10 && dy < 10 && duration < 200 && !isDeviceBox && !isConnectionLine) {
                     clearHighlights()
                 }
             }

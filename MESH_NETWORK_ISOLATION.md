@@ -4,6 +4,8 @@
 
 The ESP-NOW mesh network implementation has been enhanced to support running multiple independent networks on the same WiFi infrastructure without interference.
 
+**Important**: This implementation uses **unencrypted ESP-NOW** due to hardware limitations (ESP32-S3 supports only 7 encrypted peers, but the system requires ~18 peers). Network isolation is achieved through network ID validation instead of encryption.
+
 ## Problem Statement
 
 When running two separate ESP-NOW mesh networks on the same WiFi SSID:
@@ -130,7 +132,8 @@ The following components have been updated with network isolation:
 1. **Network ID is not encryption**: The network ID provides isolation but not security
 2. **MESH_PASSWORD is visible**: The password is used for network identification, not encryption
 3. **ESP-NOW is unencrypted**: All messages are sent in plain text (encryption is disabled)
-4. **For production**: Consider enabling ESP-NOW encryption with unique PMK per network
+4. **Why encryption is disabled**: ESP32-S3 has a limit of **7 encrypted peers**, but this system supports ~18 peers, making encryption impractical
+5. **Network isolation is critical**: Since encryption cannot be used with large peer counts, the network ID validation is the primary mechanism preventing cross-network interference
 
 ### Performance Impact
 
@@ -157,15 +160,45 @@ When network isolation is working correctly, you should see:
 [VERBOSE] ESP-NOW: Rejected msg from different network (ID: 0x87654321, expected: 0x12345678)
 ```
 
+## Limitations
+
+### ESP-NOW Encryption Not Feasible
+
+**Hardware Constraint**: ESP32-S3 devices have a limit of **7 encrypted ESP-NOW peers**. With approximately 18 peers in the network, encryption cannot be enabled.
+
+#### ESP32 Encrypted Peer Limits by Chip
+
+| Chip Model | Max Encrypted Peers | Max Total Peers | Notes |
+|------------|---------------------|-----------------|-------|
+| ESP32 | 6 | 20 | Original ESP32 |
+| ESP32-S2 | 6 | 20 | Single core |
+| ESP32-S3 | 7 | 20 | Dual core with PSRAM |
+| ESP32-C3 | 6 | 20 | RISC-V based |
+| ESP32-C6 | 7 | 20 | WiFi 6 support |
+
+**Your Network**: ~18 peers exceeds the encrypted peer limit on ESP32-S3 (7), requiring unencrypted operation.
+
+**Impact**: 
+- All ESP-NOW messages are transmitted in plain text
+- Network isolation relies entirely on network ID validation
+- Physical security of the WiFi network becomes more important
+- Anyone within WiFi range can potentially see ESP-NOW traffic
+
+**Mitigation**:
+- Network ID prevents accidental cross-network communication
+- MESH_PASSWORD acts as a shared secret for network membership
+- MQTT layer can still provide encryption for backend communication
+- Consider physical network isolation (separate buildings, Faraday cages, etc.) if security is critical
+
 ## Future Enhancements
 
 Potential improvements for enhanced isolation:
 
-1. **ESP-NOW Encryption**: Enable encryption with network-specific PMK
-2. **HMAC Signatures**: Add cryptographic signatures to handshake messages
-3. **Network ID in Discovery**: Include network name in discovery broadcasts
-4. **Collision Detection**: Detect and warn about nodeId collisions across networks
-5. **Channel Separation**: Allow different networks to use different WiFi channels when possible
+1. **HMAC Signatures**: Add cryptographic signatures to handshake messages (doesn't count against encrypted peer limit)
+2. **Network ID in Discovery**: Include network name in discovery broadcasts
+3. **Collision Detection**: Detect and warn about nodeId collisions across networks
+4. **Channel Separation**: Allow different networks to use different WiFi channels when possible
+5. **Application-Layer Encryption**: Encrypt message payloads at application layer (independent of ESP-NOW encryption)
 
 ## Troubleshooting
 

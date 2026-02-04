@@ -30,7 +30,13 @@ const State = {
 
     // Caching
     cachedElements: {},
-    connectionLookupMap: {}
+    connectionLookupMap: {},
+
+    // Button types: 0 = momentary, 1 = toggle
+    buttonTypes: {},
+
+    // Hidden buttons: Set of 'switchId-buttonId'
+    hiddenButtons: new Set()
 }
 
 // Browser detection for performance optimizations
@@ -117,6 +123,8 @@ let highlightedDevice = State.highlightedDevice
 let isLoadingConnections = State.isLoadingConnections
 let cachedElements = State.cachedElements
 let connectionLookupMap = State.connectionLookupMap
+let buttonTypes = State.buttonTypes
+let hiddenButtons = State.hiddenButtons
 let zoomLevel = CanvasView.zoomLevel
 let panX = CanvasView.panX
 let panY = CanvasView.panY
@@ -191,6 +199,8 @@ const wsManager = new WebSocketManager('/rcm/ws/', function (event) {
         setTimeout(() => clearButtonHighlight(msg.switch_id, msg.button_id), 5000)
         return
     }
+
+
 })
 
 // Connect and start connection monitoring
@@ -369,6 +379,14 @@ function initPanning() {
         saveCanvasView()
     })
 
+    // ----------------- CANVAS CLICK (CLEAR HIGHLIGHTS) -----------------
+    wrapper.addEventListener('click', e => {
+        // Only clear highlights if clicking directly on wrapper or canvas (not on devices)
+        if (e.target === wrapper || e.target === canvasElement) {
+            clearHighlights()
+        }
+    })
+
     // ----------------- TOUCH PANNING -----------------
     wrapper.addEventListener('touchstart', e => {
         if (e.touches.length === 1 && (e.target === wrapper || e.target === canvasElement)) {
@@ -434,6 +452,25 @@ function initPanning() {
             setTimeout(saveCanvasView, 150)
         }
     })
+
+    // ----------------- TOUCH CLICK (CLEAR HIGHLIGHTS) -----------------
+    let touchStartTarget = null
+    wrapper.addEventListener('touchstart', e => {
+        if (e.touches.length === 1) {
+            touchStartTarget = e.target
+        }
+    }, { passive: true })
+
+    wrapper.addEventListener('touchend', e => {
+        // Only clear highlights if tap on wrapper or canvas (not on devices or during pan/pinch)
+        if (e.changedTouches.length === 1 &&
+            touchStartTarget === e.target &&
+            (e.target === wrapper || e.target === canvasElement) &&
+            !isPanning && !isPinching) {
+            clearHighlights()
+        }
+        touchStartTarget = null
+    }, { passive: true })
 
     // ----------------- MOUSE WHEEL ZOOM -----------------
     let wheelTimeout = null
@@ -571,6 +608,199 @@ function saveHiddenDevices() {
 function loadHiddenDevices() {
     const saved = localStorage.getItem('rcm_hidden_devices')
     return saved ? new Set(JSON.parse(saved)) : new Set()
+}
+
+// Hidden buttons management
+function saveHiddenButtons() {
+    localStorage.setItem('rcm_hidden_buttons', JSON.stringify([...hiddenButtons]))
+    console.log('Hidden buttons saved')
+}
+
+function loadHiddenButtons() {
+    const saved = localStorage.getItem('rcm_hidden_buttons')
+    return saved ? new Set(JSON.parse(saved)) : new Set()
+}
+
+function isButtonHidden(switchId, buttonId) {
+    return hiddenButtons.has(`${switchId}-${buttonId}`)
+}
+
+function hideButton(switchId, buttonId) {
+    const key = `${switchId}-${buttonId}`
+    hiddenButtons.add(key)
+
+    const buttonElement = document.getElementById(`switch-${switchId}-btn-${buttonId}`)
+    if (buttonElement) {
+        buttonElement.style.display = 'none'
+    }
+
+    // Hide connections
+    const deviceConnections = connectionLookupMap[`switch-${switchId}`] || []
+    deviceConnections.forEach(conn => {
+        const sourceId = conn.sourceId.replace(`switch-${switchId}-btn-`, '')
+        if (sourceId === buttonId) {
+            conn.setVisible(false)
+        }
+    })
+
+    updateShowHiddenButton(switchId)
+    saveHiddenButtons()
+
+    // Repaint jsPlumb
+    if (jsPlumbInstance) {
+        jsPlumbInstance.repaintEverything()
+    }
+}
+
+function showButton(switchId, buttonId) {
+    const key = `${switchId}-${buttonId}`
+    hiddenButtons.delete(key)
+
+    const buttonElement = document.getElementById(`switch-${switchId}-btn-${buttonId}`)
+    if (buttonElement) {
+        buttonElement.style.display = 'flex'
+        buttonElement.style.pointerEvents = 'auto'
+    }
+
+    // Show connections
+    const deviceConnections = connectionLookupMap[`switch-${switchId}`] || []
+    deviceConnections.forEach(conn => {
+        const sourceId = conn.sourceId.replace(`switch-${switchId}-btn-`, '')
+        if (sourceId === buttonId) {
+            conn.setVisible(true)
+        }
+    })
+
+    updateShowHiddenButton(switchId)
+    saveHiddenButtons()
+
+    // Repaint jsPlumb
+    if (jsPlumbInstance) {
+        jsPlumbInstance.repaintEverything()
+    }
+}
+
+function toggleShowHiddenButtons(switchId) {
+    const container = document.getElementById(`switch-${switchId}-hidden-container`)
+    const button = document.getElementById(`switch-${switchId}-show-hidden-btn`)
+
+    if (!container || !button) return
+
+    const isExpanded = container.style.display === 'block'
+
+    if (isExpanded) {
+        container.style.display = 'none'
+        button.textContent = '▼ Show Hidden Buttons'
+    } else {
+        container.style.display = 'block'
+        button.textContent = '▲ Hide Hidden Buttons'
+    }
+}
+
+function updateShowHiddenButton(switchId) {
+    const switchData = switches[switchId]
+    if (!switchData) return
+
+    const buttonCount = switchData.buttonCount
+    let hasHiddenButtons = false
+    let hiddenButtonsHTML = ''
+
+    for (let i = 1; i <= buttonCount; i++) {
+        const buttonId = String.fromCharCode(96 + i)
+        if (isButtonHidden(switchId, buttonId)) {
+            hasHiddenButtons = true
+            hiddenButtonsHTML += `
+                <div class="hidden-button-item" style="display: flex; align-items: center; padding: 0.5rem; margin: 0.25rem 0; background: rgba(100, 116, 139, 0.1); border-radius: 6px;">
+                    <span style="flex: 1; font-size: 0.9rem; color: #94a3b8;">Button ${i}</span>
+                    <button onclick="event.stopPropagation(); showButton(${switchId}, '${buttonId}')"
+                            title="Show Button"
+                            style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); border: none; color: white; font-weight: bold; font-size: 11px; padding: 4px 12px; border-radius: 4px; cursor: pointer; transition: transform 0.2s;"
+                            onmouseover="this.style.transform='scale(1.05)'"
+                            onmouseout="this.style.transform='scale(1)'">Show</button>
+                </div>
+            `
+        }
+    }
+
+    const showHiddenBtn = document.getElementById(`switch-${switchId}-show-hidden-btn`)
+    if (showHiddenBtn) {
+        showHiddenBtn.style.display = hasHiddenButtons ? 'block' : 'none'
+    }
+
+    // Update the hidden buttons container with new content
+    const hiddenContainer = document.getElementById(`switch-${switchId}-hidden-container`)
+    if (hiddenContainer) {
+        hiddenContainer.innerHTML = hiddenButtonsHTML
+    }
+}
+
+// Button types management
+function saveButtonTypes() {
+    console.log('Sending button types to backend')
+    sendButtonTypesToWebSocket()
+}
+
+function getButtonType(switchId, buttonId) {
+    return buttonTypes[switchId]?.[buttonId] ?? 0 // default to momentary
+}
+
+function setButtonType(switchId, buttonId, type) {
+    if (!buttonTypes[switchId]) {
+        buttonTypes[switchId] = {}
+    }
+    buttonTypes[switchId][buttonId] = type
+    updateButtonTypeUI(switchId, buttonId, type)
+    saveButtonTypes()
+}
+
+function toggleButtonType(switchId, buttonId) {
+    const currentType = getButtonType(switchId, buttonId)
+    const newType = currentType === 1 ? 0 : 1
+    setButtonType(switchId, buttonId, newType)
+}
+
+function updateButtonTypeUI(switchId, buttonId, type) {
+    const button = document.getElementById(`switch-${switchId}-btn-${buttonId}-type`)
+    if (!button) return
+
+    if (type === 0) {
+        button.textContent = 'M'
+        button.title = 'Momentary - Click to change to Toggle'
+        button.style.background = 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)'
+    } else {
+        button.textContent = 'T'
+        button.title = 'Toggle - Click to change to Momentary'
+        button.style.background = 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)'
+    }
+}
+
+function sendButtonTypesToWebSocket() {
+    if (!wsManager.isConnected()) {
+        console.warn('WebSocket not connected, cannot send button types')
+        return
+    }
+
+    // Build the data structure: { switchId: { buttonId: type, ... }, ... }
+    const switchButtonTypes = {}
+
+    for (let switchId in switches) {
+        const buttonCount = switches[switchId].buttonCount
+        switchButtonTypes[switchId] = {}
+
+        for (let i = 1; i <= buttonCount; i++) {
+            const buttonId = String.fromCharCode(96 + i)
+            const type = getButtonType(switchId, buttonId)
+            switchButtonTypes[switchId][buttonId] = type
+        }
+    }
+
+    const msg = JSON.stringify({
+        type: 'button_types',
+        data: switchButtonTypes
+    })
+
+    console.log('Sending button types:', msg)
+    wsManager.send(msg)
 }
 
 function hideDevice(deviceId, deviceType) {
@@ -966,6 +1196,8 @@ function highlightDevice(deviceId) {
     document.querySelectorAll('.device-box').forEach(el => {
         if (el.id !== deviceId) {
             el.style.opacity = '0.3'
+        } else {
+            el.style.setProperty('opacity', '1', 'important')
         }
     })
 
@@ -1333,19 +1565,28 @@ async function loadConfiguration() {
     connectionLookupMap = {}
     cachedElements = { canvas, zoomLevel: cachedElements.zoomLevel }
     hiddenDevices = new Set()  // Don't persist hidden devices across reloads
+    buttonTypes = {}
+    hiddenButtons = loadHiddenButtons()
 
     try {
-        const [relaysData, outputsData, switchesData, connectionsData] = await Promise.all([
+        const [relaysData, outputsData, switchesData, connectionsData, buttonTypesData] = await Promise.all([
             fetchAPI('/lights/get_relays'),
             fetchAPI('/lights/get_outputs'),
             fetchAPI('/lights/get_switches'),
-            fetchAPI('/lights/get_connections')
+            fetchAPI('/lights/get_connections'),
+            fetchAPI('/lights/get_all_buttons')
         ])
 
         const relays_config = relaysData || getDemoRelays()
         const outputs_config = outputsData || getDemoOutputs()
         const switches_config = switchesData || getDemoSwitches()
         const connections_config = connectionsData || getDemoConnections()
+
+        // Load button types
+        if (buttonTypesData) {
+            buttonTypes = buttonTypesData
+            console.log('Loaded button types from API:', buttonTypes)
+        }
 
         // create relays (centered on canvas by default)
         let relayX = 25000, relayY = 25000
@@ -1360,10 +1601,22 @@ async function loadConfiguration() {
         // create switches (centered on canvas by default)
         let switchX = 23500, switchY = 25000
         for (let [switchId, switchData] of Object.entries(switches_config)) {
+            if (!switchData || !Array.isArray(switchData) || switchData.length < 2) {
+                console.warn(`Invalid switch data for switch ${switchId}:`, switchData)
+                continue
+            }
             const [switchName, buttonCount] = switchData
             createSwitch(parseInt(switchId), switchName, buttonCount, switchX, switchY)
             switchY += buttonCount * 72 + 185
             if (switchY > 29000) { switchY = 25000; switchX += 500; }
+        }
+
+        // Apply button types UI after switches are created
+        for (let switchId in buttonTypes) {
+            for (let buttonId in buttonTypes[switchId]) {
+                const type = buttonTypes[switchId][buttonId]
+                updateButtonTypeUI(switchId, buttonId, type)
+            }
         }
 
         // Create connections after elements exist (batched for performance)
@@ -1371,6 +1624,10 @@ async function loadConfiguration() {
             jsPlumbInstance.batch(() => {
                 for (let [switchId, buttons] of Object.entries(connections_config)) {
                     for (let [buttonId, targets] of Object.entries(buttons)) {
+                        // Skip connection if button is hidden
+                        if (isButtonHidden(parseInt(switchId), buttonId)) {
+                            continue
+                        }
                         for (let [relayId, outputId] of targets) {
                             createConnection(parseInt(switchId), buttonId, parseInt(relayId), outputId)
                         }
@@ -1470,19 +1727,60 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
     switchDiv.className = 'device-box switch-box'
     switchDiv.style.left = `${savedPos.x}px`
     switchDiv.style.top = `${savedPos.y}px`
+    switchDiv.style.zIndex = '100'
 
     if (savedColor) {
         switchDiv.style.borderLeftColor = savedColor
     }
 
     let buttonsHTML = ''
+    let hiddenButtonsHTML = ''
+    let hasHiddenButtons = false
+
     for (let i = 1; i <= buttonCount; i++) {
+        const buttonId = String.fromCharCode(96 + i)
+        const buttonType = getButtonType(switchId, buttonId)
+        const typeLabel = buttonType === 0 ? 'M' : 'T'
+        const typeTitle = buttonType === 0 ? 'Momentary - Click to change to Toggle' : 'Toggle - Click to change to Momentary'
+        const typeColor = buttonType === 0 ? 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)' : 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)'
+        const isHidden = isButtonHidden(switchId, buttonId)
+        const displayStyle = isHidden ? 'none' : 'flex'
+
+        if (isHidden) hasHiddenButtons = true
+
         buttonsHTML += `
-                    <div class="button-item" id="switch-${switchId}-btn-${String.fromCharCode(96 + i)}">
-                        <span class="button-name">Button ${i}</span>
+                    <div class="button-item" id="switch-${switchId}-btn-${buttonId}" style="display: ${displayStyle};">
+                        <button class="button-type-toggle" 
+                                id="switch-${switchId}-btn-${buttonId}-type"
+                                onclick="event.stopPropagation(); toggleButtonType(${switchId}, '${buttonId}')"
+                                title="${typeTitle}"
+                                style="background: ${typeColor}; border: none; color: white; font-weight: bold; font-size: 12px; width: 24px; height: 24px; border-radius: 4px; cursor: pointer; margin-right: 8px; flex-shrink: 0; transition: transform 0.2s;"
+                                onmouseover="this.style.transform='scale(1.1)'"
+                                onmouseout="this.style.transform='scale(1)'">${typeLabel}</button>
+                        <span class="button-name" style="flex: 1;">Button ${i}</span>
+                        <button class="button-hide-toggle" 
+                                onclick="event.stopPropagation(); hideButton(${switchId}, '${buttonId}')"
+                                title="Hide Button"
+                                style="background: linear-gradient(135deg, #64748b 0%, #475569 100%); border: none; color: white; font-weight: bold; font-size: 10px; width: 20px; height: 20px; border-radius: 4px; cursor: pointer; margin-left: 8px; flex-shrink: 0; transition: transform 0.2s;"
+                                onmouseover="this.style.transform='scale(1.1)'"
+                                onmouseout="this.style.transform='scale(1)'">👁️</button>
                         <span class="item-icon">🔘</span>
                     </div>
                 `
+
+        // Only add to hidden buttons section if actually hidden
+        if (isHidden) {
+            hiddenButtonsHTML += `
+                        <div class="hidden-button-item" style="display: flex; align-items: center; padding: 0.5rem; margin: 0.25rem 0; background: rgba(100, 116, 139, 0.1); border-radius: 6px;">
+                            <span style="flex: 1; font-size: 0.9rem; color: #94a3b8;">Button ${i}</span>
+                            <button onclick="event.stopPropagation(); showButton(${switchId}, '${buttonId}')"
+                                    title="Show Button"
+                                    style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); border: none; color: white; font-weight: bold; font-size: 11px; padding: 4px 12px; border-radius: 4px; cursor: pointer; transition: transform 0.2s;"
+                                    onmouseover="this.style.transform='scale(1.05)'"
+                                    onmouseout="this.style.transform='scale(1)'">Show</button>
+                        </div>
+                    `
+        }
     }
 
     const isOnline = online_switches.has(switchId)
@@ -1514,7 +1812,15 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
                     <button class="color-btn" onclick="event.stopPropagation(); showColorPicker(${switchId})" title="Change Color">🎨</button>
                 </div>
                 ${buttonsHTML}
-            `
+                <button id="switch-${switchId}-show-hidden-btn" 
+                        onclick="event.stopPropagation(); toggleShowHiddenButtons(${switchId})"
+                        style="display: ${hasHiddenButtons ? 'block' : 'none'}; width: 100%; padding: 8px; margin-top: 8px; background: linear-gradient(135deg, #475569 0%, #334155 100%); border: none; color: white; font-size: 12px; font-weight: 600; border-radius: 6px; cursor: pointer; transition: all 0.2s;"
+                        onmouseover="this.style.background='linear-gradient(135deg, #64748b 0%, #475569 100%)'"
+                        onmouseout="this.style.background='linear-gradient(135deg, #475569 0%, #334155 100%)'">▼ Show Hidden Buttons</button>
+                <div id="switch-${switchId}-hidden-container" style="display: none; margin-top: 8px; padding: 8px; background: rgba(30, 41, 59, 0.5); border-radius: 6px; position: relative; z-index: 10000;">
+                    ${hiddenButtonsHTML}
+                </div>
+        `
 
     document.getElementById('canvas').appendChild(switchDiv)
 
@@ -1531,14 +1837,27 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
     let dragStartTime = 0
     let touchStartPos = null
 
+    // Bring device to front on interaction
+    function bringToFront() {
+        const allDevices = document.querySelectorAll('.device-box')
+        let maxZ = 100
+        allDevices.forEach(dev => {
+            const z = parseInt(dev.style.zIndex || 100)
+            if (z > maxZ) maxZ = z
+        })
+        switchDiv.style.zIndex = maxZ + 1
+    }
+
     switchDiv.addEventListener('mousedown', function () {
         isDragging = false
         dragStartTime = Date.now()
+        bringToFront()
     })
 
     switchDiv.addEventListener('touchstart', function (e) {
         isDragging = false
         dragStartTime = Date.now()
+        bringToFront()
         if (e.touches.length === 1) {
             touchStartPos = {
                 x: e.touches[0].clientX,
@@ -1556,7 +1875,8 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
                 const dx = Math.abs(touch.clientX - touchStartPos.x)
                 const dy = Math.abs(touch.clientY - touchStartPos.y)
                 if (dx < 10 && dy < 10) {
-                    highlightDevice(`switch-${switchId}`)
+                    highlightDevice(`switch-${switchId
+                        } `)
                     e.preventDefault()
                 }
             }
@@ -1604,6 +1924,11 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
     for (let i = 1; i <= buttonCount; i++) {
         const btnElement = document.getElementById(`switch-${switchId}-btn-${String.fromCharCode(96 + i)}`)
 
+        if (!btnElement) {
+            console.warn(`Button element not found: switch-${switchId}-btn-${String.fromCharCode(96 + i)}`)
+            continue
+        }
+
         jsPlumbInstance.makeSource(btnElement, {
             anchor: "Right",
             endpoint: ["Dot", { radius: 8 }],
@@ -1630,20 +1955,20 @@ function copyIdToClipboard(id, element) {
         const message = document.createElement('div')
         message.textContent = `ID ${id} copied!`
         message.style.cssText = `
-            position: fixed;
-            top: ${rect.top - 40}px;
-            left: ${rect.left + rect.width / 2}px;
-            transform: translateX(-50%);
-            background: #10b981;
-            color: white;
-            padding: 8px 16px;
-            border-radius: 6px;
-            font-weight: 500;
-            font-size: 12px;
-            z-index: 10000;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            pointer-events: none;
-        `
+position: fixed;
+top: ${rect.top - 40}px;
+left: ${rect.left + rect.width / 2}px;
+transform: translateX(-50%);
+background: #10b981;
+color: white;
+padding: 8px 16px;
+border-radius: 6px;
+font-weight: 500;
+font-size: 12px;
+z-index: 10000;
+box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+pointer-events: none;
+`
         document.body.appendChild(message)
 
         // Remove after 1.5 seconds
@@ -1663,6 +1988,7 @@ function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
     relayDiv.className = 'device-box relay-box'
     relayDiv.style.left = `${savedPos.x}px`
     relayDiv.style.top = `${savedPos.y}px`
+    relayDiv.style.zIndex = '100'
 
     let outputsHTML = ''
     for (let i = 1; i <= outputsCount; i++) {
@@ -1744,14 +2070,27 @@ function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
     let dragStartTime = 0
     let touchStartPos = null
 
+    // Bring device to front on interaction
+    function bringToFront() {
+        const allDevices = document.querySelectorAll('.device-box')
+        let maxZ = 100
+        allDevices.forEach(dev => {
+            const z = parseInt(dev.style.zIndex || 100)
+            if (z > maxZ) maxZ = z
+        })
+        relayDiv.style.zIndex = maxZ + 1
+    }
+
     relayDiv.addEventListener('mousedown', function () {
         isDragging = false
         dragStartTime = Date.now()
+        bringToFront()
     })
 
     relayDiv.addEventListener('touchstart', function (e) {
         isDragging = false
         dragStartTime = Date.now()
+        bringToFront()
         if (e.touches.length === 1) {
             touchStartPos = {
                 x: e.touches[0].clientX,
@@ -1816,6 +2155,12 @@ function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
 
     for (let i = 1; i <= outputsCount; i++) {
         const outputElement = document.getElementById(`relay-${relayId}-output-${String.fromCharCode(96 + i)}`)
+
+        if (!outputElement) {
+            console.warn(`Output element not found: relay-${relayId}-output-${String.fromCharCode(96 + i)}`)
+            continue
+        }
+
         jsPlumbInstance.makeTarget(outputElement, {
             anchor: "Left",
             endpoint: ["Dot", { radius: 8 }],
@@ -1852,7 +2197,7 @@ function updateOnlineStatus() {
 
     // Update all relays
     for (let relayId in relays) {
-        const element = document.getElementById(`relay-${relayId}`)
+        const element = document.getElementById(`relay - ${relayId} `)
         if (element) {
             const indicator = element.querySelector('.status-indicator')
             if (indicator) {
@@ -1909,7 +2254,7 @@ function createConnection(switchId, buttonId, relayId, outputId) {
 
         // Update lookup map for fast highlighting
         const switchDeviceId = `switch-${switchId}`
-        const relayDeviceId = `relay-${relayId}`
+        const relayDeviceId = `relay - ${relayId} `
 
         if (!connectionLookupMap[switchDeviceId]) connectionLookupMap[switchDeviceId] = []
         if (!connectionLookupMap[relayDeviceId]) connectionLookupMap[relayDeviceId] = []
@@ -1972,31 +2317,31 @@ function changeSwitchState(relay_id, output_id) {
         return
     }
 
-    if (pendingClicks.has(`${relay_id}-${output_id}`)) {
+    if (pendingClicks.has(`${relay_id} -${output_id} `)) {
         return
     }
 
-    pendingClicks.add(`${relay_id}-${output_id}`)
-    var newState = lights[`${relay_id}-${output_id}`] === 1 ? 0 : 1
+    pendingClicks.add(`${relay_id} -${output_id} `)
+    var newState = lights[`${relay_id} -${output_id} `] === 1 ? 0 : 1
 
-    console.log('Changing state of', `${relay_id}-${output_id}`, 'to', newState)
+    console.log('Changing state of', `${relay_id} -${output_id} `, 'to', newState)
     var msg = JSON.stringify({ "relay_id": relay_id, "output_id": output_id, "state": newState })
     console.log(msg)
 
     if (!wsManager.send(msg)) {
-        pendingClicks.delete(`${relay_id}-${output_id}`)
+        pendingClicks.delete(`${relay_id} -${output_id} `)
     }
 
     setTimeout(function () {
-        pendingClicks.delete(`${relay_id}-${output_id}`)
+        pendingClicks.delete(`${relay_id} -${output_id} `)
     }, 2000)
 }
 
 function updateLightUI(relay_id, output_id, state) {
-    console.log('Updating UI for', `relay-${relay_id}-output-${output_id}`, 'to', state)
-    var outputElement = document.getElementById(`relay-${relay_id}-output-${output_id}`)
+    console.log('Updating UI for', `relay - ${relay_id} -output - ${output_id} `, 'to', state)
+    var outputElement = document.getElementById(`relay - ${relay_id} -output - ${output_id} `)
     if (!outputElement) {
-        console.warn('Output element not found:', `relay-${relay_id}-output-${output_id}`)
+        console.warn('Output element not found:', `relay - ${relay_id} -output - ${output_id} `)
         return
     }
 
@@ -2112,7 +2457,7 @@ async function addRelay() {
     if (result !== null) {
         const outputs = {}
         for (let i = 1; i <= outputsCount; i++) {
-            outputs[String.fromCharCode(96 + i)] = `Output ${i}`
+            outputs[String.fromCharCode(96 + i)] = `Output ${i} `
         }
 
         const numRelays = Object.keys(relays).length
@@ -2155,16 +2500,16 @@ async function deleteRelay(relayId) {
     })
 
     if (result !== null) {
-        const element = document.getElementById(`relay-${relayId}`)
+        const element = document.getElementById(`relay - ${relayId} `)
         if (element) {
             jsPlumbInstance.removeAllEndpoints(element)
             element.remove()
         }
 
         delete relays[relayId]
-        delete connectionLookupMap[`relay-${relayId}`]
+        delete connectionLookupMap[`relay - ${relayId} `]
 
-        if (highlightedDevice === `relay-${relayId}`) {
+        if (highlightedDevice === `relay - ${relayId} `) {
             clearHighlights()
         }
     }
@@ -2199,7 +2544,7 @@ function editDeviceName(type, id) {
 function editOutputName(relayId, outputId) {
     currentEditTarget = { type: 'output', relayId, outputId }
     const outputs = relays[relayId].outputs
-    let currentName = outputs[outputId] || outputs[outputId] || `Output ${outputId.charCodeAt(0) - 96}`
+    let currentName = outputs[outputId] || outputs[outputId] || `Output ${outputId.charCodeAt(0) - 96} `
     if (Array.isArray(currentName)) {
         currentName = currentName[0]
     }
@@ -2251,7 +2596,7 @@ async function saveNameEdit() {
 
         if (result !== null) {
             switches[currentEditTarget.id].name = newName
-            const nameElement = document.querySelector(`#switch-${currentEditTarget.id} .device-name`)
+            const nameElement = document.querySelector(`#switch - ${currentEditTarget.id} .device - name`)
             if (nameElement) nameElement.textContent = newName
         }
 
@@ -2273,7 +2618,7 @@ async function saveNameEdit() {
 
         if (result !== null) {
             relays[currentEditTarget.id].name = newName
-            const nameElement = document.querySelector(`#relay-${currentEditTarget.id} .device-name`)
+            const nameElement = document.querySelector(`#relay - ${currentEditTarget.id} .device - name`)
             if (nameElement) nameElement.textContent = newName
         }
 

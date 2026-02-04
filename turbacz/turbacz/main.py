@@ -395,7 +395,10 @@ async def websocket_rcm(websocket: WebSocket):
             if cmd.get("type") == "update":
                 connections = connection_manager.get_all_connections()
 
-                mqtt.client.publish("/switch/cmd/root", json.dumps(connections))
+                mqtt.client.publish(
+                    "/switch/cmd/root",
+                    json.dumps({"type": "connections", "data": connections}),
+                )
                 await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
                 continue
 
@@ -432,6 +435,15 @@ async def websocket_rcm(websocket: WebSocket):
                             },
                             websocket,
                         )
+                continue
+
+            if cmd.get("type") == "button_types":
+                for switch_id, buttons in cmd.get("data", {}).items():
+                    for button_id, button_type in buttons.items():
+                        connection_manager.set_button_type(int(switch_id), button_id, int(button_type))
+
+                mqtt.client.publish("/switch/cmd/root", cmd)
+
                 continue
 
             try:

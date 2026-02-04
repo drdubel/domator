@@ -172,7 +172,10 @@ async def handle_root_state(payload_str):
     if payload_str == "connected":
         logger.debug("Connections: %s", connections)  # Debug log
 
-        mqtt.client.publish("/switch/cmd/root", connections)
+        mqtt.client.publish("/switch/cmd/root", json.dumps({"type": "connections", "data": connections}))
+        mqtt.client.publish(
+            "/switch/cmd/root", json.dumps({"type": "button_types", "data": connection_manager.get_all_buttons()})
+        )
 
         return
 

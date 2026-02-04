@@ -604,7 +604,7 @@ void buttonPressTask(void* pvParameters) {
 
             if (xSemaphoreTake(lightsArrayMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
                 clicks++;
-                bool newState = !digitalRead(buttons[i]);
+                bool newState = buttonState[i];
 
                 char response[3];
                 response[0] = 'a' + i;

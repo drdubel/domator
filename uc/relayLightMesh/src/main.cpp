@@ -28,7 +28,7 @@
 #define LOW_HEAP_THRESHOLD 50000
 
 // Debug levels
-#define DEBUG_LEVEL 3  // 0=none, 1=errors only, 2=info, 3=verbose
+#define DEBUG_LEVEL 1  // 0=none, 1=errors only, 2=info, 3=verbose
 
 #if DEBUG_LEVEL >= 1
 #define DEBUG_ERROR(fmt, ...) Serial.printf("[ERROR] " fmt "\n", ##__VA_ARGS__)
@@ -617,8 +617,8 @@ void buttonPressTask(void* pvParameters) {
                     espnowMessageQueue, std::make_pair(String(response), true),
                     espnowMessageQueueMutex, stats.espnowDropped, "ESPNOW-PRI");
 
-                DEBUG_INFO("Light %c set to %s by button", button,
-                           newState ? "ON" : "OFF");
+                DEBUG_INFO("BUTTON: Button %c pressed, new state: %d", button,
+                           newState ? 1 : 0);
             }
         }
     }

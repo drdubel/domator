@@ -649,7 +649,7 @@ void IRAM_ATTR buttonISR(void* arg) {
     uint32_t now = micros();
     if (now - lastPress[index] > BUTTON_DEBOUNCE_TIME * 1000) {
         lastPress[index] = now;
-        buttonState[index] = !digitalRead(buttons[index]);
+        buttonState[index] = digitalRead(buttons[index]);
         pressed |= (1 << index);
     }
 }

@@ -127,10 +127,13 @@ void onESPNowDataRecv(const uint8_t* mac_addr, const uint8_t* data, int len);
 
 // Compute network ID from MESH_PASSWORD to isolate different mesh networks
 uint32_t computeNetworkId(const char* password) {
-    // Validate input
-    if (!password || strlen(password) == 0) {
-        DEBUG_ERROR("FATAL: MESH_PASSWORD is null or empty!");
-        // Return a deterministic but invalid network ID
+    // Validate input - check null first, then check empty
+    if (!password) {
+        DEBUG_ERROR("CRITICAL: MESH_PASSWORD is null! Network will not connect.");
+        return 0xFFFFFFFF;
+    }
+    if (strlen(password) == 0) {
+        DEBUG_ERROR("CRITICAL: MESH_PASSWORD is empty! Network will not connect.");
         return 0xFFFFFFFF;
     }
     

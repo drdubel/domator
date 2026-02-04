@@ -604,7 +604,7 @@ void buttonPressTask(void* pvParameters) {
 
             if (xSemaphoreTake(lightsArrayMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
                 clicks++;
-                bool newState = digitalRead(buttons[i]);
+                bool newState = !digitalRead(buttons[i]);
 
                 char response[3];
                 response[0] = 'a' + i;
@@ -649,7 +649,7 @@ void IRAM_ATTR buttonISR(void* arg) {
     uint32_t now = micros();
     if (now - lastPress[index] > BUTTON_DEBOUNCE_TIME * 1000) {
         lastPress[index] = now;
-        buttonState[index] = digitalRead(buttons[index]);
+        buttonState[index] = !digitalRead(buttons[index]);
         pressed |= (1 << index);
     }
 }

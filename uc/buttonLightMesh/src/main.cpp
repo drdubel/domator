@@ -347,6 +347,58 @@ void onESPNowDataSent(const uint8_t* mac_addr, esp_now_send_status_t status) {
     }
 }
 
+bool sendESPNowMessage(const String& message, bool priority = false,
+                       const uint8_t* destMac = nullptr) {
+    if (!destMac && !hasRootMac) {
+        DEBUG_ERROR("Cannot send: No root MAC address");
+        return false;
+    }
+
+    destMac = destMac ? destMac : rootMac;
+
+    // Add root as peer if not already added
+    if (!esp_now_is_peer_exist(destMac)) {
+        esp_now_peer_info_t peerInfo = {};
+        memcpy(peerInfo.peer_addr, destMac, 6);
+        peerInfo.channel = espnowChannel;  // Use the channel we're on!
+        peerInfo.encrypt = false;
+
+        esp_err_t result = esp_now_add_peer(&peerInfo);
+        if (result != ESP_OK) {
+            DEBUG_ERROR("Failed to add root as peer: %d", result);
+            return false;
+        }
+        DEBUG_INFO("Added root as ESP-NOW peer on channel %d", espnowChannel);
+    }
+
+    espnow_message_t msg;
+    msg.nodeId = deviceId;
+
+    // Determine message type
+    if (message == "S") {
+        msg.msgType = 'S';
+    } else if (message.startsWith("{")) {
+        msg.msgType = 'D';
+    } else {
+        msg.msgType = 'C';
+    }
+
+    strncpy(msg.data, message.c_str(), sizeof(msg.data) - 1);
+    msg.data[sizeof(msg.data) - 1] = '\0';
+
+    esp_err_t result =
+        esp_now_send(destMac, (uint8_t*)&msg, sizeof(espnow_message_t));
+
+    if (result == ESP_OK) {
+        DEBUG_VERBOSE("ESP-NOW TX: type=%c data=%s", msg.msgType, msg.data);
+        return true;
+    } else {
+        DEBUG_ERROR("ESP-NOW TX failed: %d", result);
+        stats.espnowSendFailed++;
+        return false;
+    }
+}
+
 // ESP32-C3 compatible callback signature
 void onESPNowDataRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
     if (len != sizeof(espnow_message_t)) {
@@ -361,9 +413,11 @@ void onESPNowDataRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
     if (!hasRootMac) {
         String dataStr = String(msg.data);
         if (msg.msgType == 'Q' || dataStr == "Q") {
-            memcpy(rootMac, mac_addr, 6);
-            hasRootMac = true;
-            DEBUG_VERBOSE("ESP-NOW: Discovered root MAC");
+            DEBUG_INFO("Attempting registration with root...");
+            String regMessage = String(MESH_PASSWORD) + ":S";
+            uint8_t tempRootMac[6] = {0};
+            memcpy(tempRootMac, mac_addr, 6);
+            sendESPNowMessage(regMessage, false, tempRootMac);
         } else if (msg.msgType == 'A' || dataStr == "A") {
             memcpy(rootMac, mac_addr, 6);
             hasRootMac = true;
@@ -443,55 +497,6 @@ void espnowInit() {
     // Register callbacks
     esp_now_register_send_cb(onESPNowDataSent);
     esp_now_register_recv_cb(onESPNowDataRecv);
-}
-
-bool sendESPNowMessage(const String& message, bool priority = false) {
-    if (!hasRootMac) {
-        DEBUG_ERROR("Cannot send: No root MAC address");
-        return false;
-    }
-
-    // Add root as peer if not already added
-    if (!esp_now_is_peer_exist(rootMac)) {
-        esp_now_peer_info_t peerInfo = {};
-        memcpy(peerInfo.peer_addr, rootMac, 6);
-        peerInfo.channel = espnowChannel;  // Use the channel we're on!
-        peerInfo.encrypt = false;
-
-        esp_err_t result = esp_now_add_peer(&peerInfo);
-        if (result != ESP_OK) {
-            DEBUG_ERROR("Failed to add root as peer: %d", result);
-            return false;
-        }
-        DEBUG_INFO("Added root as ESP-NOW peer on channel %d", espnowChannel);
-    }
-
-    espnow_message_t msg;
-    msg.nodeId = deviceId;
-
-    // Determine message type
-    if (message == "S") {
-        msg.msgType = 'S';
-    } else if (message.startsWith("{")) {
-        msg.msgType = 'D';
-    } else {
-        msg.msgType = 'C';
-    }
-
-    strncpy(msg.data, message.c_str(), sizeof(msg.data) - 1);
-    msg.data[sizeof(msg.data) - 1] = '\0';
-
-    esp_err_t result =
-        esp_now_send(rootMac, (uint8_t*)&msg, sizeof(espnow_message_t));
-
-    if (result == ESP_OK) {
-        DEBUG_VERBOSE("ESP-NOW TX: type=%c data=%s", msg.msgType, msg.data);
-        return true;
-    } else {
-        DEBUG_ERROR("ESP-NOW TX failed: %d", result);
-        stats.espnowSendFailed++;
-        return false;
-    }
 }
 
 void sendStatusReport(void* pvParameters) {

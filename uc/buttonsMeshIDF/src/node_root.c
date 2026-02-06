@@ -1,4 +1,5 @@
 #include <inttypes.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "cJSON.h"
@@ -7,6 +8,46 @@
 #include "esp_timer.h"
 
 static const char* TAG = "NODE_ROOT";
+
+// ====================
+// Helper Functions
+// ====================
+
+/**
+ * Parse device ID from string representation
+ * @param device_id_str String representation of device ID (e.g., "12345678")
+ * @return Parsed device ID as uint32_t, or 0 if parsing fails
+ */
+static uint32_t parse_device_id_from_string(const char *device_id_str) {
+    if (device_id_str == NULL) {
+        return 0;
+    }
+    
+    char *endptr;
+    unsigned long parsed = strtoul(device_id_str, &endptr, 10);
+    
+    // Check if parsing was successful and string was fully consumed
+    if (*endptr != '\0' || parsed == 0) {
+        return 0;
+    }
+    
+    return (uint32_t)parsed;
+}
+
+/**
+ * Convert button character to array index
+ * @param button_char Button character ('a'-'p' for buttons 0-15)
+ * @return Button index (0-15), or -1 if invalid
+ */
+static int button_char_to_index(char button_char) {
+    if (button_char >= 'a' && button_char <= 'p') {
+        return button_char - 'a';
+    }
+    if (button_char >= 'A' && button_char <= 'P') {
+        return button_char - 'A';
+    }
+    return -1;
+}
 
 // ====================
 // MQTT Command Handling
@@ -353,7 +394,9 @@ void root_handle_mesh_message(const mesh_addr_t* from,
                 }
                 
                 // Route button press to configured relay targets (#15)
-                root_route_button_press(msg->device_id, button_char, button_state);
+                // Note: Pass 1 to indicate button press. For toggle buttons (type 0),
+                // state is ignored. For stateful buttons (type 1), this sends state=1.
+                root_route_button_press(msg->device_id, button_char, 1);
             }
             break;
         }

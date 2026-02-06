@@ -19,7 +19,7 @@ This document describes how to test the Phase 4 routing logic implementation for
         ["11223344", "b"]
       ],
       "b": [
-        ["87654321", "c1"]
+        ["87654321", "c"]
       ]
     }
   }
@@ -130,7 +130,7 @@ This document describes how to test the Phase 4 routing logic implementation for
     "20000002": {
       "a": [["30000003", "a"]],
       "b": [["30000003", "b"], ["30000004", "a"]],
-      "c": [["30000004", "c1"]]
+      "c": [["30000004", "c"]]
     }
   }
 }

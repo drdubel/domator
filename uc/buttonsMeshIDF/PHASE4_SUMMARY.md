@@ -162,7 +162,7 @@ SemaphoreHandle_t g_button_types_mutex;
         ["relayDeviceId2", "b"]
       ],
       "b": [
-        ["relayDeviceId1", "c1"]
+        ["relayDeviceId1", "c"]
       ]
     }
   }

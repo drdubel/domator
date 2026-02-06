@@ -57,7 +57,7 @@ This project replaces the previous 3 separate ESP-NOW Arduino firmwares (rootLig
   "data": {
     "switchDeviceId": {
       "a": [["relayDeviceId", "a"], ["relayDeviceId2", "b"]],
-      "b": [["relayDeviceId", "c1"]]
+      "b": [["relayDeviceId", "c"]]
     }
   }
 }

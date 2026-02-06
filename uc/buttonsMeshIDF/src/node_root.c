@@ -276,7 +276,7 @@ void root_publish_status(void)
     
     // Check for low heap
     if (free_heap < LOW_HEAP_THRESHOLD) {
-        if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(STATS_MUTEX_TIMEOUT_MS)) == pdTRUE) {
             g_stats.low_heap_events++;
             xSemaphoreGive(g_stats_mutex);
         }
@@ -308,7 +308,7 @@ void root_publish_status(void)
         } else {
             ESP_LOGW(TAG, "Failed to publish root status");
             
-            if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(STATS_MUTEX_TIMEOUT_MS)) == pdTRUE) {
                 g_stats.mqtt_dropped++;
                 xSemaphoreGive(g_stats_mutex);
             }
@@ -349,7 +349,7 @@ void root_forward_leaf_status(const char *json_str)
         } else {
             ESP_LOGW(TAG, "Failed to forward leaf status");
             
-            if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(STATS_MUTEX_TIMEOUT_MS)) == pdTRUE) {
                 g_stats.mqtt_dropped++;
                 xSemaphoreGive(g_stats_mutex);
             }
@@ -377,15 +377,15 @@ void root_handle_mesh_message(const mesh_addr_t *from, const mesh_app_msg_t *msg
             // Button press from switch node
             if (msg->data_len > 0 && msg->data_len < sizeof(msg->data)) {
                 char button_char = msg->data[0];
-                int state = -1;  // Default: toggle
+                int button_state = -1;  // Default: toggle (-1), or 0/1 for stateful
                 
                 // Check if this is a stateful button press (data_len >= 2)
                 if (msg->data_len >= 2 && (msg->data[1] == '0' || msg->data[1] == '1')) {
-                    state = msg->data[1] - '0';
+                    button_state = msg->data[1] - '0';
                 }
                 
                 ESP_LOGI(TAG, "Button '%c' pressed on device %" PRIu32 " (state=%d)",
-                         button_char, msg->device_id, state);
+                         button_char, msg->device_id, button_state);
                 
                 // Publish to MQTT: /switch/state/{deviceId}
                 if (g_mqtt_connected) {
@@ -401,7 +401,7 @@ void root_handle_mesh_message(const mesh_addr_t *from, const mesh_app_msg_t *msg
                     } else {
                         ESP_LOGW(TAG, "Failed to publish button press");
                         
-                        if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                        if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(STATS_MUTEX_TIMEOUT_MS)) == pdTRUE) {
                             g_stats.mqtt_dropped++;
                             xSemaphoreGive(g_stats_mutex);
                         }
@@ -409,7 +409,7 @@ void root_handle_mesh_message(const mesh_addr_t *from, const mesh_app_msg_t *msg
                 }
                 
                 // Route button press to configured relay targets (#15)
-                root_route_button_press(msg->device_id, button_char, state);
+                root_route_button_press(msg->device_id, button_char, button_state);
             }
             break;
         }
@@ -467,7 +467,7 @@ void root_handle_mesh_message(const mesh_addr_t *from, const mesh_app_msg_t *msg
                     } else {
                         ESP_LOGW(TAG, "Failed to publish relay state");
                         
-                        if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                        if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(STATS_MUTEX_TIMEOUT_MS)) == pdTRUE) {
                             g_stats.mqtt_dropped++;
                             xSemaphoreGive(g_stats_mutex);
                         }
@@ -543,7 +543,7 @@ void root_parse_connections(const char *json_str)
         return;
     }
     
-    if (xSemaphoreTake(g_connections_mutex, pdMS_TO_TICKS(200)) != pdTRUE) {
+    if (xSemaphoreTake(g_connections_mutex, pdMS_TO_TICKS(ROUTING_MUTEX_TIMEOUT_MS)) != pdTRUE) {
         ESP_LOGE(TAG, "Failed to acquire connections mutex");
         cJSON_Delete(root);
         return;
@@ -665,7 +665,7 @@ void root_parse_button_types(const char *json_str)
         return;
     }
     
-    if (xSemaphoreTake(g_button_types_mutex, pdMS_TO_TICKS(200)) != pdTRUE) {
+    if (xSemaphoreTake(g_button_types_mutex, pdMS_TO_TICKS(ROUTING_MUTEX_TIMEOUT_MS)) != pdTRUE) {
         ESP_LOGE(TAG, "Failed to acquire button types mutex");
         cJSON_Delete(root);
         return;
@@ -745,13 +745,13 @@ void root_route_button_press(uint32_t from_device, char button, int state)
     
     // Get button type
     uint8_t button_type = 0;
-    if (xSemaphoreTake(g_button_types_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+    if (xSemaphoreTake(g_button_types_mutex, pdMS_TO_TICKS(ROUTING_MUTEX_TIMEOUT_MS)) == pdTRUE) {
         button_type = g_button_types[dev_idx][button_idx];
         xSemaphoreGive(g_button_types_mutex);
     }
     
     // Get routing targets
-    if (xSemaphoreTake(g_connections_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+    if (xSemaphoreTake(g_connections_mutex, pdMS_TO_TICKS(ROUTING_MUTEX_TIMEOUT_MS)) != pdTRUE) {
         ESP_LOGW(TAG, "Failed to acquire connections mutex");
         return;
     }
@@ -796,7 +796,9 @@ void root_route_button_press(uint32_t from_device, char button, int state)
         }
         memcpy(msg.data, command, cmd_len);
         msg.data[cmd_len] = '\0';
-        msg.data_len = cmd_len + 1;  // Include null terminator
+        // NOTE: data_len includes null terminator for convenience in receivers
+        // Receivers can treat data as null-terminated string without additional processing
+        msg.data_len = cmd_len + 1;
         
         // Prepare mesh_data_t for sending
         mesh_data_t data;
@@ -809,7 +811,7 @@ void root_route_button_press(uint32_t from_device, char button, int state)
         // LIMITATION: We still broadcast as we don't have MAC address mapping
         esp_mesh_send(NULL, &data, MESH_DATA_P2P, NULL, 0);
         
-        if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(STATS_MUTEX_TIMEOUT_MS)) == pdTRUE) {
             g_stats.button_presses++;
             xSemaphoreGive(g_stats_mutex);
         }

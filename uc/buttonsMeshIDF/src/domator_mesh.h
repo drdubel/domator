@@ -29,6 +29,8 @@
 #define MAX_DEVICES                     50
 #define MAX_ROUTES_PER_BUTTON           10
 #define MAX_RELAY_COMMAND_LEN           10
+#define ROUTING_MUTEX_TIMEOUT_MS        200
+#define STATS_MUTEX_TIMEOUT_MS          10
 
 // GPIO pin definitions for ESP32-C3 switch board
 #define BUTTON_GPIO_0                   0

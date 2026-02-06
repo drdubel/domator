@@ -6,7 +6,6 @@
 #include "esp_app_format.h"
 #include "esp_ota_ops.h"
 #include "driver/gpio.h"
-#include "esp_task_wdt.h"
 
 static const char *TAG = "DOMATOR_MESH";
 
@@ -120,9 +119,6 @@ void detect_hardware_type(void)
     
     ESP_LOGI(TAG, "Starting hardware detection...");
     
-    // Feed watchdog to prevent timeout during detection
-    esp_task_wdt_reset();
-    
     // First, check for 16-relay board (shift register)
     ESP_LOGD(TAG, "Checking for 16-relay board (shift register pins)...");
     
@@ -146,7 +142,6 @@ void detect_hardware_type(void)
     
     ESP_LOGD(TAG, "Shift register pins configured, waiting for settle...");
     vTaskDelay(pdMS_TO_TICKS(10));
-    esp_task_wdt_reset();
     
     // Read the pins - if all high with pullup, likely shift register present
     ESP_LOGD(TAG, "Reading shift register pin states...");
@@ -167,12 +162,10 @@ void detect_hardware_type(void)
         ESP_LOGW(TAG, "Relay boards are designed for ESP32, not ESP32-C3");
         ESP_LOGW(TAG, "Button pins 34/35 are not available - buttons will be disabled");
 #endif
-        esp_task_wdt_reset();
         return;
     }
     
     ESP_LOGD(TAG, "16-relay board not detected, checking for 8-relay...");
-    esp_task_wdt_reset();
     
     // Check for 8-relay board by probing the first relay output pin (GPIO 32)
     // This GPIO is less likely to be used on switch boards
@@ -198,7 +191,6 @@ void detect_hardware_type(void)
     g_node_type = NODE_TYPE_SWITCH;
     ESP_LOGI(TAG, "Hardware detected as: SWITCH_C3");
     ESP_LOGW(TAG, "Cannot distinguish 8-relay from switch - configure via NVS if needed");
-    esp_task_wdt_reset();
 }
 
 // ====================

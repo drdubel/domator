@@ -49,6 +49,33 @@ This project replaces the previous 3 separate ESP-NOW Arduino firmwares (rootLig
 - **Node status → MQTT (#18)**: Forward node status reports (already implemented)
 - **MQTT config receive (#19)**: Receive and apply configuration via `/switch/cmd/root`
 
+### Phase 5 - Reliability
+- **Peer health tracking (#20)**: Track node connectivity and health metrics
+- **OTA updates (#22)**: Firmware updates via esp_https_ota
+- **OTA trigger via mesh (#23)**: Trigger OTA updates through mesh network
+- **Root-loss reset (#25)**: Auto-reset nodes after 5 minutes of root disconnection
+- **Heap health monitoring (#26)**: Monitor heap usage with low (40KB) and critical (20KB) thresholds
+
+### Phase 6 - Gestures & Scenes
+- **Button gesture state machine (#1)**: Single/double/long press detection
+  - Single press: Quick press and release (< 800ms)
+  - Double press: Two quick presses within 400ms window
+  - Long press: Hold button for 800ms or more
+- **Configurable gesture enable bitmask (#2)**: NVS-persisted gesture config per button
+  - Bit 0: Single press enabled
+  - Bit 1: Double press enabled
+  - Bit 2: Long press enabled
+- **Gesture char encoding (#3)**: Character encoding for gesture types
+  - Single press: 'a'-'g' (buttons 0-6)
+  - Double press: 'h'-'n' (buttons 0-6)
+  - Long press: 'o'-'u' (buttons 0-6)
+- **Root connections map extension (#4)**: Gesture characters routed through existing connection map
+- **Explicit relay set commands (#5)**: "a0"/"a1" commands for scenes (already supported)
+- **Scene mapping (#6)**: One gesture can trigger multiple relay actions via routing
+- **NVS backup of gesture config (#7)**: Gesture config persists across reboots
+- **End-to-end config delivery (#8)**: MQTT → Root → Mesh → Switch → NVS flow
+- **Fallback logic (#9)**: Disabled gestures gracefully default to single press
+
 #### Configuration Examples
 **Connection Map:**
 ```json
@@ -73,6 +100,28 @@ This project replaces the previous 3 separate ESP-NOW Arduino firmwares (rootLig
       "b": 1
     }
   }
+}
+```
+
+**Gesture Configuration:**
+```json
+{
+  "type": "gesture_config",
+  "device_id": "switchDeviceId",
+  "data": {
+    "0": 7,
+    "1": 3,
+    "2": 1
+  }
+}
+```
+Note: Bitmask values: 1=single only, 3=single+double, 7=all enabled
+
+**OTA Trigger:**
+```json
+{
+  "type": "ota_trigger",
+  "url": "https://example.com/firmware.bin"
 }
 ```
 

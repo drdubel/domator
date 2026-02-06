@@ -510,6 +510,10 @@ void root_handle_mesh_message(const mesh_addr_t* from,
 
     ESP_LOGD(TAG, "Processing message type '%c' from device %" PRIu32,
              msg->msg_type, msg->device_id);
+    
+    // Update peer health tracking
+    // Note: RSSI not available from mesh_addr_t, using 0 as placeholder
+    peer_health_update(msg->device_id, 0);
 
     switch (msg->msg_type) {
         case MSG_TYPE_BUTTON: {

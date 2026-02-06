@@ -268,12 +268,21 @@ void app_main(void)
         led_init();
         xTaskCreate(button_task, "button", 4096, NULL, 6, NULL);
         xTaskCreate(led_task, "led", 3072, NULL, 2, NULL);
+        xTaskCreate(root_loss_check_task, "root_loss", 3072, NULL, 2, NULL);
     } else if (g_node_type == NODE_TYPE_RELAY) {
         ESP_LOGI(TAG, "Starting relay node tasks (board type: %s)",
                  g_board_type == BOARD_TYPE_16_RELAY ? "16-relay" : "8-relay");
         relay_init();
         relay_button_init();
         xTaskCreate(relay_button_task, "relay_button", 4096, NULL, 6, NULL);
+    }
+    
+    // Start health monitoring task for all nodes
+    xTaskCreate(health_monitor_task, "health_monitor", 3072, NULL, 2, NULL);
+    
+    // Start peer health check task for root
+    if (g_is_root || g_node_type == NODE_TYPE_ROOT) {
+        xTaskCreate(peer_health_check_task, "peer_health", 3072, NULL, 2, NULL);
     }
     
     ESP_LOGI(TAG, "Domator Mesh initialized");

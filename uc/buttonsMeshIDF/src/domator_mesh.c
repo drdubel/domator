@@ -140,6 +140,13 @@ void detect_hardware_type(void)
         g_node_type = NODE_TYPE_RELAY;
         g_board_type = BOARD_TYPE_16_RELAY;
         ESP_LOGI(TAG, "Hardware detected as: RELAY_16");
+        
+        // Warn if running on ESP32-C3 (relay boards are designed for ESP32)
+#ifdef CONFIG_IDF_TARGET_ESP32C3
+        ESP_LOGW(TAG, "WARNING: 16-relay board detected on ESP32-C3");
+        ESP_LOGW(TAG, "Relay boards are designed for ESP32, not ESP32-C3");
+        ESP_LOGW(TAG, "Button pins 34/35 are not available - buttons will be disabled");
+#endif
         return;
     }
     

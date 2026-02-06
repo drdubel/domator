@@ -82,6 +82,15 @@ This project replaces the previous 3 separate ESP-NOW Arduino firmwares (rootLig
 - ESP32-C3 (primary target for switch nodes)
 - ESP32-S3
 
+**Important Platform Notes:**
+- Relay boards (8-relay and 16-relay) are designed for **ESP32 (original)** only
+- ESP32-C3 has limited GPIO availability (GPIOs 0-21)
+- Physical buttons on relay boards use GPIOs 34, 35 which don't exist on ESP32-C3
+- If relay firmware runs on ESP32-C3:
+  - ✅ Relay outputs will work correctly
+  - ⚠️ Physical buttons will be automatically disabled (unavailable pins skipped)
+  - For full functionality, use ESP32 (original) for relay boards
+
 ## Pin Mapping
 
 ### Switch Node (ESP32-C3)

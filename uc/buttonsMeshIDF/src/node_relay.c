@@ -24,9 +24,20 @@ static bool is_gpio_valid(int gpio_num)
     return (gpio_num >= 0) && (gpio_num < SOC_GPIO_PIN_COUNT) && 
            ((SOC_GPIO_VALID_GPIO_MASK & (1ULL << gpio_num)) != 0);
 #else
-    // Fallback: ESP32-C3 has GPIOs 0-21
-    return (gpio_num >= 0) && (gpio_num <= 21);
+    // Fallback for older IDF versions or platforms without SOC_GPIO_VALID_GPIO_MASK
+    // ESP32-C3: GPIOs 0-21, ESP32: 0-39, ESP32-S3: 0-48
+    // Conservative fallback: assume older ESP32 with GPIOs 0-39
+    return (gpio_num >= 0) && (gpio_num <= 39);
 #endif
+}
+
+/**
+ * Initialize button state to safe defaults
+ */
+static void init_button_state(int index)
+{
+    g_relay_button_states[index].last_state = 0;
+    g_relay_button_states[index].last_press_time = 0;
 }
 
 static void stats_increment_button_presses(void)
@@ -289,9 +300,7 @@ void relay_button_init(void)
         // Check if GPIO is valid for this chip (ESP32-C3 only has GPIOs 0-21)
         if (!is_gpio_valid(gpio_num)) {
             ESP_LOGW(TAG, "Skipping button %d: GPIO %d not available on this chip", i, gpio_num);
-            // Initialize state to safe defaults
-            g_relay_button_states[i].last_state = 0;
-            g_relay_button_states[i].last_press_time = 0;
+            init_button_state(i);
             continue;
         }
         
@@ -300,8 +309,7 @@ void relay_button_init(void)
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "Failed to configure GPIO %d for button %d: %s", 
                      gpio_num, i, esp_err_to_name(ret));
-            g_relay_button_states[i].last_state = 0;
-            g_relay_button_states[i].last_press_time = 0;
+            init_button_state(i);
             continue;
         }
         

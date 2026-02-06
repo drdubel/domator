@@ -67,6 +67,13 @@ static void handle_mqtt_command(const char *topic, int topic_len,
     msg.data[cmd_len] = '\0';
     msg.data_len = cmd_len;
     
+    // Prepare mesh_data_t wrapper for sending
+    mesh_data_t data;
+    data.data = (uint8_t *)&msg;
+    data.size = sizeof(mesh_app_msg_t);
+    data.proto = MESH_PROTO_BIN;
+    data.tos = MESH_TOS_P2P;
+    
     // LIMITATION: Direct device addressing not yet implemented
     // ESP-WIFI-MESH requires MAC address for direct routing, but we only have device ID
     // Current workaround: All commands are broadcast to all nodes
@@ -78,11 +85,11 @@ static void handle_mqtt_command(const char *topic, int topic_len,
                  target_device_id);
         ESP_LOGI(TAG, "Broadcasting command to all nodes (intended for %" PRIu32 ")", 
                  target_device_id);
-        esp_mesh_send(NULL, &msg, MESH_DATA_P2P, NULL, 0);
+        esp_mesh_send(NULL, &data, MESH_DATA_P2P, NULL, 0);
     } else {
         // Broadcast to all nodes
         ESP_LOGI(TAG, "Broadcasting command to all nodes");
-        esp_mesh_send(NULL, &msg, MESH_DATA_P2P, NULL, 0);
+        esp_mesh_send(NULL, &data, MESH_DATA_P2P, NULL, 0);
     }
 }
 

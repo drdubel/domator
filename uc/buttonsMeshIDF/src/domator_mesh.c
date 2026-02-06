@@ -119,6 +119,18 @@ void detect_hardware_type(void)
     
     ESP_LOGI(TAG, "Starting hardware detection...");
     
+    // On ESP32-C3, skip auto-detection and default to switch mode
+    // This avoids potential issues with GPIO probing on ESP32-C3
+    // ESP32-C3 is the primary target for switch nodes (per README)
+    // Relay boards are designed for ESP32 (original), not ESP32-C3
+#ifdef CONFIG_IDF_TARGET_ESP32C3
+    ESP_LOGI(TAG, "ESP32-C3 detected - skipping hardware auto-detection");
+    ESP_LOGI(TAG, "Defaulting to SWITCH mode (ESP32-C3 primary use case)");
+    ESP_LOGI(TAG, "To use relay board on ESP32-C3, configure node type via NVS");
+    g_node_type = NODE_TYPE_SWITCH;
+    return;
+#endif
+    
     // First, check for 16-relay board (shift register)
     ESP_LOGD(TAG, "Checking for 16-relay board (shift register pins)...");
     
@@ -155,13 +167,6 @@ void detect_hardware_type(void)
         g_node_type = NODE_TYPE_RELAY;
         g_board_type = BOARD_TYPE_16_RELAY;
         ESP_LOGI(TAG, "Hardware detected as: RELAY_16");
-        
-        // Warn if running on ESP32-C3 (relay boards are designed for ESP32)
-#ifdef CONFIG_IDF_TARGET_ESP32C3
-        ESP_LOGW(TAG, "WARNING: 16-relay board detected on ESP32-C3");
-        ESP_LOGW(TAG, "Relay boards are designed for ESP32, not ESP32-C3");
-        ESP_LOGW(TAG, "Button pins 34/35 are not available - buttons will be disabled");
-#endif
         return;
     }
     
@@ -169,8 +174,6 @@ void detect_hardware_type(void)
     
     // Check for 8-relay board by probing the first relay output pin (GPIO 32)
     // This GPIO is less likely to be used on switch boards
-    // Note: GPIO 32 doesn't exist on ESP32-C3, so this check will fail gracefully
-#ifndef CONFIG_IDF_TARGET_ESP32C3
     ESP_LOGD(TAG, "Probing GPIO 32 for 8-relay board...");
     io_conf.pin_bit_mask = (1ULL << RELAY_8_PIN_0);
     io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
@@ -180,16 +183,13 @@ void detect_hardware_type(void)
         vTaskDelay(pdMS_TO_TICKS(5));
         ESP_LOGD(TAG, "GPIO 32 probe completed");
     }
-#else
-    ESP_LOGD(TAG, "Skipping GPIO 32 probe (not available on ESP32-C3)");
-#endif
     
     // Try to probe GPIO 32 - if it exists and can be configured, might be 8-relay board
     // However, this is not definitive. For production, use NVS configuration.
     
     // Default to switch for now - user should configure via NVS for 8-relay boards
     g_node_type = NODE_TYPE_SWITCH;
-    ESP_LOGI(TAG, "Hardware detected as: SWITCH_C3");
+    ESP_LOGI(TAG, "Hardware detected as: SWITCH");
     ESP_LOGW(TAG, "Cannot distinguish 8-relay from switch - configure via NVS if needed");
 }
 

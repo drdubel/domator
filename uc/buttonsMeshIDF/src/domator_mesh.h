@@ -26,6 +26,11 @@
 #define MESH_MSG_DATA_SIZE              200
 #define LOW_HEAP_THRESHOLD              40000
 #define CRITICAL_HEAP_THRESHOLD         20000
+#define MAX_DEVICES                     50
+#define MAX_ROUTES_PER_BUTTON           10
+#define MAX_RELAY_COMMAND_LEN           10
+#define ROUTING_MUTEX_TIMEOUT_MS        200
+#define STATS_MUTEX_TIMEOUT_MS          10
 
 // GPIO pin definitions for ESP32-C3 switch board
 #define BUTTON_GPIO_0                   0
@@ -127,6 +132,23 @@ typedef struct {
     uint8_t b;
 } led_color_t;
 
+// Routing target for button → relay mapping
+typedef struct {
+    uint32_t target_node_id;
+    char relay_command[MAX_RELAY_COMMAND_LEN];  // e.g., "a", "b1", etc.
+} route_target_t;
+
+// Button routing entry
+typedef struct {
+    route_target_t *targets;
+    uint8_t num_targets;
+} button_route_t;
+
+// Connection map entry for a device
+typedef struct {
+    button_route_t buttons[16];  // Support up to 16 buttons (a-p)
+} device_connections_t;
+
 // ====================
 // Global Variables (extern)
 // ====================
@@ -147,6 +169,14 @@ extern uint32_t g_parent_id;
 // MQTT (root only)
 extern esp_mqtt_client_handle_t g_mqtt_client;
 extern bool g_mqtt_connected;
+
+// Routing configuration (root only)
+extern device_connections_t g_connections[MAX_DEVICES];
+extern uint32_t g_device_ids[MAX_DEVICES];
+extern uint8_t g_num_devices;
+extern uint8_t g_button_types[MAX_DEVICES][16];  // Button type per device (0=toggle, 1=stateful)
+extern SemaphoreHandle_t g_connections_mutex;
+extern SemaphoreHandle_t g_button_types_mutex;
 
 // Button state (switch nodes)
 extern button_state_t g_button_states[NUM_BUTTONS];
@@ -195,6 +225,11 @@ void mqtt_event_handler(void *handler_args, esp_event_base_t base,
 void root_handle_mesh_message(const mesh_addr_t *from, const mesh_app_msg_t *msg);
 void root_publish_status(void);
 void root_forward_leaf_status(const char *json_str);
+void root_parse_connections(const char *json_str);
+void root_parse_button_types(const char *json_str);
+void root_route_button_press(uint32_t from_device, char button, int state);
+int root_find_device_index(uint32_t device_id);
+void root_init_routing(void);
 
 // node_switch.c (switch node functions)
 void button_init(void);

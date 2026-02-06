@@ -41,6 +41,7 @@ static void handle_mqtt_command(const char* topic, int topic_len,
 
     if (!is_relay_cmd && !is_switch_cmd) {
         ESP_LOGW(TAG, "Unknown command topic: %s", topic_str);
+        free(cmd_str);
         return;
     }
 
@@ -98,6 +99,8 @@ static void handle_mqtt_command(const char* topic, int topic_len,
         ESP_LOGI(TAG, "Broadcasting command to all nodes");
         esp_mesh_send(NULL, &mdata, MESH_DATA_P2P, NULL, 0);
     }
+    
+    free(cmd_str);
 }
 
 // ====================
@@ -118,6 +121,7 @@ void mqtt_event_handler(void* handler_args, esp_event_base_t base,
             esp_mqtt_client_subscribe(g_mqtt_client, "/switch/cmd", 0);
             esp_mqtt_client_subscribe(g_mqtt_client, "/relay/cmd/+", 0);
             esp_mqtt_client_subscribe(g_mqtt_client, "/relay/cmd", 0);
+            esp_mqtt_client_subscribe(g_mqtt_client, "/switch/cmd/root", 0);  // For config
             break;
 
         case MQTT_EVENT_DISCONNECTED:
@@ -219,7 +223,7 @@ void root_publish_status(void) {
 
     // Check for low heap
     if (free_heap < LOW_HEAP_THRESHOLD) {
-        if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(STATS_MUTEX_TIMEOUT_MS)) == pdTRUE) {
             g_stats.low_heap_events++;
             xSemaphoreGive(g_stats_mutex);
         }
@@ -347,6 +351,9 @@ void root_handle_mesh_message(const mesh_addr_t* from,
                         }
                     }
                 }
+                
+                // Route button press to configured relay targets (#15)
+                root_route_button_press(msg->device_id, button_char, button_state);
             }
             break;
         }
@@ -421,4 +428,341 @@ void root_handle_mesh_message(const mesh_addr_t* from,
             ESP_LOGW(TAG, "Unknown message type: '%c'", msg->msg_type);
             break;
     }
+}
+
+// ====================
+// Routing Initialization
+// ====================
+
+void root_init_routing(void)
+{
+    ESP_LOGI(TAG, "Initializing routing tables");
+    
+    // Clear all routing data
+    memset(g_connections, 0, sizeof(g_connections));
+    memset(g_device_ids, 0, sizeof(g_device_ids));
+    memset(g_button_types, 0, sizeof(g_button_types));
+    g_num_devices = 0;
+    
+    ESP_LOGI(TAG, "Routing tables initialized");
+}
+
+// ====================
+// Device Index Helper
+// ====================
+
+int root_find_device_index(uint32_t device_id)
+{
+    for (uint8_t i = 0; i < g_num_devices; i++) {
+        if (g_device_ids[i] == device_id) {
+            return i;
+        }
+    }
+    
+    // Add new device if there's space
+    if (g_num_devices < MAX_DEVICES) {
+        g_device_ids[g_num_devices] = device_id;
+        g_num_devices++;
+        ESP_LOGI(TAG, "Added device %" PRIu32 " at index %d", device_id, g_num_devices - 1);
+        return g_num_devices - 1;
+    }
+    
+    ESP_LOGW(TAG, "Max devices reached, cannot add device %" PRIu32, device_id);
+    return -1;
+}
+
+// ====================
+// Connection Map Parsing (#13)
+// ====================
+
+void root_parse_connections(const char *json_str)
+{
+    if (json_str == NULL) {
+        ESP_LOGE(TAG, "Connection JSON is NULL");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Parsing connections configuration");
+    
+    cJSON *root = cJSON_Parse(json_str);
+    if (root == NULL) {
+        ESP_LOGE(TAG, "Failed to parse connections JSON");
+        return;
+    }
+    
+    if (xSemaphoreTake(g_connections_mutex, pdMS_TO_TICKS(ROUTING_MUTEX_TIMEOUT_MS)) != pdTRUE) {
+        ESP_LOGE(TAG, "Failed to acquire connections mutex");
+        cJSON_Delete(root);
+        return;
+    }
+    
+    // Clear existing connections
+    for (uint8_t i = 0; i < MAX_DEVICES; i++) {
+        for (uint8_t b = 0; b < 16; b++) {
+            if (g_connections[i].buttons[b].targets != NULL) {
+                free(g_connections[i].buttons[b].targets);
+                g_connections[i].buttons[b].targets = NULL;
+            }
+            g_connections[i].buttons[b].num_targets = 0;
+        }
+    }
+    
+    // Parse JSON: { "deviceId": { "button": [["targetId", "command"], ...], ... }, ... }
+    cJSON *device_item = NULL;
+    cJSON_ArrayForEach(device_item, root) {
+        const char *device_id_str = device_item->string;
+        uint32_t device_id = parse_device_id_from_string(device_id_str);
+        
+        int dev_idx = root_find_device_index(device_id);
+        if (dev_idx < 0) {
+            continue;
+        }
+        
+        // Iterate through buttons for this device
+        cJSON *button_item = NULL;
+        cJSON_ArrayForEach(button_item, device_item) {
+            const char *button_str = button_item->string;
+            if (strlen(button_str) != 1) continue;
+            
+            char button_char = button_str[0];
+            int button_idx = button_char_to_index(button_char);
+            
+            if (button_idx < 0 || button_idx >= 16) continue;
+            
+            // Count targets
+            int num_targets = cJSON_GetArraySize(button_item);
+            if (num_targets == 0 || num_targets > MAX_ROUTES_PER_BUTTON) {
+                continue;
+            }
+            
+            // Allocate targets array
+            route_target_t *targets = (route_target_t *)malloc(sizeof(route_target_t) * num_targets);
+            if (targets == NULL) {
+                ESP_LOGE(TAG, "Failed to allocate targets for device %" PRIu32 " button %c",
+                         device_id, button_char);
+                continue;
+            }
+            
+            // Parse target array
+            int target_count = 0;
+            cJSON *target_item = NULL;
+            cJSON_ArrayForEach(target_item, button_item) {
+                if (!cJSON_IsArray(target_item) || cJSON_GetArraySize(target_item) < 2) {
+                    continue;
+                }
+                
+                cJSON *target_id_item = cJSON_GetArrayItem(target_item, 0);
+                cJSON *command_item = cJSON_GetArrayItem(target_item, 1);
+                
+                if (target_id_item == NULL || command_item == NULL) {
+                    continue;
+                }
+                
+                uint32_t target_id = 0;
+                if (cJSON_IsString(target_id_item)) {
+                    target_id = parse_device_id_from_string(target_id_item->valuestring);
+                } else if (cJSON_IsNumber(target_id_item)) {
+                    target_id = (uint32_t)target_id_item->valueint;
+                }
+                
+                if (target_id == 0 || !cJSON_IsString(command_item)) {
+                    continue;
+                }
+                
+                targets[target_count].target_node_id = target_id;
+                snprintf(targets[target_count].relay_command,
+                        sizeof(targets[target_count].relay_command),
+                        "%s", command_item->valuestring);
+                
+                target_count++;
+                if (target_count >= num_targets) break;
+            }
+            
+            // Store in connection map
+            g_connections[dev_idx].buttons[button_idx].targets = targets;
+            g_connections[dev_idx].buttons[button_idx].num_targets = target_count;
+            
+            ESP_LOGI(TAG, "Device %" PRIu32 " button '%c' → %d targets",
+                     device_id, button_char, target_count);
+        }
+    }
+    
+    xSemaphoreGive(g_connections_mutex);
+    cJSON_Delete(root);
+    
+    ESP_LOGI(TAG, "Connections parsed successfully");
+}
+
+// ====================
+// Button Types Parsing (#14)
+// ====================
+
+void root_parse_button_types(const char *json_str)
+{
+    if (json_str == NULL) {
+        ESP_LOGE(TAG, "Button types JSON is NULL");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Parsing button types configuration");
+    
+    cJSON *root = cJSON_Parse(json_str);
+    if (root == NULL) {
+        ESP_LOGE(TAG, "Failed to parse button types JSON");
+        return;
+    }
+    
+    if (xSemaphoreTake(g_button_types_mutex, pdMS_TO_TICKS(ROUTING_MUTEX_TIMEOUT_MS)) != pdTRUE) {
+        ESP_LOGE(TAG, "Failed to acquire button types mutex");
+        cJSON_Delete(root);
+        return;
+    }
+    
+    // Clear existing button types
+    memset(g_button_types, 0, sizeof(g_button_types));
+    
+    // Parse JSON: { "deviceId": { "button": type, ... }, ... }
+    cJSON *device_item = NULL;
+    cJSON_ArrayForEach(device_item, root) {
+        const char *device_id_str = device_item->string;
+        uint32_t device_id = parse_device_id_from_string(device_id_str);
+        
+        int dev_idx = root_find_device_index(device_id);
+        if (dev_idx < 0) {
+            continue;
+        }
+        
+        // Iterate through buttons for this device
+        cJSON *button_item = NULL;
+        cJSON_ArrayForEach(button_item, device_item) {
+            const char *button_str = button_item->string;
+            if (strlen(button_str) != 1) continue;
+            
+            char button_char = button_str[0];
+            int button_idx = button_char_to_index(button_char);
+            
+            if (button_idx < 0 || button_idx >= 16) continue;
+            
+            if (cJSON_IsNumber(button_item)) {
+                uint8_t type = (uint8_t)button_item->valueint;
+                g_button_types[dev_idx][button_idx] = type;
+                
+                ESP_LOGI(TAG, "Device %" PRIu32 " button '%c' type=%d",
+                         device_id, button_char, type);
+            }
+        }
+    }
+    
+    xSemaphoreGive(g_button_types_mutex);
+    cJSON_Delete(root);
+    
+    ESP_LOGI(TAG, "Button types parsed successfully");
+}
+
+// ====================
+// Button → Relay Routing (#15)
+// ====================
+
+void root_route_button_press(uint32_t from_device, char button, int state)
+{
+    ESP_LOGI(TAG, "Routing button '%c' from device %" PRIu32 " (state=%d)",
+             button, from_device, state);
+    
+    // Convert button char to index
+    int button_idx = button_char_to_index(button);
+    
+    if (button_idx < 0 || button_idx >= 16) {
+        ESP_LOGW(TAG, "Invalid button character: %c", button);
+        return;
+    }
+    
+    // Find device index
+    int dev_idx = -1;
+    for (uint8_t i = 0; i < g_num_devices; i++) {
+        if (g_device_ids[i] == from_device) {
+            dev_idx = i;
+            break;
+        }
+    }
+    
+    if (dev_idx < 0) {
+        ESP_LOGD(TAG, "Device %" PRIu32 " not in routing table", from_device);
+        return;
+    }
+    
+    // Get button type
+    uint8_t button_type = 0;
+    if (xSemaphoreTake(g_button_types_mutex, pdMS_TO_TICKS(ROUTING_MUTEX_TIMEOUT_MS)) == pdTRUE) {
+        button_type = g_button_types[dev_idx][button_idx];
+        xSemaphoreGive(g_button_types_mutex);
+    }
+    
+    // Get routing targets
+    if (xSemaphoreTake(g_connections_mutex, pdMS_TO_TICKS(ROUTING_MUTEX_TIMEOUT_MS)) != pdTRUE) {
+        ESP_LOGW(TAG, "Failed to acquire connections mutex");
+        return;
+    }
+    
+    button_route_t *route = &g_connections[dev_idx].buttons[button_idx];
+    
+    if (route->num_targets == 0 || route->targets == NULL) {
+        ESP_LOGD(TAG, "No routing targets for device %" PRIu32 " button '%c'",
+                 from_device, button);
+        xSemaphoreGive(g_connections_mutex);
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Found %d routing targets", route->num_targets);
+    
+    // Route to each target
+    for (uint8_t i = 0; i < route->num_targets; i++) {
+        uint32_t target_node = route->targets[i].target_node_id;
+        const char *base_cmd = route->targets[i].relay_command;
+        
+        // Build command based on button type
+        char command[MAX_RELAY_COMMAND_LEN];
+        if (button_type == 1 && state >= 0) {
+            // Stateful button: append state (0 or 1)
+            snprintf(command, sizeof(command), "%s%d", base_cmd, state);
+        } else {
+            // Toggle button: use base command
+            strncpy(command, base_cmd, sizeof(command) - 1);
+            command[sizeof(command) - 1] = '\0';
+        }
+        
+        ESP_LOGI(TAG, "  Routing to node %" PRIu32 ": %s", target_node, command);
+        
+        // Send command via mesh
+        mesh_app_msg_t msg = {0};
+        msg.msg_type = MSG_TYPE_COMMAND;
+        msg.device_id = g_device_id;  // From root
+        
+        size_t cmd_len = strlen(command);
+        if (cmd_len >= sizeof(msg.data)) {
+            cmd_len = sizeof(msg.data) - 1;
+        }
+        memcpy(msg.data, command, cmd_len);
+        msg.data[cmd_len] = '\0';
+        // NOTE: data_len includes null terminator for convenience in receivers
+        // Receivers can treat data as null-terminated string without additional processing
+        msg.data_len = cmd_len + 1;
+        
+        // Prepare mesh_data_t for sending
+        mesh_data_t data;
+        data.data = (uint8_t *)&msg;
+        data.size = sizeof(mesh_app_msg_t);
+        data.proto = MESH_PROTO_BIN;
+        data.tos = MESH_TOS_P2P;
+        
+        // Broadcast to all nodes (target will filter by checking its own device ID)
+        // LIMITATION: We still broadcast as we don't have MAC address mapping
+        esp_mesh_send(NULL, &data, MESH_DATA_P2P, NULL, 0);
+        
+        if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(STATS_MUTEX_TIMEOUT_MS)) == pdTRUE) {
+            g_stats.button_presses++;
+            xSemaphoreGive(g_stats_mutex);
+        }
+    }
+    
+    xSemaphoreGive(g_connections_mutex);
 }

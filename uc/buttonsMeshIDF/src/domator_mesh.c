@@ -27,6 +27,14 @@ uint32_t g_parent_id = 0;
 esp_mqtt_client_handle_t g_mqtt_client = NULL;
 bool g_mqtt_connected = false;
 
+// Routing configuration (root only)
+device_connections_t g_connections[MAX_DEVICES] = {0};
+uint32_t g_device_ids[MAX_DEVICES] = {0};
+uint8_t g_num_devices = 0;
+uint8_t g_button_types[MAX_DEVICES][16] = {0};
+SemaphoreHandle_t g_connections_mutex = NULL;
+SemaphoreHandle_t g_button_types_mutex = NULL;
+
 button_state_t g_button_states[NUM_BUTTONS] = {0};
 const int g_button_pins[NUM_BUTTONS] = {
     BUTTON_GPIO_0, BUTTON_GPIO_1, BUTTON_GPIO_2, BUTTON_GPIO_3,
@@ -177,6 +185,23 @@ void app_main(void)
     if (g_stats_mutex == NULL) {
         ESP_LOGE(TAG, "Failed to create stats mutex");
         return;
+    }
+    
+    // Create routing mutexes for root node
+    if (g_is_root || g_node_type == NODE_TYPE_ROOT) {
+        g_connections_mutex = xSemaphoreCreateMutex();
+        if (g_connections_mutex == NULL) {
+            ESP_LOGE(TAG, "Failed to create connections mutex");
+            return;
+        }
+        
+        g_button_types_mutex = xSemaphoreCreateMutex();
+        if (g_button_types_mutex == NULL) {
+            ESP_LOGE(TAG, "Failed to create button types mutex");
+            return;
+        }
+        
+        root_init_routing();
     }
     
     // Create relay mutex if needed

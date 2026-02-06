@@ -240,13 +240,77 @@ uc/buttonsMeshIDF/
 
 5. **Direct Device Addressing**: Commands are currently broadcast to all nodes. Future: Add direct addressing to specific device IDs.
 
+## Phase 4 Implementation ✓
+
+### Connection Map Parsing (#13)
+- ✓ Dynamic data structures for storing button → relay mappings
+- ✓ JSON parsing using cJSON library
+- ✓ Thread-safe with dedicated mutex (g_connections_mutex)
+- ✓ Supports up to 50 devices and 10 routes per button
+- ✓ Dynamic memory allocation for routing targets
+- ✓ Implementation: `root_parse_connections()` in node_root.c (lines 513-639)
+
+### Button Type Configuration (#14)
+- ✓ Button type storage (0=toggle, 1=stateful)
+- ✓ JSON parsing for button type configuration
+- ✓ Thread-safe with dedicated mutex (g_button_types_mutex)
+- ✓ Per-device, per-button configuration
+- ✓ Implementation: `root_parse_button_types()` in node_root.c (lines 641-711)
+
+### Button → Relay Routing (#15)
+- ✓ Automatic routing based on connection map
+- ✓ Toggle button support (type=0): sends command as-is
+- ✓ Stateful button support (type=1): appends state (0 or 1)
+- ✓ Multi-target routing (one button can control multiple relays)
+- ✓ Command broadcasting via mesh network
+- ✓ Statistics tracking for button presses and routed commands
+- ✓ Implementation: `root_route_button_press()` in node_root.c (lines 713-815)
+- ✓ Integration: Modified `root_handle_mesh_message()` to call routing (lines 314-396)
+
+### MQTT → Node Forwarding (#16)
+- ✓ Already implemented in Phase 3
+- ✓ Enhanced with config message handling
+- ✓ Supports both targeted (/relay/cmd/{deviceId}) and broadcast (/relay/cmd) commands
+- ✓ Implementation: `handle_mqtt_command()` in node_root.c (lines 14-151)
+
+### Relay State → MQTT (#17)
+- ✓ Already implemented in Phase 3
+- ✓ Automatic state confirmation after relay changes
+- ✓ Format: "a0" (relay OFF) or "a1" (relay ON)
+- ✓ Published to `/relay/state/{deviceId}/{relay}`
+- ✓ Implementation: `relay_send_state_confirmation()` in node_relay.c
+
+### Node Status → MQTT (#18)
+- ✓ Already implemented in Phase 1
+- ✓ Root and leaf status reports every 15 seconds
+- ✓ Forwarding adds parentId to leaf reports
+- ✓ Published to `/switch/state/root`
+- ✓ Implementation: `root_forward_leaf_status()` in node_root.c
+
+### MQTT Config Receive (#19)
+- ✓ Subscribe to `/switch/cmd/root` for configuration
+- ✓ JSON config message parsing
+- ✓ Support for "connections" config type
+- ✓ Support for "button_types" config type
+- ✓ Config validation and error handling
+- ✓ Implementation: Enhanced `handle_mqtt_command()` (lines 29-75)
+- ✓ Subscription: Added in `mqtt_event_handler()` (line 158)
+
+### Routing Initialization
+- ✓ Initialization function `root_init_routing()` clears all tables
+- ✓ Device index helper `root_find_device_index()` manages device registry
+- ✓ Automatic device addition when first seen in config
+- ✓ Memory cleanup on config updates
+- ✓ Implementation: Helper functions in node_root.c (lines 472-511)
+
 ## Conclusion
 
 ✓ **Phase 1 Complete**: All root node functionality implemented
 ✓ **Phase 2 Complete**: All switch node functionality implemented
 ✓ **Phase 3 Complete**: All relay node functionality implemented
+✓ **Phase 4 Complete**: All routing logic functionality implemented
 ✓ **Code Quality**: Ready for code review
 ✓ **Documentation**: Comprehensive README and comments
 ✓ **Build System**: Dual build system (ESP-IDF + PlatformIO)
 
-The project is ready for compilation and testing on hardware.
+The project is ready for compilation and testing on hardware. See PHASE4_TESTING.md for detailed testing procedures.

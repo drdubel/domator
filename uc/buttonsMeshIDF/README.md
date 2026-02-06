@@ -300,6 +300,14 @@ After forwarding by root, `parentId` is added.
 
 ## Troubleshooting
 
+### Mesh Crashes After "WiFi STA started"
+If device resets immediately after WiFi STA starts with incomplete mesh log `I (xxx) mesh:`, see [MESH_INIT_CRASH_FIX.md](MESH_INIT_CRASH_FIX.md) for:
+- Memory exhaustion diagnosis
+- WiFi buffer configuration fixes
+- Heap monitoring techniques
+
+**Quick fix:** Use provided `sdkconfig.defaults` which reduces WiFi buffers to prevent memory exhaustion.
+
 ### Relay Board Crashes on Startup
 If relay board resets during mesh initialization with message like `I (xxx) mesh:`, see [RELAY_CRASH_FIX.md](RELAY_CRASH_FIX.md) for:
 - Root cause explanation

@@ -185,6 +185,9 @@ void mesh_init(void)
 {
     ESP_LOGI(TAG, "Initializing mesh network");
     
+    // Log available heap before mesh init
+    ESP_LOGI(TAG, "Free heap before mesh init: %lu bytes", esp_get_free_heap_size());
+    
     // Initialize NVS
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -196,8 +199,19 @@ void mesh_init(void)
     // Initialize WiFi
     wifi_init();
     
+    // Log heap after WiFi init, before mesh
+    ESP_LOGI(TAG, "Free heap after WiFi init: %lu bytes", esp_get_free_heap_size());
+    
+    // Check if we have enough heap for mesh (minimum 80KB recommended)
+    uint32_t free_heap = esp_get_free_heap_size();
+    if (free_heap < 80000) {
+        ESP_LOGW(TAG, "Low heap before mesh init: %lu bytes (80KB+ recommended)", free_heap);
+    }
+    
     // Initialize mesh
+    ESP_LOGI(TAG, "Calling esp_mesh_init()...");
     ESP_ERROR_CHECK(esp_mesh_init());
+    ESP_LOGI(TAG, "esp_mesh_init() completed");
     
     // Register mesh event handler
     ESP_ERROR_CHECK(esp_event_handler_register(MESH_EVENT, ESP_EVENT_ANY_ID,
@@ -215,6 +229,7 @@ void mesh_init(void)
     ESP_ERROR_CHECK(esp_mesh_set_id(&mesh_id));
     
     // Configure mesh
+    ESP_LOGI(TAG, "Configuring mesh parameters...");
     mesh_cfg_t mesh_cfg = MESH_INIT_CONFIG_DEFAULT();
     memcpy((uint8_t *)&mesh_cfg.mesh_id, mesh_id.addr, 6);
     mesh_cfg.channel = 0;  // Auto channel selection
@@ -238,10 +253,12 @@ void mesh_init(void)
     ESP_ERROR_CHECK(esp_mesh_set_self_organized(true, true));
     
     // Start mesh
+    ESP_LOGI(TAG, "Starting mesh network...");
     ESP_ERROR_CHECK(esp_mesh_start());
     
     ESP_LOGI(TAG, "Mesh initialized - SSID: %s, Mesh ID: %02X%02X%02X%02X%02X%02X",
              CONFIG_WIFI_SSID, 
              mesh_id.addr[0], mesh_id.addr[1], mesh_id.addr[2],
              mesh_id.addr[3], mesh_id.addr[4], mesh_id.addr[5]);
+    ESP_LOGI(TAG, "Free heap after mesh init: %lu bytes", esp_get_free_heap_size());
 }

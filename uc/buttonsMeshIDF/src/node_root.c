@@ -59,16 +59,41 @@ static uint32_t parse_device_id_from_string(const char *device_id_str) {
 
 /**
  * Convert button character to array index
- * @param button_char Button character ('a'-'p' for buttons 0-15)
+ * Handles gesture characters:
+ * - Single press: 'a'-'g' (indices 0-6)
+ * - Double press: 'h'-'n' (indices 0-6, mapped from h=0, i=1, ..., n=6)
+ * - Long press: 'o'-'u' (indices 0-6, mapped from o=0, p=1, ..., u=6)
+ * - Extended buttons: 'a'-'p' for 16-button support (indices 0-15)
+ * @param button_char Button character
  * @return Button index (0-15), or -1 if invalid
  */
 static int button_char_to_index(char button_char) {
+    // Single press or extended buttons: 'a'-'p' → 0-15
     if (button_char >= 'a' && button_char <= 'p') {
         return button_char - 'a';
     }
     if (button_char >= 'A' && button_char <= 'P') {
         return button_char - 'A';
     }
+    
+    // Double press: 'h'-'n' → map back to base button 0-6
+    // h=button0, i=button1, ..., n=button6
+    if (button_char >= 'h' && button_char <= 'n') {
+        return button_char - 'h';  // 0-6
+    }
+    if (button_char >= 'H' && button_char <= 'N') {
+        return button_char - 'H';  // 0-6
+    }
+    
+    // Long press: 'o'-'u' → map back to base button 0-6
+    // o=button0, p=button1, ..., u=button6
+    if (button_char >= 'o' && button_char <= 'u') {
+        return button_char - 'o';  // 0-6
+    }
+    if (button_char >= 'O' && button_char <= 'U') {
+        return button_char - 'O';  // 0-6
+    }
+    
     return -1;
 }
 
@@ -89,7 +114,113 @@ static void handle_mqtt_command(const char* topic, int topic_len,
     memcpy(topic_str, topic, copy_len);
     topic_str[copy_len] = '\0';
 
-    // Extract command string
+    ESP_LOGI(TAG, "Processing MQTT command: topic=%s", topic_str);
+
+    // Check if this is a configuration message for root
+    if (strstr(topic_str, "/switch/cmd/root") != NULL) {
+        // Try to parse as JSON configuration
+        if (data[0] == '{') {
+            // Looks like JSON, try to parse it
+            cJSON *json = cJSON_Parse(data);
+            if (json != NULL) {
+                cJSON *type_item = cJSON_GetObjectItem(json, "type");
+                if (type_item != NULL && cJSON_IsString(type_item)) {
+                    const char *config_type = type_item->valuestring;
+                    
+                    if (strcmp(config_type, "connections") == 0) {
+                        ESP_LOGI(TAG, "Received connections configuration");
+                        root_parse_connections(data);
+                    } else if (strcmp(config_type, "button_types") == 0) {
+                        ESP_LOGI(TAG, "Received button types configuration");
+                        root_parse_button_types(data);
+                    } else if (strcmp(config_type, "gesture_config") == 0) {
+                        ESP_LOGI(TAG, "Received gesture configuration for switch nodes");
+                        // Forward gesture config to all switch nodes
+                        cJSON *target_device_item = cJSON_GetObjectItem(json, "device_id");
+                        if (target_device_item != NULL && cJSON_IsString(target_device_item)) {
+                            const char *target_device_str = target_device_item->valuestring;
+                            uint32_t target_device = parse_device_id_from_string(target_device_str);
+                            
+                            if (target_device != 0) {
+                                ESP_LOGI(TAG, "Forwarding gesture config to device %" PRIu32, target_device);
+                                
+                                // Create mesh config message
+                                mesh_app_msg_t msg = {0};
+                                msg.msg_type = MSG_TYPE_CONFIG;
+                                msg.device_id = g_device_id;  // From root
+                                
+                                // Copy JSON data
+                                size_t json_len = strlen(data);
+                                if (json_len >= MESH_MSG_DATA_SIZE) {
+                                    json_len = MESH_MSG_DATA_SIZE - 1;
+                                    ESP_LOGW(TAG, "Gesture config truncated to %d bytes", MESH_MSG_DATA_SIZE - 1);
+                                }
+                                memcpy(msg.data, data, json_len);
+                                msg.data[json_len] = '\0';
+                                msg.data_len = json_len;
+                                
+                                // Broadcast to all nodes (they filter by their device ID)
+                                mesh_data_t mdata;
+                                mdata.data = (uint8_t*)&msg;
+                                mdata.size = sizeof(mesh_app_msg_t);
+                                mdata.proto = MESH_PROTO_BIN;
+                                mdata.tos = MESH_TOS_P2P;
+                                
+                                esp_mesh_send(NULL, &mdata, MESH_DATA_P2P, NULL, 0);
+                                ESP_LOGI(TAG, "Gesture config broadcasted to mesh");
+                            } else {
+                                ESP_LOGW(TAG, "Invalid target device ID in gesture config");
+                            }
+                        } else {
+                            ESP_LOGW(TAG, "No device_id in gesture config, cannot forward");
+                        }
+                    } else if (strcmp(config_type, "ota_trigger") == 0) {
+                        ESP_LOGI(TAG, "Received OTA trigger configuration");
+                        // Forward OTA trigger to all nodes
+                        cJSON *url_item = cJSON_GetObjectItem(json, "url");
+                        if (url_item != NULL && cJSON_IsString(url_item)) {
+                            const char *ota_url = url_item->valuestring;
+                            
+                            ESP_LOGI(TAG, "Broadcasting OTA trigger: %s", ota_url);
+                            
+                            // Create OTA trigger message
+                            mesh_app_msg_t msg = {0};
+                            msg.msg_type = MSG_TYPE_OTA_TRIGGER;
+                            msg.device_id = g_device_id;
+                            
+                            size_t url_len = strlen(ota_url);
+                            if (url_len >= MESH_MSG_DATA_SIZE) {
+                                url_len = MESH_MSG_DATA_SIZE - 1;
+                            }
+                            memcpy(msg.data, ota_url, url_len);
+                            msg.data[url_len] = '\0';
+                            msg.data_len = url_len;
+                            
+                            // Broadcast to all nodes
+                            mesh_data_t mdata;
+                            mdata.data = (uint8_t*)&msg;
+                            mdata.size = sizeof(mesh_app_msg_t);
+                            mdata.proto = MESH_PROTO_BIN;
+                            mdata.tos = MESH_TOS_P2P;
+                            
+                            esp_mesh_send(NULL, &mdata, MESH_DATA_P2P, NULL, 0);
+                            ESP_LOGI(TAG, "OTA trigger broadcasted to mesh");
+                        }
+                    } else {
+                        ESP_LOGW(TAG, "Unknown config type: %s", config_type);
+                    }
+                } else {
+                    ESP_LOGW(TAG, "JSON missing 'type' field");
+                }
+                cJSON_Delete(json);
+            } else {
+                ESP_LOGW(TAG, "Failed to parse JSON configuration");
+            }
+            return;  // Configuration handled, return early
+        }
+    }
+
+    // Extract command string for non-JSON commands
     char cmd_str[64];
     copy_len =
         (data_len < sizeof(cmd_str) - 1) ? data_len : sizeof(cmd_str) - 1;

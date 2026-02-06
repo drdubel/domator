@@ -19,6 +19,10 @@
 #define BUTTON_DEBOUNCE_MS              250
 #define LED_UPDATE_INTERVAL_MS          100
 #define LED_FLASH_DURATION_MS           50
+#define DOUBLE_PRESS_WINDOW_MS          400
+#define LONG_PRESS_THRESHOLD_MS         800
+#define ROOT_LOSS_RESET_TIMEOUT_MS      300000  // 5 minutes
+#define PEER_HEALTH_CHECK_INTERVAL_MS   30000   // 30 seconds
 
 #define NUM_BUTTONS                     7
 #define MAX_QUEUE_SIZE                  30
@@ -81,6 +85,8 @@
 #define MSG_TYPE_ACK                    'A'
 #define MSG_TYPE_RELAY_STATE            'R'  // Relay state confirmation
 #define MSG_TYPE_SYNC_REQUEST           'Y'  // Request state sync
+#define MSG_TYPE_CONFIG                 'G'  // Configuration message (gesture config)
+#define MSG_TYPE_OTA_TRIGGER            'O'  // OTA update trigger
 
 // Node types
 typedef enum {
@@ -95,6 +101,14 @@ typedef enum {
     BOARD_TYPE_8_RELAY = 0,
     BOARD_TYPE_16_RELAY
 } board_type_t;
+
+// Button gesture types
+typedef enum {
+    GESTURE_NONE = 0,
+    GESTURE_SINGLE,
+    GESTURE_DOUBLE,
+    GESTURE_LONG
+} gesture_type_t;
 
 // ====================
 // Data Structures
@@ -123,6 +137,10 @@ typedef struct {
 typedef struct {
     int last_state;
     uint32_t last_press_time;
+    uint32_t press_start_time;
+    uint32_t last_release_time;
+    bool waiting_for_double;
+    gesture_type_t pending_gesture;
 } button_state_t;
 
 // LED color
@@ -148,6 +166,20 @@ typedef struct {
 typedef struct {
     button_route_t buttons[16];  // Support up to 16 buttons (a-p)
 } device_connections_t;
+
+// Gesture configuration per button (NVS-persisted)
+typedef struct {
+    uint8_t enabled_gestures;  // Bitmask: bit 0=single, bit 1=double, bit 2=long
+} button_gesture_config_t;
+
+// Peer health tracking
+typedef struct {
+    uint32_t device_id;
+    uint32_t last_seen;
+    uint32_t disconnect_count;
+    int8_t last_rssi;
+    bool is_alive;
+} peer_health_t;
 
 // ====================
 // Global Variables (extern)
@@ -181,6 +213,8 @@ extern SemaphoreHandle_t g_button_types_mutex;
 // Button state (switch nodes)
 extern button_state_t g_button_states[NUM_BUTTONS];
 extern const int g_button_pins[NUM_BUTTONS];
+extern button_gesture_config_t g_gesture_config[NUM_BUTTONS];
+extern uint32_t g_last_root_contact;
 
 // Relay state (relay nodes)
 extern board_type_t g_board_type;
@@ -189,6 +223,8 @@ extern button_state_t g_relay_button_states[NUM_RELAY_BUTTONS];
 extern const int g_relay_8_pins[MAX_RELAYS_8];
 extern const int g_relay_button_pins[NUM_RELAY_BUTTONS];
 extern SemaphoreHandle_t g_relay_mutex;
+extern peer_health_t g_peer_health[MAX_DEVICES];
+extern uint8_t g_peer_count;
 
 // Queues and mutexes
 extern QueueHandle_t g_mesh_tx_queue;
@@ -238,6 +274,11 @@ void led_init(void);
 void led_task(void *arg);
 void led_set_color(uint8_t r, uint8_t g, uint8_t b);
 void led_flash_cyan(void);
+void gesture_config_load(void);
+void gesture_config_save(void);
+void gesture_config_apply(const char *json_str);
+char gesture_to_char(int button_index, gesture_type_t gesture);
+bool is_gesture_enabled(int button_index, gesture_type_t gesture);
 
 // node_relay.c (relay node functions)
 void relay_board_detect(void);
@@ -251,5 +292,16 @@ void relay_send_state_confirmation(int index);
 void relay_button_init(void);
 void relay_button_task(void *arg);
 void relay_handle_command(const char *cmd_data);
+
+// OTA functions (all nodes)
+void ota_init(void);
+void ota_start_update(const char *url);
+void ota_trigger_from_mesh(const char *url);
+
+// Health monitoring (all nodes)
+void health_monitor_task(void *arg);
+void peer_health_update(uint32_t device_id, int8_t rssi);
+void peer_health_check_task(void *arg);
+void root_loss_check_task(void *arg);
 
 #endif // DOMATOR_MESH_H

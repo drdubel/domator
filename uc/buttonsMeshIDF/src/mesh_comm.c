@@ -117,6 +117,16 @@ void handle_mesh_recv(const mesh_addr_t *from, const mesh_app_msg_t *msg)
             if (g_node_type == NODE_TYPE_RELAY) {
                 relay_sync_all_states();
             }
+        } else if (msg->msg_type == MSG_TYPE_CONFIG) {
+            ESP_LOGI(TAG, "Received gesture config from root");
+            
+            // Handle gesture config for switch nodes
+            if (g_node_type == NODE_TYPE_SWITCH) {
+                gesture_config_apply((char *)msg->data);
+            }
+        } else if (msg->msg_type == MSG_TYPE_OTA_TRIGGER) {
+            ESP_LOGI(TAG, "Received OTA trigger from root");
+            ota_trigger_from_mesh((char *)msg->data);
         } else {
             ESP_LOGD(TAG, "Non-root node received mesh message type '%c'", msg->msg_type);
         }

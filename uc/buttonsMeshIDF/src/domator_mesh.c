@@ -40,6 +40,8 @@ const int g_button_pins[NUM_BUTTONS] = {
     BUTTON_GPIO_0, BUTTON_GPIO_1, BUTTON_GPIO_2, BUTTON_GPIO_3,
     BUTTON_GPIO_4, BUTTON_GPIO_5, BUTTON_GPIO_6
 };
+button_gesture_config_t g_gesture_config[NUM_BUTTONS] = {0};
+uint32_t g_last_root_contact = 0;
 
 // Relay node globals
 board_type_t g_board_type = BOARD_TYPE_8_RELAY;
@@ -54,6 +56,8 @@ const int g_relay_button_pins[NUM_RELAY_BUTTONS] = {
     RELAY_8_BUTTON_4, RELAY_8_BUTTON_5, RELAY_8_BUTTON_6, RELAY_8_BUTTON_7
 };
 SemaphoreHandle_t g_relay_mutex = NULL;
+peer_health_t g_peer_health[MAX_DEVICES] = {0};
+uint8_t g_peer_count = 0;
 
 QueueHandle_t g_mesh_tx_queue = NULL;
 SemaphoreHandle_t g_stats_mutex = NULL;

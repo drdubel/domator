@@ -1,0 +1,17 @@
+idf_component_register(
+    SRCS 
+        "domator_mesh.c"
+        "mesh_init.c"
+        "mesh_comm.c"
+        "node_root.c"
+        "node_switch.c"
+    INCLUDE_DIRS "."
+    REQUIRES 
+        esp_wifi 
+        esp_event 
+        esp_netif 
+        nvs_flash 
+        mqtt 
+        json 
+        led_strip
+)

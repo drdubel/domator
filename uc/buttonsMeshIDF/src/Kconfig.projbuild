@@ -1,0 +1,47 @@
+menu "Domator Mesh Configuration"
+
+    config WIFI_SSID
+        string "WiFi SSID"
+        default "domator_mesh"
+        help
+            SSID (network name) for the mesh network.
+
+    config WIFI_PASSWORD
+        string "WiFi Password"
+        default "domator123"
+        help
+            WiFi password (WPA or WPA2) for the mesh network.
+
+    config MESH_ID
+        string "Mesh ID"
+        default "DMESH0"
+        help
+            Mesh network ID (exactly 6 ASCII characters).
+            This is used as a binary identifier for the mesh network.
+            Example: "DMESH0" or "MESH:1"
+
+    config MQTT_BROKER_URL
+        string "MQTT Broker URL"
+        default "mqtt://192.168.1.100"
+        help
+            URL of the MQTT broker.
+
+    config MQTT_BROKER_PORT
+        int "MQTT Broker Port"
+        default 1883
+        help
+            Port of the MQTT broker.
+
+    config MQTT_USERNAME
+        string "MQTT Username"
+        default "domator"
+        help
+            Username for MQTT authentication.
+
+    config MQTT_PASSWORD
+        string "MQTT Password"
+        default "domator"
+        help
+            Password for MQTT authentication.
+
+endmenu

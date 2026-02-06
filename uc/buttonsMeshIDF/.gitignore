@@ -1,0 +1,21 @@
+# Build artifacts
+build/
+.pio/
+.pioenvs/
+.piolibdeps/
+.vscode/
+.cache/
+
+# ESP-IDF specific
+sdkconfig
+sdkconfig.old
+dependencies.lock
+
+# Compiled files
+*.o
+*.a
+*.so
+*.d
+
+# Logs
+*.log

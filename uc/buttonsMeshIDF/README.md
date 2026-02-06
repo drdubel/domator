@@ -41,6 +41,12 @@ This project replaces the previous 3 separate ESP-NOW Arduino firmwares (rootLig
 ### LED
 - NeoPixel: GPIO 8
 
+## Partition Table
+
+Dual 1408K OTA partitions for reliable firmware updates:
+- ota_0: 1408K at 0x10000
+- ota_1: 1408K at 0x170000
+
 ## MQTT Topics
 
 ### Published by Root
@@ -86,7 +92,7 @@ Configuration is done via `menuconfig` or by editing `sdkconfig.defaults`:
 uc/buttonsMeshIDF/
 ├── CMakeLists.txt              # Top-level build config
 ├── platformio.ini              # PlatformIO config (3 environments)
-├── partitions.csv              # 3MB app partition
+├── partitions.csv              # Dual 1408K OTA partitions
 ├── sdkconfig.defaults          # Default SDK config
 ├── README.md                   # This file
 └── src/

@@ -23,6 +23,7 @@
 #define NUM_BUTTONS                     7
 #define MAX_QUEUE_SIZE                  30
 #define MESH_TX_QUEUE_SIZE              20
+#define MESH_MSG_DATA_SIZE              200
 #define LOW_HEAP_THRESHOLD              40000
 #define CRITICAL_HEAP_THRESHOLD         20000
 
@@ -59,7 +60,7 @@ typedef struct {
     uint8_t msg_type;        // Message type (B/S/C/A)
     uint32_t device_id;      // Sender device ID
     uint16_t data_len;       // Length of data
-    uint8_t data[200];       // Payload data
+    uint8_t data[MESH_MSG_DATA_SIZE];       // Payload data
 } __attribute__((packed)) mesh_app_msg_t;
 
 // Device statistics

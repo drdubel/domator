@@ -155,8 +155,8 @@ void led_set_color(uint8_t r, uint8_t g, uint8_t b)
         return;
     }
     
-    // Reduce brightness (equivalent to Adafruit brightness=5, which is ~2% of 255)
-    // Divide by 51 to get ~2% brightness
+    // Reduce brightness to ~2% (divide by 51 to achieve 1/51 = ~2% brightness)
+    // This is equivalent to Adafruit NeoPixel brightness setting of 5/255
     r = r / 51;
     g = g / 51;
     b = b / 51;

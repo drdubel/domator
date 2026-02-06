@@ -220,7 +220,7 @@ void status_report_task(void *arg)
                     msg.device_id = g_device_id;
                     msg.data_len = strlen(json_str);
                     
-                    if (msg.data_len < sizeof(msg.data) - 1) {
+                    if (msg.data_len <= sizeof(msg.data) - 1) {
                         memcpy(msg.data, json_str, msg.data_len);
                         msg.data[msg.data_len] = '\0';
                         

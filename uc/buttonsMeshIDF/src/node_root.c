@@ -791,7 +791,8 @@ void root_route_button_press(uint32_t from_device, char button, int state)
             // Manually construct string to avoid format-truncation warning
             size_t base_len = strlen(base_cmd);
             // Check if base_cmd + digit + null terminator fits
-            if (base_len + 1 < sizeof(command)) {  // +1 for digit, +1 implicit for null
+            // (base_len + 1 < sizeof means we have room for base_len + 1 + 1 = base_len + 2)
+            if (base_len + 1 < sizeof(command)) {
                 // Copy base command (guaranteed to fit with null terminator)
                 memcpy(command, base_cmd, base_len);
                 command[base_len] = '0' + button_state;

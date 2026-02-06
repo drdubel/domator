@@ -149,7 +149,7 @@ void relay_send_state_confirmation(int index)
 {
     bool state = relay_get_state(index);
     
-    // Create relay state message: "A0" means relay 'a' is OFF, "A1" means ON
+    // Create relay state message: "a0" means relay 'a' is OFF, "a1" means ON
     mesh_app_msg_t msg = {0};
     msg.msg_type = MSG_TYPE_RELAY_STATE;
     msg.device_id = g_device_id;

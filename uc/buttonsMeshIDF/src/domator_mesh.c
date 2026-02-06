@@ -139,7 +139,7 @@ void detect_hardware_type(void)
     // This GPIO is less likely to be used on switch boards
     io_conf.pin_bit_mask = (1ULL << RELAY_8_PIN_0);
     io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
-    io_conf.pull_down_en = GPIO_PULLUP_DISABLE;
+    io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
     gpio_config(&io_conf);
     vTaskDelay(pdMS_TO_TICKS(5));
     

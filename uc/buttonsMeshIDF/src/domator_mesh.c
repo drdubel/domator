@@ -66,10 +66,13 @@ void generate_firmware_hash(void)
     const esp_app_desc_t *app_desc = esp_app_get_description();
     
     if (app_desc != NULL) {
-        // Use the app version and SHA256 hash from partition
-        snprintf(g_firmware_hash, sizeof(g_firmware_hash), "%.8s", app_desc->version);
-        ESP_LOGI(TAG, "Firmware version: %s, project: %s", 
-                 app_desc->version, app_desc->project_name);
+        // Use the SHA256 hash from the ELF file for a true firmware hash
+        // Convert first 16 bytes to hex string (32 chars)
+        for (int i = 0; i < 16; i++) {
+            sprintf(&g_firmware_hash[i * 2], "%02x", app_desc->app_elf_sha256[i]);
+        }
+        ESP_LOGI(TAG, "Firmware version: %s, hash: %s", 
+                 app_desc->version, g_firmware_hash);
     } else {
         snprintf(g_firmware_hash, sizeof(g_firmware_hash), "unknown");
         ESP_LOGW(TAG, "Could not read app description");

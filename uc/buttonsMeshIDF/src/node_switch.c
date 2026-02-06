@@ -156,10 +156,10 @@ void led_set_color(uint8_t r, uint8_t g, uint8_t b)
     }
     
     // Reduce brightness (equivalent to Adafruit brightness=5, which is ~2% of 255)
-    // Apply brightness factor of 0.02
-    r = (r * 5) / 255;
-    g = (g * 5) / 255;
-    b = (b * 5) / 255;
+    // Divide by 51 to get ~2% brightness
+    r = r / 51;
+    g = g / 51;
+    b = b / 51;
     
     g_current_led_color.r = r;
     g_current_led_color.g = g;

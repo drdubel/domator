@@ -14,9 +14,11 @@ menu "Domator Mesh Configuration"
 
     config MESH_ID
         string "Mesh ID"
-        default "MESH:domator"
+        default "DMESH0"
         help
-            Mesh network ID (6 bytes).
+            Mesh network ID (exactly 6 ASCII characters).
+            This is used as a binary identifier for the mesh network.
+            Example: "DMESH0" or "MESH:1"
 
     config MQTT_BROKER_URL
         string "MQTT Broker URL"

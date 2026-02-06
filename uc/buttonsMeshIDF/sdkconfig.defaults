@@ -1,6 +1,7 @@
 # Compiler optimization for size
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y
-CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_DISABLE=y
+# Note: Assertions are kept enabled for safety. Disable for production with:
+# CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_DISABLE=y
 
 # ESP-WIFI-MESH configuration
 CONFIG_ESP_WIFI_MESH_ENABLE=y

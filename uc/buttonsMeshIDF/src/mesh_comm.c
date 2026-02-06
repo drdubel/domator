@@ -3,6 +3,7 @@
 #include <inttypes.h>
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_wifi.h"
 #include "cJSON.h"
 
 static const char *TAG = "MESH_COMM";
@@ -186,6 +187,10 @@ void status_report_task(void *arg)
                 // Get free heap
                 uint32_t free_heap = esp_get_free_heap_size();
                 
+                // Get RSSI from parent connection
+                int8_t rssi = 0;
+                esp_wifi_sta_get_rssi(&rssi);
+                
                 // Check for low heap
                 if (free_heap < LOW_HEAP_THRESHOLD) {
                     if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
@@ -201,7 +206,7 @@ void status_report_task(void *arg)
                 cJSON_AddNumberToObject(json, "uptime", uptime);
                 cJSON_AddStringToObject(json, "firmware", g_firmware_hash);
                 cJSON_AddNumberToObject(json, "clicks", g_stats.button_presses);
-                cJSON_AddNumberToObject(json, "rssi", 0);  // TODO: Get actual RSSI
+                cJSON_AddNumberToObject(json, "rssi", rssi);
                 cJSON_AddNumberToObject(json, "disconnects", g_stats.mesh_disconnects);
                 cJSON_AddNumberToObject(json, "lowHeap", g_stats.low_heap_events);
                 
@@ -215,7 +220,7 @@ void status_report_task(void *arg)
                     msg.device_id = g_device_id;
                     msg.data_len = strlen(json_str);
                     
-                    if (msg.data_len < sizeof(msg.data)) {
+                    if (msg.data_len < sizeof(msg.data) - 1) {
                         memcpy(msg.data, json_str, msg.data_len);
                         msg.data[msg.data_len] = '\0';
                         

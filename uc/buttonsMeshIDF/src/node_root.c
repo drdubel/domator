@@ -67,9 +67,21 @@ void mqtt_init(void)
     
     ESP_LOGI(TAG, "Initializing MQTT client");
     
+    // Build complete MQTT broker URI
+    char broker_uri[128];
+    const char *url = CONFIG_MQTT_BROKER_URL;
+    
+    // Check if URL already includes port
+    if (strstr(url, "mqtt://") != NULL && strchr(url + 7, ':') == NULL) {
+        // No port in URL, append it
+        snprintf(broker_uri, sizeof(broker_uri), "%s:%d", url, CONFIG_MQTT_BROKER_PORT);
+    } else {
+        // URL already complete or has port
+        snprintf(broker_uri, sizeof(broker_uri), "%s", url);
+    }
+    
     esp_mqtt_client_config_t mqtt_cfg = {
-        .broker.address.uri = CONFIG_MQTT_BROKER_URL,
-        .broker.address.port = CONFIG_MQTT_BROKER_PORT,
+        .broker.address.uri = broker_uri,
         .credentials.username = CONFIG_MQTT_USERNAME,
         .credentials.authentication.password = CONFIG_MQTT_PASSWORD,
     };

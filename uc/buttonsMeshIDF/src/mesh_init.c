@@ -10,10 +10,6 @@
 
 static const char *TAG = "MESH_INIT";
 
-// Mesh configuration
-static uint8_t g_mesh_id[6] = {0};
-static bool g_mesh_started = false;
-
 // ====================
 // WiFi Event Handler
 // ====================
@@ -84,8 +80,8 @@ static void mesh_event_handler(void *arg, esp_event_base_t event_base,
             g_mesh_connected = true;
             g_mesh_layer = connected->self_layer;
             
-            // Store parent device ID
-            esp_mesh_get_id(&g_parent_id);
+            // For now, we'll derive parent ID from MAC when needed
+            // The connected structure contains parent MAC info
             
             ESP_LOGI(TAG, "Parent connected - Layer: %d", g_mesh_layer);
             break;
@@ -209,17 +205,18 @@ void mesh_init(void)
     
     // Set mesh ID from config
     const char *mesh_id_str = CONFIG_MESH_ID;
+    mesh_addr_t mesh_id;
     if (strlen(mesh_id_str) >= 6) {
-        memcpy(g_mesh_id, mesh_id_str, 6);
+        memcpy(mesh_id.addr, mesh_id_str, 6);
     } else {
         // Default mesh ID
-        memcpy(g_mesh_id, "DMESH0", 6);
+        memcpy(mesh_id.addr, "DMESH0", 6);
     }
-    ESP_ERROR_CHECK(esp_mesh_set_id(&g_mesh_id));
+    ESP_ERROR_CHECK(esp_mesh_set_id(&mesh_id));
     
     // Configure mesh
     mesh_cfg_t mesh_cfg = MESH_INIT_CONFIG_DEFAULT();
-    memcpy((uint8_t *)&mesh_cfg.mesh_id, g_mesh_id, 6);
+    memcpy((uint8_t *)&mesh_cfg.mesh_id, mesh_id.addr, 6);
     mesh_cfg.channel = 0;  // Auto channel selection
     mesh_cfg.router.ssid_len = strlen(CONFIG_WIFI_SSID);
     memcpy((uint8_t *)&mesh_cfg.router.ssid, CONFIG_WIFI_SSID, mesh_cfg.router.ssid_len);
@@ -245,6 +242,6 @@ void mesh_init(void)
     
     ESP_LOGI(TAG, "Mesh initialized - SSID: %s, Mesh ID: %02X%02X%02X%02X%02X%02X",
              CONFIG_WIFI_SSID, 
-             g_mesh_id[0], g_mesh_id[1], g_mesh_id[2],
-             g_mesh_id[3], g_mesh_id[4], g_mesh_id[5]);
+             mesh_id.addr[0], mesh_id.addr[1], mesh_id.addr[2],
+             mesh_id.addr[3], mesh_id.addr[4], mesh_id.addr[5]);
 }

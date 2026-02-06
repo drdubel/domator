@@ -105,7 +105,6 @@ static void handle_mqtt_command(const char* topic, int topic_len,
 
     if (!is_relay_cmd && !is_switch_cmd) {
         ESP_LOGW(TAG, "Unknown command topic: %s", topic_str);
-        free(cmd_str);
         return;
     }
 
@@ -163,8 +162,6 @@ static void handle_mqtt_command(const char* topic, int topic_len,
         ESP_LOGI(TAG, "Broadcasting command to all nodes");
         esp_mesh_send(NULL, &mdata, MESH_DATA_P2P, NULL, 0);
     }
-    
-    free(cmd_str);
 }
 
 // ====================
@@ -789,7 +786,18 @@ void root_route_button_press(uint32_t from_device, char button, int state)
         char command[MAX_RELAY_COMMAND_LEN];
         if (button_type == 1 && state >= 0) {
             // Stateful button: append state (0 or 1)
-            snprintf(command, sizeof(command), "%s%d", base_cmd, state);
+            // Ensure state is 0 or 1 for stateful buttons
+            int button_state = (state > 0) ? 1 : 0;
+            // Use explicit length check to satisfy compiler
+            size_t base_len = strlen(base_cmd);
+            if (base_len + 2 < sizeof(command)) {  // +2 for digit and null terminator
+                snprintf(command, sizeof(command), "%s%d", base_cmd, button_state);
+            } else {
+                // Base command too long, truncate it
+                strncpy(command, base_cmd, sizeof(command) - 2);
+                command[sizeof(command) - 2] = '0' + button_state;
+                command[sizeof(command) - 1] = '\0';
+            }
         } else {
             // Toggle button: use base command
             strncpy(command, base_cmd, sizeof(command) - 1);

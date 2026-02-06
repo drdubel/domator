@@ -6,6 +6,7 @@
 #include "esp_app_format.h"
 #include "esp_ota_ops.h"
 #include "driver/gpio.h"
+#include "esp_task_wdt.h"
 
 static const char *TAG = "DOMATOR_MESH";
 
@@ -117,7 +118,14 @@ void detect_hardware_type(void)
     // reliably because both use similar GPIO configurations. Consider using NVS
     // configuration or a dedicated detection pin for production deployments.
     
+    ESP_LOGI(TAG, "Starting hardware detection...");
+    
+    // Feed watchdog to prevent timeout during detection
+    esp_task_wdt_reset();
+    
     // First, check for 16-relay board (shift register)
+    ESP_LOGD(TAG, "Checking for 16-relay board (shift register pins)...");
+    
     gpio_config_t io_conf = {
         .pin_bit_mask = ((1ULL << RELAY_16_PIN_DATA) | 
                          (1ULL << RELAY_16_PIN_CLOCK) | 
@@ -128,13 +136,25 @@ void detect_hardware_type(void)
         .intr_type = GPIO_INTR_DISABLE
     };
     
-    gpio_config(&io_conf);
+    esp_err_t ret = gpio_config(&io_conf);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to configure shift register pins: %s", esp_err_to_name(ret));
+        g_node_type = NODE_TYPE_SWITCH;
+        ESP_LOGI(TAG, "Hardware detected as: SWITCH (default due to config error)");
+        return;
+    }
+    
+    ESP_LOGD(TAG, "Shift register pins configured, waiting for settle...");
     vTaskDelay(pdMS_TO_TICKS(10));
+    esp_task_wdt_reset();
     
     // Read the pins - if all high with pullup, likely shift register present
+    ESP_LOGD(TAG, "Reading shift register pin states...");
     int data_val = gpio_get_level(RELAY_16_PIN_DATA);
     int clock_val = gpio_get_level(RELAY_16_PIN_CLOCK);
     int latch_val = gpio_get_level(RELAY_16_PIN_LATCH);
+    
+    ESP_LOGD(TAG, "Pin states: DATA=%d, CLOCK=%d, LATCH=%d", data_val, clock_val, latch_val);
     
     if (data_val && clock_val && latch_val) {
         g_node_type = NODE_TYPE_RELAY;
@@ -147,16 +167,29 @@ void detect_hardware_type(void)
         ESP_LOGW(TAG, "Relay boards are designed for ESP32, not ESP32-C3");
         ESP_LOGW(TAG, "Button pins 34/35 are not available - buttons will be disabled");
 #endif
+        esp_task_wdt_reset();
         return;
     }
     
+    ESP_LOGD(TAG, "16-relay board not detected, checking for 8-relay...");
+    esp_task_wdt_reset();
+    
     // Check for 8-relay board by probing the first relay output pin (GPIO 32)
     // This GPIO is less likely to be used on switch boards
+    // Note: GPIO 32 doesn't exist on ESP32-C3, so this check will fail gracefully
+#ifndef CONFIG_IDF_TARGET_ESP32C3
+    ESP_LOGD(TAG, "Probing GPIO 32 for 8-relay board...");
     io_conf.pin_bit_mask = (1ULL << RELAY_8_PIN_0);
     io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
     io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
-    gpio_config(&io_conf);
-    vTaskDelay(pdMS_TO_TICKS(5));
+    ret = gpio_config(&io_conf);
+    if (ret == ESP_OK) {
+        vTaskDelay(pdMS_TO_TICKS(5));
+        ESP_LOGD(TAG, "GPIO 32 probe completed");
+    }
+#else
+    ESP_LOGD(TAG, "Skipping GPIO 32 probe (not available on ESP32-C3)");
+#endif
     
     // Try to probe GPIO 32 - if it exists and can be configured, might be 8-relay board
     // However, this is not definitive. For production, use NVS configuration.
@@ -165,6 +198,7 @@ void detect_hardware_type(void)
     g_node_type = NODE_TYPE_SWITCH;
     ESP_LOGI(TAG, "Hardware detected as: SWITCH_C3");
     ESP_LOGW(TAG, "Cannot distinguish 8-relay from switch - configure via NVS if needed");
+    esp_task_wdt_reset();
 }
 
 // ====================

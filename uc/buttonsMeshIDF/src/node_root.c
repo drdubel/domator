@@ -20,6 +20,7 @@ static const char* TAG = "NODE_ROOT";
  */
 static uint32_t parse_device_id_from_string(const char *device_id_str) {
     if (device_id_str == NULL) {
+        ESP_LOGW(TAG, "parse_device_id_from_string: NULL input");
         return 0;
     }
     
@@ -27,7 +28,20 @@ static uint32_t parse_device_id_from_string(const char *device_id_str) {
     unsigned long parsed = strtoul(device_id_str, &endptr, 10);
     
     // Check if parsing was successful and string was fully consumed
-    if (*endptr != '\0' || parsed == 0) {
+    if (*endptr != '\0') {
+        ESP_LOGW(TAG, "parse_device_id_from_string: Invalid format '%s'", device_id_str);
+        return 0;
+    }
+    
+    // Check if value is 0 (used as error sentinel in codebase)
+    if (parsed == 0) {
+        ESP_LOGW(TAG, "parse_device_id_from_string: Device ID 0 is invalid");
+        return 0;
+    }
+    
+    // Check for overflow (device IDs must fit in uint32_t)
+    if (parsed > UINT32_MAX) {
+        ESP_LOGW(TAG, "parse_device_id_from_string: Value %lu exceeds UINT32_MAX", parsed);
         return 0;
     }
     

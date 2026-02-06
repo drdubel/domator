@@ -1,5 +1,7 @@
 #include <inttypes.h>
+#include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 
 #include "cJSON.h"
 #include "domator_mesh.h"
@@ -7,6 +9,68 @@
 #include "esp_timer.h"
 
 static const char* TAG = "NODE_ROOT";
+
+// ====================
+// Helper Functions
+// ====================
+
+/**
+ * Parse device ID from string representation
+ * @param device_id_str String representation of device ID (e.g., "12345678")
+ * @return Parsed device ID as uint32_t, or 0 if parsing fails
+ */
+static uint32_t parse_device_id_from_string(const char *device_id_str) {
+    if (device_id_str == NULL) {
+        ESP_LOGW(TAG, "parse_device_id_from_string: NULL input");
+        return 0;
+    }
+    
+    char *endptr;
+    errno = 0;  // Reset errno before strtoul
+    unsigned long parsed = strtoul(device_id_str, &endptr, 10);
+    
+    // Check for overflow
+    if (errno == ERANGE) {
+        ESP_LOGW(TAG, "parse_device_id_from_string: Value overflow in '%s'", device_id_str);
+        return 0;
+    }
+    
+    // Check if parsing was successful and string was fully consumed
+    if (*endptr != '\0') {
+        ESP_LOGW(TAG, "parse_device_id_from_string: Invalid format '%s'", device_id_str);
+        return 0;
+    }
+    
+    // Check if value is 0 (used as error sentinel in codebase)
+    if (parsed == 0) {
+        ESP_LOGW(TAG, "parse_device_id_from_string: Device ID 0 is invalid");
+        return 0;
+    }
+    
+    // Check for overflow (device IDs must fit in uint32_t)
+    // On 64-bit platforms, unsigned long may be larger than uint32_t
+    if (parsed > UINT32_MAX) {
+        ESP_LOGW(TAG, "parse_device_id_from_string: Value %lu exceeds UINT32_MAX", parsed);
+        return 0;
+    }
+    
+    return (uint32_t)parsed;
+}
+
+/**
+ * Convert button character to array index
+ * @param button_char Button character ('a'-'p' for buttons 0-15)
+ * @return Button index (0-15), or -1 if invalid
+ */
+static int button_char_to_index(char button_char) {
+    if (button_char >= 'a' && button_char <= 'p') {
+        return button_char - 'a';
+    }
+    if (button_char >= 'A' && button_char <= 'P') {
+        return button_char - 'A';
+    }
+    return -1;
+}
 
 // ====================
 // MQTT Command Handling
@@ -41,7 +105,6 @@ static void handle_mqtt_command(const char* topic, int topic_len,
 
     if (!is_relay_cmd && !is_switch_cmd) {
         ESP_LOGW(TAG, "Unknown command topic: %s", topic_str);
-        free(cmd_str);
         return;
     }
 
@@ -99,8 +162,6 @@ static void handle_mqtt_command(const char* topic, int topic_len,
         ESP_LOGI(TAG, "Broadcasting command to all nodes");
         esp_mesh_send(NULL, &mdata, MESH_DATA_P2P, NULL, 0);
     }
-    
-    free(cmd_str);
 }
 
 // ====================
@@ -353,7 +414,9 @@ void root_handle_mesh_message(const mesh_addr_t* from,
                 }
                 
                 // Route button press to configured relay targets (#15)
-                root_route_button_press(msg->device_id, button_char, button_state);
+                // Note: Pass 1 to indicate button press. For toggle buttons (type 0),
+                // state is ignored. For stateful buttons (type 1), this sends state=1.
+                root_route_button_press(msg->device_id, button_char, 1);
             }
             break;
         }
@@ -723,9 +786,25 @@ void root_route_button_press(uint32_t from_device, char button, int state)
         char command[MAX_RELAY_COMMAND_LEN];
         if (button_type == 1 && state >= 0) {
             // Stateful button: append state (0 or 1)
-            snprintf(command, sizeof(command), "%s%d", base_cmd, state);
+            // Normalize state: 0 stays 0, any positive value becomes 1
+            int button_state = (state > 0) ? 1 : 0;
+            // Manually construct string to avoid format-truncation warning
+            size_t base_len = strlen(base_cmd);
+            // Check if base_cmd + digit + null terminator fits
+            // (base_len + 1 < sizeof means we have room for base_len + 1 + 1 = base_len + 2)
+            if (base_len + 1 < sizeof(command)) {
+                // Copy base command (guaranteed to fit with null terminator)
+                memcpy(command, base_cmd, base_len);
+                command[base_len] = '0' + button_state;
+                command[base_len + 1] = '\0';
+            } else {
+                // Base command too long, truncate it to fit with digit
+                memcpy(command, base_cmd, sizeof(command) - 2);
+                command[sizeof(command) - 2] = '0' + button_state;
+                command[sizeof(command) - 1] = '\0';
+            }
         } else {
-            // Toggle button: use base command
+            // Toggle button: use base command as-is
             strncpy(command, base_cmd, sizeof(command) - 1);
             command[sizeof(command) - 1] = '\0';
         }

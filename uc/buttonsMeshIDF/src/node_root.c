@@ -786,26 +786,24 @@ void root_route_button_press(uint32_t from_device, char button, int state)
         char command[MAX_RELAY_COMMAND_LEN];
         if (button_type == 1 && state >= 0) {
             // Stateful button: append state (0 or 1)
-            // Ensure state is 0 or 1 for stateful buttons
+            // Normalize state: 0 stays 0, any positive value becomes 1
             int button_state = (state > 0) ? 1 : 0;
             // Manually construct string to avoid format-truncation warning
             size_t base_len = strlen(base_cmd);
-            if (base_len + 2 <= sizeof(command)) {  // +2 for digit and null terminator
-                // Safe to append
-                strncpy(command, base_cmd, sizeof(command) - 1);
-                size_t len = strlen(command);
-                if (len < sizeof(command) - 1) {
-                    command[len] = '0' + button_state;
-                    command[len + 1] = '\0';
-                }
+            // Check if base_cmd + digit + null terminator fits
+            if (base_len + 1 < sizeof(command)) {  // +1 for digit, +1 implicit for null
+                // Copy base command (guaranteed to fit with null terminator)
+                memcpy(command, base_cmd, base_len);
+                command[base_len] = '0' + button_state;
+                command[base_len + 1] = '\0';
             } else {
-                // Base command too long, truncate it
-                strncpy(command, base_cmd, sizeof(command) - 2);
+                // Base command too long, truncate it to fit with digit
+                memcpy(command, base_cmd, sizeof(command) - 2);
                 command[sizeof(command) - 2] = '0' + button_state;
                 command[sizeof(command) - 1] = '\0';
             }
         } else {
-            // Toggle button: use base command
+            // Toggle button: use base command as-is
             strncpy(command, base_cmd, sizeof(command) - 1);
             command[sizeof(command) - 1] = '\0';
         }

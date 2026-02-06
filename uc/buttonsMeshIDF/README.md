@@ -298,6 +298,21 @@ uc/buttonsMeshIDF/
 
 After forwarding by root, `parentId` is added.
 
+## Troubleshooting
+
+### Relay Board Crashes on Startup
+If relay board resets during mesh initialization with message like `I (xxx) mesh:`, see [RELAY_CRASH_FIX.md](RELAY_CRASH_FIX.md) for:
+- Root cause explanation
+- Verification steps
+- Advanced debugging
+
+**Quick fix:** Ensure firmware version ≥ v1.1.0 which includes initialization order fix.
+
+### Other Issues
+- OTA firmware hosting: See [OTA_FIRMWARE_HOSTING.md](OTA_FIRMWARE_HOSTING.md)
+- Phase 5 & 6 features: See [PHASE5_6_GUIDE.md](PHASE5_6_GUIDE.md)
+- Quick start: See [QUICKSTART.md](QUICKSTART.md)
+
 ## License
 
 Copyright (c) Domator Project

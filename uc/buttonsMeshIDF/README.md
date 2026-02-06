@@ -40,6 +40,42 @@ This project replaces the previous 3 separate ESP-NOW Arduino firmwares (rootLig
 - State sync: Responds to sync requests from root
 - Status reports every 15 seconds with relay count
 
+### Phase 4 - Root Routing Logic
+- **Connection map parsing (#13)**: Configure button → relay mappings via MQTT JSON
+- **Button type config (#14)**: Support toggle (type=0) and stateful (type=1) buttons
+- **Button → relay routing (#15)**: Automatically route button presses to configured relay targets
+- **MQTT → node forwarding (#16)**: Forward MQTT commands to mesh nodes (already implemented)
+- **Relay state → MQTT (#17)**: Publish relay states to MQTT (already implemented)
+- **Node status → MQTT (#18)**: Forward node status reports (already implemented)
+- **MQTT config receive (#19)**: Receive and apply configuration via `/switch/cmd/root`
+
+#### Configuration Examples
+**Connection Map:**
+```json
+{
+  "type": "connections",
+  "data": {
+    "switchDeviceId": {
+      "a": [["relayDeviceId", "a"], ["relayDeviceId2", "b"]],
+      "b": [["relayDeviceId", "c1"]]
+    }
+  }
+}
+```
+
+**Button Types:**
+```json
+{
+  "type": "button_types",
+  "data": {
+    "switchDeviceId": {
+      "a": 0,
+      "b": 1
+    }
+  }
+}
+```
+
 ## Hardware Support
 
 - ESP32 (original) - Root and Relay nodes

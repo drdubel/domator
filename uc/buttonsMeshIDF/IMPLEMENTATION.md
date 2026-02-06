@@ -110,8 +110,9 @@ Successfully created a complete ESP-IDF firmware project for unified mesh networ
 | Root status | `/switch/state/root` | JSON with root info | Root node |
 | Leaf status | `/switch/state/root` | JSON with leaf info + parentId | Root (forwarded) |
 | Button press | `/switch/state/{deviceId}` | Single char ('a'-'g') | Root (from leaf) |
-| Commands | `/switch/cmd/+`, `/switch/cmd` | (subscribed) | Root |
-| Relay commands | `/relay/cmd/+`, `/relay/cmd` | (subscribed) | Root |
+| Relay state | `/relay/state/{deviceId}/{relay}` | Single char ('0' or '1') | Root (from relay node) |
+| Switch commands | `/switch/cmd/+`, `/switch/cmd` | Command string | Root (subscribed) |
+| Relay commands | `/relay/cmd/+`, `/relay/cmd` | Command string ('a', 'a0', 'a1', 'S') | Root (subscribed) |
 
 ## File Structure
 
@@ -127,12 +128,13 @@ uc/buttonsMeshIDF/
     ├── CMakeLists.txt          (307 bytes) - Component build
     ├── Kconfig.projbuild       (1.1K) - Configuration menu
     ├── idf_component.yml       (46 bytes) - Component dependencies
-    ├── domator_mesh.h          (4.3K) - Main header with declarations
-    ├── domator_mesh.c          (4.0K) - Main entry and globals
+    ├── domator_mesh.h          (5.2K) - Main header with declarations
+    ├── domator_mesh.c          (4.8K) - Main entry and globals
     ├── mesh_init.c             (8.2K) - WiFi and mesh init
-    ├── mesh_comm.c             (7.7K) - Mesh send/recv/status tasks
-    ├── node_root.c             (9.3K) - MQTT and root functionality
-    └── node_switch.c           (6.5K) - Button and LED functionality
+    ├── mesh_comm.c             (8.5K) - Mesh send/recv/status tasks
+    ├── node_root.c             (11.2K) - MQTT and root functionality
+    ├── node_switch.c           (6.5K) - Button and LED functionality
+    └── node_relay.c            (11.7K) - Relay control functionality
 ```
 
 ## Testing Checklist (For User)
@@ -162,29 +164,88 @@ uc/buttonsMeshIDF/
 - [ ] Verify root status reports include peerCount
 - [ ] Verify leaf status forwarding with parentId
 
+### Relay Node Testing
+- [ ] Flash to ESP32 as relay node (8-relay or 16-relay board)
+- [ ] Verify board auto-detection (8 vs 16 relays)
+- [ ] Verify relay node connects to mesh
+- [ ] Press physical buttons, verify relays toggle
+- [ ] Send MQTT command "a" to `/relay/cmd`, verify relay 0 toggles
+- [ ] Send MQTT command "a0" to `/relay/cmd/{deviceId}`, verify relay 0 turns OFF
+- [ ] Send MQTT command "a1" to `/relay/cmd/{deviceId}`, verify relay 0 turns ON
+- [ ] Check MQTT for relay state on `/relay/state/{deviceId}/a`
+- [ ] Send "S" command, verify all relay states published
+- [ ] Verify relay status reports on `/switch/state/root` include "outputs" field
+- [ ] Test all relays (a-h for 8-relay, a-p for 16-relay)
+- [ ] Verify button debouncing works correctly
+
+## Phase 3 Implementation ✓
+
+### Board Auto-Detection (#5)
+- ✓ Detects 16-relay board by probing shift register pins (14, 13, 12)
+- ✓ Falls back to 8-relay or switch based on pin configuration
+- ✓ Implementation: `detect_hardware_type()` in domator_mesh.c (lines 100-135)
+
+### 8-Relay GPIO Control (#6)
+- ✓ Direct GPIO control for 8 relays on pins 32, 33, 25, 26, 27, 14, 12, 13
+- ✓ Status LED on GPIO 23
+- ✓ Implementation: `relay_set()` in node_relay.c for BOARD_TYPE_8_RELAY
+
+### 16-Relay Shift Register (#7)
+- ✓ 74HC595 shift register control (SER=14, SRCLK=13, RCLK=12, OE=5)
+- ✓ 16-bit state management with MSB-first shifting
+- ✓ Implementation: `relay_write_shift_register()` in node_relay.c (lines 25-48)
+
+### Relay Commands (#8)
+- ✓ Toggle command: Single character 'a'-'p' toggles corresponding relay
+- ✓ Set command: "a0" sets relay OFF, "a1" sets relay ON
+- ✓ Case-insensitive: Both 'a' and 'A' work
+- ✓ Implementation: `relay_handle_command()` in node_relay.c (lines 187-260)
+- ✓ MQTT command handling: `handle_mqtt_command()` in node_root.c
+- ✓ Mesh command forwarding: Commands broadcast to relay nodes
+
+### Relay State Confirmation (#9)
+- ✓ Automatic state confirmation sent to root after every relay change
+- ✓ Format: "a0" (relay a is OFF) or "a1" (relay a is ON)
+- ✓ Published to MQTT: `/relay/state/{deviceId}/{relay}`
+- ✓ Implementation: `relay_send_state_confirmation()` in node_relay.c (lines 151-174)
+- ✓ Root handling: `root_handle_mesh_message()` case MSG_TYPE_RELAY_STATE
+
+### State Sync (#10)
+- ✓ Responds to "S" or "sync" commands
+- ✓ Sends current state of all relays to root
+- ✓ Small delay between states to avoid flooding
+- ✓ Implementation: `relay_sync_all_states()` in node_relay.c (lines 176-187)
+
+### Physical Buttons (#11)
+- ✓ 8 physical buttons on GPIO 16, 17, 18, 19, 21, 22, 34, 35
+- ✓ Button debouncing (250ms)
+- ✓ Toggles corresponding relay on press
+- ✓ Sends state confirmation to root
+- ✓ Tracks button presses in statistics
+- ✓ Implementation: `relay_button_task()` in node_relay.c (lines 289-338)
+- ✓ Button initialization: `relay_button_init()` in node_relay.c
+
 ## Known Limitations & Future Work
 
-1. **Hardware Detection**: Currently hardcoded to SWITCH type. Future: Detect based on GPIO configuration or NVS setting.
+1. **Hardware Detection**: Partially implemented. Currently detects 16-relay boards, but 8-relay vs switch detection needs improvement.
 
-2. **Relay Node Support**: Phase 3 (not implemented). Will need:
-   - Relay GPIO control
-   - Command handling from MQTT
-   - Relay status reporting
+2. **OTA Implementation**: Infrastructure ready but OTA update mechanism not implemented.
 
-3. **OTA Implementation**: Infrastructure ready but OTA update mechanism not implemented.
-
-4. **Security**: No encryption or authentication on mesh. Consider:
+3. **Security**: No encryption or authentication on mesh. Consider:
    - Encrypted mesh communication
    - MQTT over TLS
    - Device authentication
 
-5. **Mesh Root Election**: Currently uses ESP-MESH auto-election. May want fixed root configuration.
+4. **Mesh Root Election**: Currently uses ESP-MESH auto-election. May want fixed root configuration.
+
+5. **Direct Device Addressing**: Commands are currently broadcast to all nodes. Future: Add direct addressing to specific device IDs.
 
 ## Conclusion
 
 ✓ **Phase 1 Complete**: All root node functionality implemented
 ✓ **Phase 2 Complete**: All switch node functionality implemented
-✓ **Code Quality**: Passed all code reviews
+✓ **Phase 3 Complete**: All relay node functionality implemented
+✓ **Code Quality**: Ready for code review
 ✓ **Documentation**: Comprehensive README and comments
 ✓ **Build System**: Dual build system (ESP-IDF + PlatformIO)
 

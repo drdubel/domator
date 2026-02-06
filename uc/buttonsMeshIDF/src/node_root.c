@@ -788,10 +788,16 @@ void root_route_button_press(uint32_t from_device, char button, int state)
             // Stateful button: append state (0 or 1)
             // Ensure state is 0 or 1 for stateful buttons
             int button_state = (state > 0) ? 1 : 0;
-            // Use explicit length check to satisfy compiler
+            // Manually construct string to avoid format-truncation warning
             size_t base_len = strlen(base_cmd);
-            if (base_len + 2 < sizeof(command)) {  // +2 for digit and null terminator
-                snprintf(command, sizeof(command), "%s%d", base_cmd, button_state);
+            if (base_len + 2 <= sizeof(command)) {  // +2 for digit and null terminator
+                // Safe to append
+                strncpy(command, base_cmd, sizeof(command) - 1);
+                size_t len = strlen(command);
+                if (len < sizeof(command) - 1) {
+                    command[len] = '0' + button_state;
+                    command[len + 1] = '\0';
+                }
             } else {
                 // Base command too long, truncate it
                 strncpy(command, base_cmd, sizeof(command) - 2);

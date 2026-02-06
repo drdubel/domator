@@ -61,7 +61,7 @@ static void ip_event_handler(void *arg, esp_event_base_t event_base,
 static void mesh_event_handler(void *arg, esp_event_base_t event_base,
                                int32_t event_id, void *event_data)
 {
-    mesh_event_t event = (mesh_event_t)event_id;
+    mesh_event_id_t event = (mesh_event_id_t)event_id;
     
     switch (event) {
         case MESH_EVENT_STARTED:

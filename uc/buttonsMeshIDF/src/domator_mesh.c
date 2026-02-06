@@ -241,24 +241,31 @@ void app_main(void)
         root_init_routing();
     }
     
-    // Create relay mutex if needed
+    // Create relay mutex if needed (BEFORE mesh_init to prevent race conditions)
     if (g_node_type == NODE_TYPE_RELAY) {
         g_relay_mutex = xSemaphoreCreateMutex();
         if (g_relay_mutex == NULL) {
             ESP_LOGE(TAG, "Failed to create relay mutex");
             return;
         }
+        
+        // Initialize relay hardware BEFORE mesh to prevent race conditions
+        // This ensures relays are ready before mesh events can trigger relay operations
+        ESP_LOGI(TAG, "Pre-initializing relay board (type: %s)",
+                 g_board_type == BOARD_TYPE_16_RELAY ? "16-relay" : "8-relay");
+        relay_init();
+        relay_button_init();
     }
     
-    // Initialize mesh network
+    // Initialize mesh network (after relay hardware is ready)
     mesh_init();
     
     // Wait for mesh to be ready
     vTaskDelay(pdMS_TO_TICKS(2000));
     
-    // Start communication tasks
-    xTaskCreate(mesh_send_task, "mesh_send", 4096, NULL, 5, NULL);
-    xTaskCreate(mesh_recv_task, "mesh_recv", 4096, NULL, 5, NULL);
+    // Start communication tasks with increased stack for reliability
+    xTaskCreate(mesh_send_task, "mesh_send", 5120, NULL, 5, NULL);
+    xTaskCreate(mesh_recv_task, "mesh_recv", 5120, NULL, 5, NULL);
     xTaskCreate(status_report_task, "status_report", 4096, NULL, 3, NULL);
     
     // Start node-specific tasks
@@ -270,11 +277,8 @@ void app_main(void)
         xTaskCreate(led_task, "led", 3072, NULL, 2, NULL);
         xTaskCreate(root_loss_check_task, "root_loss", 3072, NULL, 2, NULL);
     } else if (g_node_type == NODE_TYPE_RELAY) {
-        ESP_LOGI(TAG, "Starting relay node tasks (board type: %s)",
-                 g_board_type == BOARD_TYPE_16_RELAY ? "16-relay" : "8-relay");
-        relay_init();
-        relay_button_init();
-        xTaskCreate(relay_button_task, "relay_button", 4096, NULL, 6, NULL);
+        ESP_LOGI(TAG, "Starting relay tasks (hardware already initialized)");
+        xTaskCreate(relay_button_task, "relay_button", 5120, NULL, 6, NULL);
     }
     
     // Start health monitoring task for all nodes

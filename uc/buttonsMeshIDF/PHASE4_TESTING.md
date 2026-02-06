@@ -187,7 +187,7 @@ This document describes how to test the Phase 4 routing logic implementation for
 - Config parsing: ~100-500ms depending on size
 - Memory usage: ~200 bytes per routing target
 - **Mesh message size:** Limited to MESH_MSG_DATA_SIZE (200 bytes) for command forwarding over mesh
-- **MQTT message size:** Standard MQTT supports larger payloads (several KB), used for configuration transfer. Config messages are not limited by mesh size as they're processed at the root only.
+- **MQTT message size:** ESP-IDF MQTT client supports messages up to the broker's maximum (typically 128KB for Mosquitto, configurable). Configuration messages should be kept under 16KB for reliability. For very large configs, consider splitting into multiple messages.
 
 ## Future Enhancements
 

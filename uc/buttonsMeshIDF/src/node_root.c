@@ -43,13 +43,14 @@ static void handle_mqtt_command(const char *topic, int topic_len,
     topic_str[copy_len] = '\0';
     
     // Extract command string (may be large for config)
+    // NOTE: MQTT data may or may not include null terminator, so we allocate +1 for safety
     char *cmd_str = (char *)malloc(data_len + 1);
     if (cmd_str == NULL) {
         ESP_LOGE(TAG, "Failed to allocate memory for command");
         return;
     }
     memcpy(cmd_str, data, data_len);
-    cmd_str[data_len] = '\0';
+    cmd_str[data_len] = '\0';  // Ensure null termination
     
     ESP_LOGI(TAG, "Processing MQTT command: topic=%s", topic_str);
     
@@ -623,9 +624,9 @@ void root_parse_connections(const char *json_str)
                 }
                 
                 targets[target_count].target_node_id = target_id;
-                strncpy(targets[target_count].relay_command, command_item->valuestring, 
-                        sizeof(targets[target_count].relay_command) - 1);
-                targets[target_count].relay_command[sizeof(targets[target_count].relay_command) - 1] = '\0';
+                snprintf(targets[target_count].relay_command,
+                        sizeof(targets[target_count].relay_command),
+                        "%s", command_item->valuestring);
                 
                 target_count++;
                 if (target_count >= num_targets) break;

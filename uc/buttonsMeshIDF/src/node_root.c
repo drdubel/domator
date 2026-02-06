@@ -1,6 +1,7 @@
 #include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 
 #include "cJSON.h"
 #include "domator_mesh.h"
@@ -25,7 +26,14 @@ static uint32_t parse_device_id_from_string(const char *device_id_str) {
     }
     
     char *endptr;
+    errno = 0;  // Reset errno before strtoul
     unsigned long parsed = strtoul(device_id_str, &endptr, 10);
+    
+    // Check for overflow
+    if (errno == ERANGE) {
+        ESP_LOGW(TAG, "parse_device_id_from_string: Value overflow in '%s'", device_id_str);
+        return 0;
+    }
     
     // Check if parsing was successful and string was fully consumed
     if (*endptr != '\0') {
@@ -40,6 +48,7 @@ static uint32_t parse_device_id_from_string(const char *device_id_str) {
     }
     
     // Check for overflow (device IDs must fit in uint32_t)
+    // On 64-bit platforms, unsigned long may be larger than uint32_t
     if (parsed > UINT32_MAX) {
         ESP_LOGW(TAG, "parse_device_id_from_string: Value %lu exceeds UINT32_MAX", parsed);
         return 0;

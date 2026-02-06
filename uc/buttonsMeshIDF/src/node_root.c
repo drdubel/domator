@@ -613,7 +613,7 @@ void root_parse_connections(const char *json_str)
                 
                 uint32_t target_id = 0;
                 if (cJSON_IsString(target_id_item)) {
-                    target_id = (uint32_t)strtoul(target_id_item->valuestring, NULL, 10);
+                    target_id = parse_device_id_from_string(target_id_item->valuestring);
                 } else if (cJSON_IsNumber(target_id_item)) {
                     target_id = (uint32_t)target_id_item->valueint;
                 }

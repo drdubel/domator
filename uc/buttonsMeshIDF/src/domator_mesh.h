@@ -133,7 +133,7 @@ typedef struct {
 // Routing target for button → relay mapping
 typedef struct {
     uint32_t target_node_id;
-    char relay_command[8];  // e.g., "a", "b1", etc.
+    char relay_command[MAX_RELAY_COMMAND_LEN];  // e.g., "a", "b1", etc.
 } route_target_t;
 
 // Button routing entry

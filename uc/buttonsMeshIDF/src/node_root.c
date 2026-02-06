@@ -67,12 +67,17 @@ static void handle_mqtt_command(const char *topic, int topic_len,
     msg.data[cmd_len] = '\0';
     msg.data_len = cmd_len;
     
-    // If specific device ID, send to that device
-    // Otherwise, broadcast to all appropriate nodes
+    // LIMITATION: Direct device addressing not yet implemented
+    // ESP-WIFI-MESH requires MAC address for direct routing, but we only have device ID
+    // Current workaround: All commands are broadcast to all nodes
+    // Each node checks if command is relevant and ignores if not
+    // Future: Maintain a device ID -> MAC address mapping table for direct routing
+    
     if (target_device_id != 0) {
-        // TODO: Send to specific device via mesh routing
-        ESP_LOGI(TAG, "Forwarding command to device %" PRIu32, target_device_id);
-        // For now, we'll broadcast as we don't have direct device addressing
+        ESP_LOGW(TAG, "Specific device targeting (%" PRIu32 ") not implemented, broadcasting", 
+                 target_device_id);
+        ESP_LOGI(TAG, "Broadcasting command to all nodes (intended for %" PRIu32 ")", 
+                 target_device_id);
         esp_mesh_send(NULL, &msg, MESH_DATA_P2P, NULL, 0);
     } else {
         // Broadcast to all nodes

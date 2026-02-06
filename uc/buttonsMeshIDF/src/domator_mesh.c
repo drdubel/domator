@@ -100,10 +100,16 @@ void generate_firmware_hash(void)
 
 void detect_hardware_type(void)
 {
-    // Check if this is a relay board by probing shift register pins
-    // If the pins are pulled high, it's likely a 16-relay board
-    // If they're not present (will read differently), it's likely an 8-relay board
+    // Hardware auto-detection strategy:
+    // 1. Check for 16-relay board by probing shift register pins (14, 13, 12)
+    // 2. Check for 8-relay board by probing relay output pins (32, 33, etc.)
+    // 3. Default to switch node if neither relay board is detected
+    //
+    // LIMITATION: Currently cannot distinguish between 8-relay board and switch node
+    // reliably because both use similar GPIO configurations. Consider using NVS
+    // configuration or a dedicated detection pin for production deployments.
     
+    // First, check for 16-relay board (shift register)
     gpio_config_t io_conf = {
         .pin_bit_mask = ((1ULL << RELAY_16_PIN_DATA) | 
                          (1ULL << RELAY_16_PIN_CLOCK) | 
@@ -117,23 +123,33 @@ void detect_hardware_type(void)
     gpio_config(&io_conf);
     vTaskDelay(pdMS_TO_TICKS(10));
     
-    // Read the pins
+    // Read the pins - if all high with pullup, likely shift register present
     int data_val = gpio_get_level(RELAY_16_PIN_DATA);
     int clock_val = gpio_get_level(RELAY_16_PIN_CLOCK);
     int latch_val = gpio_get_level(RELAY_16_PIN_LATCH);
     
-    // If all pins are high (pulled up and not connected to ground), likely 16-relay board
     if (data_val && clock_val && latch_val) {
         g_node_type = NODE_TYPE_RELAY;
         g_board_type = BOARD_TYPE_16_RELAY;
         ESP_LOGI(TAG, "Hardware detected as: RELAY_16");
-    } else {
-        // Check if relay output pins are present (8-relay board)
-        // For now, default to switch if not 16-relay
-        // TODO: Add better detection for 8-relay vs switch
-        g_node_type = NODE_TYPE_SWITCH;
-        ESP_LOGI(TAG, "Hardware detected as: SWITCH_C3");
+        return;
     }
+    
+    // Check for 8-relay board by probing the first relay output pin (GPIO 32)
+    // This GPIO is less likely to be used on switch boards
+    io_conf.pin_bit_mask = (1ULL << RELAY_8_PIN_0);
+    io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
+    io_conf.pull_down_en = GPIO_PULLUP_DISABLE;
+    gpio_config(&io_conf);
+    vTaskDelay(pdMS_TO_TICKS(5));
+    
+    // Try to probe GPIO 32 - if it exists and can be configured, might be 8-relay board
+    // However, this is not definitive. For production, use NVS configuration.
+    
+    // Default to switch for now - user should configure via NVS for 8-relay boards
+    g_node_type = NODE_TYPE_SWITCH;
+    ESP_LOGI(TAG, "Hardware detected as: SWITCH_C3");
+    ESP_LOGW(TAG, "Cannot distinguish 8-relay from switch - configure via NVS if needed");
 }
 
 // ====================

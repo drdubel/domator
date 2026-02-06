@@ -9,6 +9,18 @@
 static const char *TAG = "NODE_RELAY";
 
 // ====================
+// Helper Functions
+// ====================
+
+static void stats_increment_button_presses(void)
+{
+    if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        g_stats.button_presses++;
+        xSemaphoreGive(g_stats_mutex);
+    }
+}
+
+// ====================
 // Board Detection
 // ====================
 
@@ -170,7 +182,7 @@ void relay_sync_all_states(void)
     
     for (int i = 0; i < max_relays; i++) {
         relay_send_state_confirmation(i);
-        vTaskDelay(pdMS_TO_TICKS(5));  // Small delay to avoid flooding
+        vTaskDelay(pdMS_TO_TICKS(20));  // Delay to avoid flooding mesh network
     }
 }
 
@@ -213,10 +225,7 @@ void relay_handle_command(const char *cmd_data)
         relay_toggle(index);
         
         // Track button press
-        if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-            g_stats.button_presses++;
-            xSemaphoreGive(g_stats_mutex);
-        }
+        stats_increment_button_presses();
     } else if (strlen(cmd_data) == 2) {
         // Set command
         char state_char = cmd_data[1];
@@ -232,10 +241,7 @@ void relay_handle_command(const char *cmd_data)
         }
         
         // Track button press
-        if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-            g_stats.button_presses++;
-            xSemaphoreGive(g_stats_mutex);
-        }
+        stats_increment_button_presses();
     } else {
         ESP_LOGW(TAG, "Invalid command length: %s", cmd_data);
         return;
@@ -305,10 +311,7 @@ void relay_button_task(void *arg)
                     relay_toggle(i);
                     
                     // Track button press
-                    if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                        g_stats.button_presses++;
-                        xSemaphoreGive(g_stats_mutex);
-                    }
+                    stats_increment_button_presses();
                     
                     // Send state confirmation to root
                     relay_send_state_confirmation(i);

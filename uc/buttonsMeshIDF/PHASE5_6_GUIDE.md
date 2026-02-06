@@ -164,6 +164,16 @@ MQTT Trigger → Root Node → Mesh Broadcast → All Nodes → Download & Insta
 }
 ```
 
+**Where to Host Firmware:**
+
+The firmware binary must be hosted on an HTTP or HTTPS server accessible to your ESP32 devices. Common options include:
+- Self-hosted web server (Nginx, Apache)
+- Cloud storage (AWS S3, Google Cloud Storage, Azure Blob)
+- GitHub Releases
+- Local network server (for testing)
+
+**See [OTA_FIRMWARE_HOSTING.md](OTA_FIRMWARE_HOSTING.md) for detailed hosting setup guides.**
+
 **Features:**
 - HTTPS support with certificate bundle
 - Mesh-based trigger propagation

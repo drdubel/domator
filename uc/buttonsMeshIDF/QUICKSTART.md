@@ -152,13 +152,21 @@ mosquitto_pub -h localhost -t "/switch/cmd/root" -m '{
 ### Host Firmware
 
 ```bash
-# Simple Python HTTPS server
+# Simple Python HTTP server (Development)
 cd build
 python3 -m http.server 8000
 
-# Note: For HTTPS, use nginx or proper server
-# For testing, you can use HTTP (less secure)
+# For production HTTPS hosting options, see OTA_FIRMWARE_HOSTING.md
 ```
+
+**Note:** The firmware URL in the OTA trigger can point to:
+- Local server (as shown above)
+- Cloud storage (AWS S3, Google Cloud, Azure)
+- GitHub Releases
+- Your own web server
+- Any HTTP/HTTPS accessible location
+
+See [OTA_FIRMWARE_HOSTING.md](OTA_FIRMWARE_HOSTING.md) for detailed hosting setup.
 
 ### Trigger OTA
 

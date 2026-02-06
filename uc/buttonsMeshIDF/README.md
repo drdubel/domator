@@ -124,6 +124,7 @@ Note: Bitmask values: 1=single only, 3=single+double, 7=all enabled
   "url": "https://example.com/firmware.bin"
 }
 ```
+Note: Firmware can be hosted on any HTTP/HTTPS server. See [OTA_FIRMWARE_HOSTING.md](OTA_FIRMWARE_HOSTING.md) for detailed hosting options.
 
 ## Hardware Support
 

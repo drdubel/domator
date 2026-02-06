@@ -49,7 +49,7 @@ void mqtt_event_handler(void *handler_args, esp_event_base_t base,
             break;
             
         default:
-            ESP_LOGD(TAG, "MQTT event: %d", event_id);
+            ESP_LOGD(TAG, "MQTT event: %" PRId32, event_id);
             break;
     }
 }

@@ -132,7 +132,6 @@ void detect_hardware_type(void);
 // mesh_init.c
 void mesh_init(void);
 void wifi_init(void);
-esp_err_t mesh_event_handler(mesh_event_t event);
 
 // mesh_comm.c
 void mesh_send_task(void *arg);

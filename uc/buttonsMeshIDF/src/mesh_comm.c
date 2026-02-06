@@ -188,7 +188,7 @@ void status_report_task(void *arg)
                 uint32_t free_heap = esp_get_free_heap_size();
                 
                 // Get RSSI from parent connection
-                int8_t rssi = 0;
+                int rssi = 0;
                 esp_wifi_sta_get_rssi(&rssi);
                 
                 // Check for low heap

@@ -28,6 +28,7 @@
 #define CRITICAL_HEAP_THRESHOLD         20000
 #define MAX_DEVICES                     50
 #define MAX_ROUTES_PER_BUTTON           10
+#define MAX_RELAY_COMMAND_LEN           10
 
 // GPIO pin definitions for ESP32-C3 switch board
 #define BUTTON_GPIO_0                   0

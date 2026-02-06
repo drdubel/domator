@@ -186,7 +186,8 @@ This document describes how to test the Phase 4 routing logic implementation for
 - Button press routing: ~10ms overhead
 - Config parsing: ~100-500ms depending on size
 - Memory usage: ~200 bytes per routing target
-- Max config size: Limited by MQTT message size (~200 bytes per message)
+- **Mesh message size:** Limited to MESH_MSG_DATA_SIZE (200 bytes) for command forwarding over mesh
+- **MQTT message size:** Standard MQTT supports larger payloads (several KB), used for configuration transfer. Config messages are not limited by mesh size as they're processed at the root only.
 
 ## Future Enhancements
 

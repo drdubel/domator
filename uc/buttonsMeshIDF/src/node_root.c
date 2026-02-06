@@ -11,6 +11,24 @@ static const char *TAG = "NODE_ROOT";
 // MQTT Command Handling
 // ====================
 
+// Helper: Parse device ID from string
+static uint32_t parse_device_id_from_string(const char *str)
+{
+    if (str == NULL) return 0;
+    return (uint32_t)strtoul(str, NULL, 10);
+}
+
+// Helper: Convert button character to index (0-15)
+static int button_char_to_index(char button_char)
+{
+    if (button_char >= 'a' && button_char <= 'p') {
+        return button_char - 'a';
+    } else if (button_char >= 'A' && button_char <= 'P') {
+        return button_char - 'A';
+    }
+    return -1;
+}
+
 static void handle_mqtt_command(const char *topic, int topic_len, 
                                const char *data, int data_len)
 {
@@ -51,17 +69,17 @@ static void handle_mqtt_command(const char *topic, int topic_len,
                 const char *config_type = type_item->valuestring;
                 char *data_str = cJSON_PrintUnformatted(data_item);
                 
-                if (strcmp(config_type, "connections") == 0) {
-                    ESP_LOGI(TAG, "Parsing connections configuration");
-                    root_parse_connections(data_str);
-                } else if (strcmp(config_type, "button_types") == 0) {
-                    ESP_LOGI(TAG, "Parsing button types configuration");
-                    root_parse_button_types(data_str);
-                } else {
-                    ESP_LOGW(TAG, "Unknown config type: %s", config_type);
-                }
-                
                 if (data_str != NULL) {
+                    if (strcmp(config_type, "connections") == 0) {
+                        ESP_LOGI(TAG, "Parsing connections configuration");
+                        root_parse_connections(data_str);
+                    } else if (strcmp(config_type, "button_types") == 0) {
+                        ESP_LOGI(TAG, "Parsing button types configuration");
+                        root_parse_button_types(data_str);
+                    } else {
+                        ESP_LOGW(TAG, "Unknown config type: %s", config_type);
+                    }
+                    
                     free(data_str);
                 }
             }
@@ -546,7 +564,7 @@ void root_parse_connections(const char *json_str)
     cJSON *device_item = NULL;
     cJSON_ArrayForEach(device_item, root) {
         const char *device_id_str = device_item->string;
-        uint32_t device_id = (uint32_t)strtoul(device_id_str, NULL, 10);
+        uint32_t device_id = parse_device_id_from_string(device_id_str);
         
         int dev_idx = root_find_device_index(device_id);
         if (dev_idx < 0) {
@@ -560,13 +578,7 @@ void root_parse_connections(const char *json_str)
             if (strlen(button_str) != 1) continue;
             
             char button_char = button_str[0];
-            int button_idx = -1;
-            
-            if (button_char >= 'a' && button_char <= 'p') {
-                button_idx = button_char - 'a';
-            } else if (button_char >= 'A' && button_char <= 'P') {
-                button_idx = button_char - 'A';
-            }
+            int button_idx = button_char_to_index(button_char);
             
             if (button_idx < 0 || button_idx >= 16) continue;
             
@@ -666,7 +678,7 @@ void root_parse_button_types(const char *json_str)
     cJSON *device_item = NULL;
     cJSON_ArrayForEach(device_item, root) {
         const char *device_id_str = device_item->string;
-        uint32_t device_id = (uint32_t)strtoul(device_id_str, NULL, 10);
+        uint32_t device_id = parse_device_id_from_string(device_id_str);
         
         int dev_idx = root_find_device_index(device_id);
         if (dev_idx < 0) {
@@ -680,13 +692,7 @@ void root_parse_button_types(const char *json_str)
             if (strlen(button_str) != 1) continue;
             
             char button_char = button_str[0];
-            int button_idx = -1;
-            
-            if (button_char >= 'a' && button_char <= 'p') {
-                button_idx = button_char - 'a';
-            } else if (button_char >= 'A' && button_char <= 'P') {
-                button_idx = button_char - 'A';
-            }
+            int button_idx = button_char_to_index(button_char);
             
             if (button_idx < 0 || button_idx >= 16) continue;
             
@@ -716,12 +722,7 @@ void root_route_button_press(uint32_t from_device, char button, int state)
              button, from_device, state);
     
     // Convert button char to index
-    int button_idx = -1;
-    if (button >= 'a' && button <= 'p') {
-        button_idx = button - 'a';
-    } else if (button >= 'A' && button <= 'P') {
-        button_idx = button - 'A';
-    }
+    int button_idx = button_char_to_index(button);
     
     if (button_idx < 0 || button_idx >= 16) {
         ESP_LOGW(TAG, "Invalid button character: %c", button);
@@ -772,7 +773,7 @@ void root_route_button_press(uint32_t from_device, char button, int state)
         const char *base_cmd = route->targets[i].relay_command;
         
         // Build command based on button type
-        char command[10];
+        char command[MAX_RELAY_COMMAND_LEN];
         if (button_type == 1 && state >= 0) {
             // Stateful button: append state (0 or 1)
             snprintf(command, sizeof(command), "%s%d", base_cmd, state);
@@ -795,7 +796,7 @@ void root_route_button_press(uint32_t from_device, char button, int state)
         }
         memcpy(msg.data, command, cmd_len);
         msg.data[cmd_len] = '\0';
-        msg.data_len = cmd_len;
+        msg.data_len = cmd_len + 1;  // Include null terminator
         
         // Prepare mesh_data_t for sending
         mesh_data_t data;

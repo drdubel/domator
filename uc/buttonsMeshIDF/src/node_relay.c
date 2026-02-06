@@ -5,12 +5,29 @@
 #include "esp_timer.h"
 #include "driver/gpio.h"
 #include "cJSON.h"
+#include "soc/soc_caps.h"
 
 static const char *TAG = "NODE_RELAY";
 
 // ====================
 // Helper Functions
 // ====================
+
+/**
+ * Check if a GPIO pin is valid for the current chip
+ * ESP32-C3 only has GPIOs 0-21, while ESP32 has more
+ */
+static bool is_gpio_valid(int gpio_num)
+{
+    // Use SOC_GPIO_VALID_GPIO_MASK if available, otherwise manual check
+#ifdef SOC_GPIO_VALID_GPIO_MASK
+    return (gpio_num >= 0) && (gpio_num < SOC_GPIO_PIN_COUNT) && 
+           ((SOC_GPIO_VALID_GPIO_MASK & (1ULL << gpio_num)) != 0);
+#else
+    // Fallback: ESP32-C3 has GPIOs 0-21
+    return (gpio_num >= 0) && (gpio_num <= 21);
+#endif
+}
 
 static void stats_increment_button_presses(void)
 {
@@ -265,16 +282,39 @@ void relay_button_init(void)
     io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
     io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
     
+    int valid_buttons = 0;
     for (int i = 0; i < NUM_RELAY_BUTTONS; i++) {
-        io_conf.pin_bit_mask = (1ULL << g_relay_button_pins[i]);
-        gpio_config(&io_conf);
+        int gpio_num = g_relay_button_pins[i];
+        
+        // Check if GPIO is valid for this chip (ESP32-C3 only has GPIOs 0-21)
+        if (!is_gpio_valid(gpio_num)) {
+            ESP_LOGW(TAG, "Skipping button %d: GPIO %d not available on this chip", i, gpio_num);
+            // Initialize state to safe defaults
+            g_relay_button_states[i].last_state = 0;
+            g_relay_button_states[i].last_press_time = 0;
+            continue;
+        }
+        
+        io_conf.pin_bit_mask = (1ULL << gpio_num);
+        esp_err_t ret = gpio_config(&io_conf);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to configure GPIO %d for button %d: %s", 
+                     gpio_num, i, esp_err_to_name(ret));
+            g_relay_button_states[i].last_state = 0;
+            g_relay_button_states[i].last_press_time = 0;
+            continue;
+        }
         
         // Initialize button state
-        g_relay_button_states[i].last_state = gpio_get_level(g_relay_button_pins[i]);
+        g_relay_button_states[i].last_state = gpio_get_level(gpio_num);
         g_relay_button_states[i].last_press_time = 0;
+        valid_buttons++;
     }
     
-    ESP_LOGI(TAG, "Relay buttons initialized on %d pins", NUM_RELAY_BUTTONS);
+    ESP_LOGI(TAG, "Relay buttons initialized: %d/%d valid", valid_buttons, NUM_RELAY_BUTTONS);
+    if (valid_buttons == 0) {
+        ESP_LOGW(TAG, "No valid button pins available on this chip - buttons disabled");
+    }
 }
 
 void relay_button_task(void *arg)
@@ -297,7 +337,14 @@ void relay_button_task(void *arg)
         int buttons_to_check = (max_relays < NUM_RELAY_BUTTONS) ? max_relays : NUM_RELAY_BUTTONS;
         
         for (int i = 0; i < buttons_to_check; i++) {
-            int current_state = gpio_get_level(g_relay_button_pins[i]);
+            int gpio_num = g_relay_button_pins[i];
+            
+            // Skip invalid GPIOs (e.g., GPIO 34/35 on ESP32-C3)
+            if (!is_gpio_valid(gpio_num)) {
+                continue;
+            }
+            
+            int current_state = gpio_get_level(gpio_num);
             
             // Button pressed (goes HIGH when pressed due to pull-down)
             if (current_state == 1 && g_relay_button_states[i].last_state == 0) {

@@ -101,8 +101,25 @@ void handle_mesh_recv(const mesh_addr_t *from, const mesh_app_msg_t *msg)
     if (g_is_root) {
         root_handle_mesh_message(from, msg);
     } else {
-        // Non-root nodes typically don't receive messages from mesh
-        ESP_LOGD(TAG, "Non-root node received mesh message");
+        // Non-root nodes can receive commands from root
+        if (msg->msg_type == MSG_TYPE_COMMAND) {
+            ESP_LOGI(TAG, "Received command from root: %s", (char *)msg->data);
+            
+            // Handle relay commands if this is a relay node
+            if (g_node_type == NODE_TYPE_RELAY) {
+                relay_handle_command((char *)msg->data);
+            }
+            // Switch nodes don't handle commands currently
+        } else if (msg->msg_type == MSG_TYPE_SYNC_REQUEST) {
+            ESP_LOGI(TAG, "Received sync request from root");
+            
+            // Handle sync request for relay nodes
+            if (g_node_type == NODE_TYPE_RELAY) {
+                relay_sync_all_states();
+            }
+        } else {
+            ESP_LOGD(TAG, "Non-root node received mesh message type '%c'", msg->msg_type);
+        }
     }
 }
 
@@ -201,7 +218,16 @@ void status_report_task(void *arg)
                 
                 // Build JSON status report
                 cJSON_AddNumberToObject(json, "deviceId", g_device_id);
-                cJSON_AddStringToObject(json, "type", "switch");
+                
+                // Add type based on node type
+                const char *type_str = "unknown";
+                if (g_node_type == NODE_TYPE_SWITCH) {
+                    type_str = "switch";
+                } else if (g_node_type == NODE_TYPE_RELAY) {
+                    type_str = "relay";
+                }
+                cJSON_AddStringToObject(json, "type", type_str);
+                
                 cJSON_AddNumberToObject(json, "freeHeap", free_heap);
                 cJSON_AddNumberToObject(json, "uptime", uptime);
                 cJSON_AddStringToObject(json, "firmware", g_firmware_hash);
@@ -209,6 +235,12 @@ void status_report_task(void *arg)
                 cJSON_AddNumberToObject(json, "rssi", rssi);
                 cJSON_AddNumberToObject(json, "disconnects", g_stats.mesh_disconnects);
                 cJSON_AddNumberToObject(json, "lowHeap", g_stats.low_heap_events);
+                
+                // Add relay-specific info
+                if (g_node_type == NODE_TYPE_RELAY) {
+                    int num_outputs = (g_board_type == BOARD_TYPE_16_RELAY) ? MAX_RELAYS_16 : MAX_RELAYS_8;
+                    cJSON_AddNumberToObject(json, "outputs", num_outputs);
+                }
                 
                 char *json_str = cJSON_PrintUnformatted(json);
                 cJSON_Delete(json);

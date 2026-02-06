@@ -8,6 +8,80 @@
 static const char *TAG = "NODE_ROOT";
 
 // ====================
+// MQTT Command Handling
+// ====================
+
+static void handle_mqtt_command(const char *topic, int topic_len, 
+                               const char *data, int data_len)
+{
+    if (topic == NULL || data == NULL || topic_len == 0 || data_len == 0) {
+        return;
+    }
+    
+    // Extract topic string
+    char topic_str[128];
+    int copy_len = (topic_len < sizeof(topic_str) - 1) ? topic_len : sizeof(topic_str) - 1;
+    memcpy(topic_str, topic, copy_len);
+    topic_str[copy_len] = '\0';
+    
+    // Extract command string
+    char cmd_str[64];
+    copy_len = (data_len < sizeof(cmd_str) - 1) ? data_len : sizeof(cmd_str) - 1;
+    memcpy(cmd_str, data, copy_len);
+    cmd_str[copy_len] = '\0';
+    
+    ESP_LOGI(TAG, "Processing MQTT command: topic=%s, cmd=%s", topic_str, cmd_str);
+    
+    // Determine if this is a relay or switch command
+    bool is_relay_cmd = (strstr(topic_str, "/relay/cmd") != NULL);
+    bool is_switch_cmd = (strstr(topic_str, "/switch/cmd") != NULL);
+    
+    if (!is_relay_cmd && !is_switch_cmd) {
+        ESP_LOGW(TAG, "Unknown command topic: %s", topic_str);
+        return;
+    }
+    
+    // Extract device ID if present (e.g., /relay/cmd/12345678)
+    uint32_t target_device_id = 0;
+    char *last_slash = strrchr(topic_str, '/');
+    if (last_slash != NULL && last_slash[1] != '\0') {
+        // Try to parse as device ID
+        char *endptr;
+        unsigned long parsed = strtoul(last_slash + 1, &endptr, 10);
+        if (*endptr == '\0' && parsed > 0) {
+            target_device_id = (uint32_t)parsed;
+        }
+    }
+    
+    // Create mesh command message
+    mesh_app_msg_t msg = {0};
+    msg.msg_type = MSG_TYPE_COMMAND;
+    msg.device_id = g_device_id;  // From root
+    
+    // Copy command data
+    size_t cmd_len = strlen(cmd_str);
+    if (cmd_len >= MESH_MSG_DATA_SIZE) {
+        cmd_len = MESH_MSG_DATA_SIZE - 1;
+    }
+    memcpy(msg.data, cmd_str, cmd_len);
+    msg.data[cmd_len] = '\0';
+    msg.data_len = cmd_len;
+    
+    // If specific device ID, send to that device
+    // Otherwise, broadcast to all appropriate nodes
+    if (target_device_id != 0) {
+        // TODO: Send to specific device via mesh routing
+        ESP_LOGI(TAG, "Forwarding command to device %" PRIu32, target_device_id);
+        // For now, we'll broadcast as we don't have direct device addressing
+        esp_mesh_send(NULL, &msg, MESH_DATA_P2P, NULL, 0);
+    } else {
+        // Broadcast to all nodes
+        ESP_LOGI(TAG, "Broadcasting command to all nodes");
+        esp_mesh_send(NULL, &msg, MESH_DATA_P2P, NULL, 0);
+    }
+}
+
+// ====================
 // MQTT Event Handler
 // ====================
 
@@ -41,7 +115,8 @@ void mqtt_event_handler(void *handler_args, esp_event_base_t base,
             ESP_LOGI(TAG, "MQTT data received: topic=%.*s, data=%.*s",
                      event->topic_len, event->topic,
                      event->data_len, event->data);
-            // TODO: Handle MQTT commands
+            handle_mqtt_command(event->topic, event->topic_len,
+                              event->data, event->data_len);
             break;
             
         case MQTT_EVENT_ERROR:
@@ -277,6 +352,47 @@ void root_handle_mesh_message(const mesh_addr_t *from, const mesh_app_msg_t *msg
             // Command from another node (future use)
             ESP_LOGD(TAG, "Command message received");
             break;
+        
+        case MSG_TYPE_RELAY_STATE: {
+            // Relay state confirmation from relay node
+            if (msg->data_len > 0 && msg->data_len < sizeof(msg->data)) {
+                // Ensure null termination
+                char state_str[sizeof(msg->data) + 1];
+                memcpy(state_str, msg->data, msg->data_len);
+                state_str[msg->data_len] = '\0';
+                
+                ESP_LOGI(TAG, "Relay state from device %" PRIu32 ": %s",
+                         msg->device_id, state_str);
+                
+                // Publish to MQTT: /relay/state/{deviceId}/{relay}
+                // Format: state_str should be like "a0" (relay a is OFF) or "a1" (relay a is ON)
+                if (g_mqtt_connected && strlen(state_str) >= 2) {
+                    char topic[64];
+                    char relay_char = state_str[0];
+                    char state_char = state_str[1];
+                    
+                    snprintf(topic, sizeof(topic), 
+                             "/relay/state/%" PRIu32 "/%c", 
+                             msg->device_id, relay_char);
+                    
+                    char payload[2] = {state_char, '\0'};
+                    
+                    int mqtt_msg_id = esp_mqtt_client_publish(g_mqtt_client, topic,
+                                                             payload, 1, 0, 0);
+                    if (mqtt_msg_id >= 0) {
+                        ESP_LOGD(TAG, "Published relay state to %s: %c", topic, state_char);
+                    } else {
+                        ESP_LOGW(TAG, "Failed to publish relay state");
+                        
+                        if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                            g_stats.mqtt_dropped++;
+                            xSemaphoreGive(g_stats_mutex);
+                        }
+                    }
+                }
+            }
+            break;
+        }
             
         default:
             ESP_LOGW(TAG, "Unknown message type: '%c'", msg->msg_type);

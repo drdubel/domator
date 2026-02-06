@@ -37,11 +37,45 @@
 #define BUTTON_GPIO_6                   7
 #define LED_GPIO                        8
 
+// GPIO pin definitions for 8-relay board
+#define RELAY_8_PIN_0                   32
+#define RELAY_8_PIN_1                   33
+#define RELAY_8_PIN_2                   25
+#define RELAY_8_PIN_3                   26
+#define RELAY_8_PIN_4                   27
+#define RELAY_8_PIN_5                   14
+#define RELAY_8_PIN_6                   12
+#define RELAY_8_PIN_7                   13
+#define RELAY_8_STATUS_LED              23
+
+// GPIO pin definitions for 8-relay board buttons
+#define RELAY_8_BUTTON_0                16
+#define RELAY_8_BUTTON_1                17
+#define RELAY_8_BUTTON_2                18
+#define RELAY_8_BUTTON_3                19
+#define RELAY_8_BUTTON_4                21
+#define RELAY_8_BUTTON_5                22
+#define RELAY_8_BUTTON_6                34
+#define RELAY_8_BUTTON_7                35
+
+// GPIO pin definitions for 16-relay shift register board
+#define RELAY_16_PIN_DATA               14  // SER
+#define RELAY_16_PIN_CLOCK              13  // SRCLK
+#define RELAY_16_PIN_LATCH              12  // RCLK
+#define RELAY_16_PIN_OE                 5   // Output Enable (active LOW)
+
+// Relay board types
+#define MAX_RELAYS_8                    8
+#define MAX_RELAYS_16                   16
+#define NUM_RELAY_BUTTONS               8
+
 // Message types for mesh communication
 #define MSG_TYPE_BUTTON                 'B'
 #define MSG_TYPE_STATUS                 'S'
 #define MSG_TYPE_COMMAND                'C'
 #define MSG_TYPE_ACK                    'A'
+#define MSG_TYPE_RELAY_STATE            'R'  // Relay state confirmation
+#define MSG_TYPE_SYNC_REQUEST           'Y'  // Request state sync
 
 // Node types
 typedef enum {
@@ -50,6 +84,12 @@ typedef enum {
     NODE_TYPE_SWITCH,
     NODE_TYPE_RELAY
 } node_type_t;
+
+// Relay board types
+typedef enum {
+    BOARD_TYPE_8_RELAY = 0,
+    BOARD_TYPE_16_RELAY
+} board_type_t;
 
 // ====================
 // Data Structures
@@ -112,6 +152,14 @@ extern bool g_mqtt_connected;
 extern button_state_t g_button_states[NUM_BUTTONS];
 extern const int g_button_pins[NUM_BUTTONS];
 
+// Relay state (relay nodes)
+extern board_type_t g_board_type;
+extern uint16_t g_relay_outputs;  // 16-bit state for all relays
+extern button_state_t g_relay_button_states[NUM_RELAY_BUTTONS];
+extern const int g_relay_8_pins[MAX_RELAYS_8];
+extern const int g_relay_button_pins[NUM_RELAY_BUTTONS];
+extern SemaphoreHandle_t g_relay_mutex;
+
 // Queues and mutexes
 extern QueueHandle_t g_mesh_tx_queue;
 extern SemaphoreHandle_t g_stats_mutex;
@@ -155,5 +203,18 @@ void led_init(void);
 void led_task(void *arg);
 void led_set_color(uint8_t r, uint8_t g, uint8_t b);
 void led_flash_cyan(void);
+
+// node_relay.c (relay node functions)
+void relay_board_detect(void);
+void relay_init(void);
+void relay_set(int index, bool state);
+void relay_toggle(int index);
+void relay_write_shift_register(uint16_t bits);
+bool relay_get_state(int index);
+void relay_sync_all_states(void);
+void relay_send_state_confirmation(int index);
+void relay_button_init(void);
+void relay_button_task(void *arg);
+void relay_handle_command(const char *cmd_data);
 
 #endif // DOMATOR_MESH_H

@@ -5,6 +5,7 @@
 #include "esp_mac.h"
 #include "esp_app_format.h"
 #include "esp_ota_ops.h"
+#include "driver/gpio.h"
 
 static const char *TAG = "DOMATOR_MESH";
 
@@ -31,6 +32,20 @@ const int g_button_pins[NUM_BUTTONS] = {
     BUTTON_GPIO_0, BUTTON_GPIO_1, BUTTON_GPIO_2, BUTTON_GPIO_3,
     BUTTON_GPIO_4, BUTTON_GPIO_5, BUTTON_GPIO_6
 };
+
+// Relay node globals
+board_type_t g_board_type = BOARD_TYPE_8_RELAY;
+uint16_t g_relay_outputs = 0;
+button_state_t g_relay_button_states[NUM_RELAY_BUTTONS] = {0};
+const int g_relay_8_pins[MAX_RELAYS_8] = {
+    RELAY_8_PIN_0, RELAY_8_PIN_1, RELAY_8_PIN_2, RELAY_8_PIN_3,
+    RELAY_8_PIN_4, RELAY_8_PIN_5, RELAY_8_PIN_6, RELAY_8_PIN_7
+};
+const int g_relay_button_pins[NUM_RELAY_BUTTONS] = {
+    RELAY_8_BUTTON_0, RELAY_8_BUTTON_1, RELAY_8_BUTTON_2, RELAY_8_BUTTON_3,
+    RELAY_8_BUTTON_4, RELAY_8_BUTTON_5, RELAY_8_BUTTON_6, RELAY_8_BUTTON_7
+};
+SemaphoreHandle_t g_relay_mutex = NULL;
 
 QueueHandle_t g_mesh_tx_queue = NULL;
 SemaphoreHandle_t g_stats_mutex = NULL;
@@ -85,10 +100,40 @@ void generate_firmware_hash(void)
 
 void detect_hardware_type(void)
 {
-    // For now, hardcode to SWITCH for Phase 2
-    // In future, this could detect based on GPIO configuration or NVS setting
-    g_node_type = NODE_TYPE_SWITCH;
-    ESP_LOGI(TAG, "Hardware detected as: SWITCH_C3");
+    // Check if this is a relay board by probing shift register pins
+    // If the pins are pulled high, it's likely a 16-relay board
+    // If they're not present (will read differently), it's likely an 8-relay board
+    
+    gpio_config_t io_conf = {
+        .pin_bit_mask = ((1ULL << RELAY_16_PIN_DATA) | 
+                         (1ULL << RELAY_16_PIN_CLOCK) | 
+                         (1ULL << RELAY_16_PIN_LATCH)),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE
+    };
+    
+    gpio_config(&io_conf);
+    vTaskDelay(pdMS_TO_TICKS(10));
+    
+    // Read the pins
+    int data_val = gpio_get_level(RELAY_16_PIN_DATA);
+    int clock_val = gpio_get_level(RELAY_16_PIN_CLOCK);
+    int latch_val = gpio_get_level(RELAY_16_PIN_LATCH);
+    
+    // If all pins are high (pulled up and not connected to ground), likely 16-relay board
+    if (data_val && clock_val && latch_val) {
+        g_node_type = NODE_TYPE_RELAY;
+        g_board_type = BOARD_TYPE_16_RELAY;
+        ESP_LOGI(TAG, "Hardware detected as: RELAY_16");
+    } else {
+        // Check if relay output pins are present (8-relay board)
+        // For now, default to switch if not 16-relay
+        // TODO: Add better detection for 8-relay vs switch
+        g_node_type = NODE_TYPE_SWITCH;
+        ESP_LOGI(TAG, "Hardware detected as: SWITCH_C3");
+    }
 }
 
 // ====================
@@ -118,6 +163,15 @@ void app_main(void)
         return;
     }
     
+    // Create relay mutex if needed
+    if (g_node_type == NODE_TYPE_RELAY) {
+        g_relay_mutex = xSemaphoreCreateMutex();
+        if (g_relay_mutex == NULL) {
+            ESP_LOGE(TAG, "Failed to create relay mutex");
+            return;
+        }
+    }
+    
     // Initialize mesh network
     mesh_init();
     
@@ -136,6 +190,12 @@ void app_main(void)
         led_init();
         xTaskCreate(button_task, "button", 4096, NULL, 6, NULL);
         xTaskCreate(led_task, "led", 3072, NULL, 2, NULL);
+    } else if (g_node_type == NODE_TYPE_RELAY) {
+        ESP_LOGI(TAG, "Starting relay node tasks (board type: %s)",
+                 g_board_type == BOARD_TYPE_16_RELAY ? "16-relay" : "8-relay");
+        relay_init();
+        relay_button_init();
+        xTaskCreate(relay_button_task, "relay_button", 4096, NULL, 6, NULL);
     }
     
     ESP_LOGI(TAG, "Domator Mesh initialized");

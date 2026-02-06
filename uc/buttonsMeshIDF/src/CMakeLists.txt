@@ -5,6 +5,7 @@ idf_component_register(
         "mesh_comm.c"
         "node_root.c"
         "node_switch.c"
+        "node_relay.c"
     INCLUDE_DIRS "."
     REQUIRES 
         esp_wifi 

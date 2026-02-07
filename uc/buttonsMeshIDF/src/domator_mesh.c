@@ -17,6 +17,7 @@ static const char *TAG = "DOMATOR_MESH";
 
 uint32_t g_device_id = 0;
 node_type_t g_node_type = NODE_TYPE_UNKNOWN;
+char g_firmware_version[32] = {0};
 char g_firmware_hash[33] = {0};
 device_stats_t g_stats = {0};
 
@@ -95,14 +96,18 @@ void generate_firmware_hash(void)
     const esp_app_desc_t *app_desc = esp_app_get_description();
     
     if (app_desc != NULL) {
+        // Store firmware version string
+        snprintf(g_firmware_version, sizeof(g_firmware_version), "%s", app_desc->version);
+        
         // Use the SHA256 hash from the ELF file for a true firmware hash
         // Convert first 16 bytes to hex string (32 chars)
         for (int i = 0; i < 16; i++) {
             sprintf(&g_firmware_hash[i * 2], "%02x", app_desc->app_elf_sha256[i]);
         }
         ESP_LOGI(TAG, "Firmware version: %s, hash: %s", 
-                 app_desc->version, g_firmware_hash);
+                 g_firmware_version, g_firmware_hash);
     } else {
+        snprintf(g_firmware_version, sizeof(g_firmware_version), "unknown");
         snprintf(g_firmware_hash, sizeof(g_firmware_hash), "unknown");
         ESP_LOGW(TAG, "Could not read app description");
     }

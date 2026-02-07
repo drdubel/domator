@@ -354,7 +354,6 @@ static void publish_connection_status(bool connected) {
     
     if (connected) {
         // Add additional info on connection
-        extern const char* g_firmware_version;
         cJSON_AddStringToObject(json, "firmware", g_firmware_version);
         cJSON_AddNumberToObject(json, "mesh_layer", g_mesh_layer);
         

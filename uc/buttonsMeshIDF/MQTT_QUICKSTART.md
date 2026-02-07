@@ -97,6 +97,7 @@ idf.py flash monitor
 I (xxxx) IP_EVENT: Root got IP: 192.168.1.25
 I (xxxx) NODE_ROOT: Initializing MQTT client
 I (xxxx) NODE_ROOT: MQTT connected          ← Success!
+I (xxxx) NODE_ROOT: Published connection status: connected ← New!
 I (xxxx) NODE_ROOT: MQTT subscribed
 ```
 
@@ -105,6 +106,29 @@ I (xxxx) NODE_ROOT: MQTT subscribed
 E (xxxx) esp-tls: [sock=48] select() timeout  ← Gone!
 E (xxxx) NODE_ROOT: MQTT error                ← Gone!
 ```
+
+### Step 7: Monitor Connection Status
+
+**The root node now publishes its status to MQTT:**
+
+```bash
+# Monitor connection status
+mosquitto_sub -h YOUR_IP -t "/status/root/connection" -v
+```
+
+**You'll see:**
+```json
+/status/root/connection {"status":"connected","device_id":1074205304,"timestamp":1707308070,"firmware":"48925a3","ip":"192.168.1.45","mesh_layer":1}
+```
+
+This lets you:
+- ✅ Confirm root is online
+- ✅ See which device became root (device_id)
+- ✅ Get root's IP address
+- ✅ Monitor firmware version
+- ✅ Integrate with home automation
+
+**For more details**, see [MQTT_STATUS_MESSAGES.md](MQTT_STATUS_MESSAGES.md)
 
 ## Test MQTT Communication
 

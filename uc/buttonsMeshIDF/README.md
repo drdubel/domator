@@ -254,6 +254,37 @@ Password: domator
 
 **For troubleshooting**, see [MQTT_TROUBLESHOOTING.md](MQTT_TROUBLESHOOTING.md)
 
+### Connection Status Messages
+
+The root node automatically publishes its connection status to MQTT:
+
+**Topic:** `/status/root/connection`
+
+**On connection:**
+```json
+{
+  "status": "connected",
+  "device_id": 1074205304,
+  "timestamp": 1707308070,
+  "firmware": "48925a3",
+  "ip": "192.168.1.45",
+  "mesh_layer": 1
+}
+```
+
+**Monitor connection status:**
+```bash
+mosquitto_sub -t "/status/root/connection" -v
+```
+
+This allows you to:
+- Detect when the mesh network comes online
+- Monitor root node availability
+- Integrate with home automation (Home Assistant, Node-RED)
+- Track firmware versions and IP addresses
+
+**For details**, see [MQTT_STATUS_MESSAGES.md](MQTT_STATUS_MESSAGES.md)
+
 ## Project Structure
 
 ```

@@ -230,6 +230,30 @@ Configuration is done via `menuconfig` or by editing `sdkconfig.defaults`:
 - `CONFIG_MQTT_USERNAME` - MQTT username
 - `CONFIG_MQTT_PASSWORD` - MQTT password
 
+### Root Election
+
+ESP-WIFI-MESH automatically elects one device as the root node based on WiFi signal strength. The root node:
+- Connects to the WiFi router and gets an IP address
+- Handles MQTT communication with external services
+- Forwards commands between MQTT and mesh nodes
+
+**For details**, see [ROOT_ELECTION.md](ROOT_ELECTION.md)
+
+### MQTT Setup
+
+The root node requires an MQTT broker to be running and accessible. Default configuration:
+```
+MQTT Broker: mqtt://192.168.1.100:1883
+Username: domator
+Password: domator
+```
+
+**Common issue:** If you see MQTT connection errors, you need to:
+1. Install Mosquitto (MQTT broker) or use a cloud broker
+2. Update the MQTT configuration to match your broker's IP address
+
+**For troubleshooting**, see [MQTT_TROUBLESHOOTING.md](MQTT_TROUBLESHOOTING.md)
+
 ## Project Structure
 
 ```
@@ -304,6 +328,13 @@ uc/buttonsMeshIDF/
 After forwarding by root, `parentId` is added.
 
 ## Troubleshooting
+
+### Root Election and MQTT Connection
+If you're seeing MQTT connection errors or want to understand which device becomes root:
+- **Root election:** See [ROOT_ELECTION.md](ROOT_ELECTION.md) for how ESP-WIFI-MESH automatically elects the root node
+- **MQTT errors:** See [MQTT_TROUBLESHOOTING.md](MQTT_TROUBLESHOOTING.md) for fixing connection timeout errors
+
+**Common issue:** `esp-tls: [sock=48] select() timeout` → You need to install and configure an MQTT broker (e.g., Mosquitto)
 
 ### Hardware Misdetection - Relay Detected as Switch
 If ESP32 relay board is detected as SWITCH (check logs for "Hardware detected as: SWITCH") and crashes with WDT reset, see [HARDWARE_DETECTION_FIX.md](HARDWARE_DETECTION_FIX.md) for:

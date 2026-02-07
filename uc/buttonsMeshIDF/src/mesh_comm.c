@@ -164,15 +164,18 @@ void status_report_task(void* arg) {
                 .src_id = g_device_id,
                 .msg_type = 'S',
             };
-            snprintf(msg.data, sizeof(msg.data),
+            snprintf(msg.data, MESH_MSG_DATA_SIZE,
                      "{\"deviceId\":%" PRIu32
                      ","
                      "\"type\":\"switch\","
                      "\"freeHeap\":%" PRIu32
                      ","
-                     "\"uptime\":%" PRIu32 "}",
+                     "\"uptime\":%" PRIu32
+                     ","
+                     "\"meshLayer\":%d\"}",
                      g_device_id, (uint32_t)esp_get_free_heap_size(),
-                     (uint32_t)(esp_timer_get_time() / 1000000));
+                     (uint32_t)(esp_timer_get_time() / 1000000),
+                     esp_mesh_get_layer());
             msg.data_len = strlen(msg.data);
 
             mesh_queue_to_root(&msg);

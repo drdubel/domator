@@ -64,6 +64,8 @@ static mesh_addr_t* registry_find(uint32_t device_id) {
 // ============ HANDLE MESH MESSAGES AS ROOT ============
 void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
     registry_update(msg->src_id, from, NULL);
+    ESP_LOGI(TAG, "Message from %" PRIu32 " (type=%c, len=%d)", msg->src_id,
+             msg->msg_type, msg->data_len);
 
     switch (msg->msg_type) {
         case 'B': {
@@ -78,6 +80,7 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
                 snprintf(topic, sizeof(topic), "/switch/state/%" PRIu32,
                          msg->src_id);
                 char payload[2] = {button, '\0'};
+                ESP_LOGI(TAG, "Publishing button status to MQTT: %s", payload);
                 esp_mqtt_client_publish(mqtt_client, topic, payload, 0, 0, 0);
             }
 
@@ -88,8 +91,8 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
         case 'R': {
             if (mqtt_connected) {
                 char topic[64];
-                snprintf(topic, sizeof(topic), "/relay/state/%" PRIu32,
-                         msg->src_id);
+                snprintf(topic, sizeof(topic), "/switch/state/root");
+                ESP_LOGI(TAG, "Publishing relay status to MQTT: %s", msg->data);
                 esp_mqtt_client_publish(mqtt_client, topic, msg->data,
                                         msg->data_len, 0, 0);
             }
@@ -98,8 +101,12 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
 
         case 'S': {
             if (mqtt_connected) {
-                esp_mqtt_client_publish(mqtt_client, "/switch/state/root",
-                                        msg->data, msg->data_len, 0, 0);
+                char topic[64];
+                snprintf(topic, sizeof(topic), "/switch/state/root");
+                ESP_LOGI(TAG, "Publishing switch status to MQTT: %s",
+                         msg->data);
+                esp_mqtt_client_publish(mqtt_client, topic, msg->data,
+                                        msg->data_len, 0, 0);
             }
             break;
         }

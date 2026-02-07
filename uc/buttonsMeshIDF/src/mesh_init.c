@@ -111,7 +111,7 @@ void mesh_network_init(void) {
     mesh_cfg_t cfg = MESH_INIT_CONFIG_DEFAULT();
 
     // Mesh ID
-    uint8_t mesh_id[6] = {0x77, 0x77, 0x77, 0x77, 0x77, 0x01};
+    uint8_t mesh_id[6] = CONFIG_MESH_ID;
     memcpy(&cfg.mesh_id, mesh_id, 6);
 
     // Router (your WiFi AP)

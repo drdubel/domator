@@ -49,8 +49,21 @@ static void ip_event_handler(void *arg, esp_event_base_t event_base,
         g_is_root = true;
         g_mesh_layer = 1;
         
-        // Initialize MQTT for root node
-        mqtt_init();
+        // Initialize MQTT for root node (only if not already initialized)
+        // This prevents multiple MQTT clients on repeated IP events
+        extern esp_mqtt_client_handle_t g_mqtt_client;
+        if (g_mqtt_client == NULL) {
+            mqtt_init();
+        } else {
+            ESP_LOGI(TAG, "MQTT client already initialized, skipping");
+        }
+    }
+    
+    if (event_base == IP_EVENT && event_id == IP_EVENT_STA_LOST_IP) {
+        ESP_LOGW(TAG, "Root lost IP - cleaning up MQTT");
+        g_is_root = false;
+        g_mesh_layer = 0;
+        mqtt_cleanup();
     }
 }
 
@@ -83,7 +96,7 @@ static void mesh_event_handler(void *arg, esp_event_base_t event_base,
             // For now, we'll derive parent ID from MAC when needed
             // The connected structure contains parent MAC info
             
-            ESP_LOGI(TAG, "Parent connected - Layer: %d", g_mesh_layer);
+            ESP_LOGI(TAG, "✓ Parent connected - Layer: %d, Mesh connected, status reports will be sent to root", g_mesh_layer);
             break;
         }
         
@@ -141,6 +154,10 @@ static void mesh_event_handler(void *arg, esp_event_base_t event_base,
             
         case MESH_EVENT_ROOT_ASKED_YIELD:
             ESP_LOGI(TAG, "Root asked to yield");
+            // Note: MESH_EVENT_ROOT_LOST doesn't exist in ESP-IDF
+            // Root changes are detected via MESH_EVENT_TODS_STATE changing
+            // or when device becomes non-root (layer > 1)
+            // For now, we rely on IP loss detection in IP_EVENT_STA_LOST_IP
             break;
             
         default:
@@ -172,6 +189,8 @@ void wifi_init(void)
                                                 &wifi_event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
                                                 &ip_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_LOST_IP,
+                                                &ip_event_handler, NULL));
     
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_FLASH));
     ESP_ERROR_CHECK(esp_wifi_start());
@@ -185,6 +204,9 @@ void mesh_init(void)
 {
     ESP_LOGI(TAG, "Initializing mesh network");
     
+    // Log available heap before mesh init
+    ESP_LOGI(TAG, "Free heap before mesh init: %lu bytes", esp_get_free_heap_size());
+    
     // Initialize NVS
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -196,8 +218,19 @@ void mesh_init(void)
     // Initialize WiFi
     wifi_init();
     
+    // Log heap after WiFi init, before mesh
+    ESP_LOGI(TAG, "Free heap after WiFi init: %lu bytes", esp_get_free_heap_size());
+    
+    // Check if we have enough heap for mesh (minimum 80KB recommended)
+    uint32_t free_heap = esp_get_free_heap_size();
+    if (free_heap < 80000) {
+        ESP_LOGW(TAG, "Low heap before mesh init: %lu bytes (80KB+ recommended)", free_heap);
+    }
+    
     // Initialize mesh
+    ESP_LOGI(TAG, "Calling esp_mesh_init()...");
     ESP_ERROR_CHECK(esp_mesh_init());
+    ESP_LOGI(TAG, "esp_mesh_init() completed");
     
     // Register mesh event handler
     ESP_ERROR_CHECK(esp_event_handler_register(MESH_EVENT, ESP_EVENT_ANY_ID,
@@ -215,6 +248,7 @@ void mesh_init(void)
     ESP_ERROR_CHECK(esp_mesh_set_id(&mesh_id));
     
     // Configure mesh
+    ESP_LOGI(TAG, "Configuring mesh parameters...");
     mesh_cfg_t mesh_cfg = MESH_INIT_CONFIG_DEFAULT();
     memcpy((uint8_t *)&mesh_cfg.mesh_id, mesh_id.addr, 6);
     mesh_cfg.channel = 0;  // Auto channel selection
@@ -238,10 +272,12 @@ void mesh_init(void)
     ESP_ERROR_CHECK(esp_mesh_set_self_organized(true, true));
     
     // Start mesh
+    ESP_LOGI(TAG, "Starting mesh network...");
     ESP_ERROR_CHECK(esp_mesh_start());
     
     ESP_LOGI(TAG, "Mesh initialized - SSID: %s, Mesh ID: %02X%02X%02X%02X%02X%02X",
              CONFIG_WIFI_SSID, 
              mesh_id.addr[0], mesh_id.addr[1], mesh_id.addr[2],
              mesh_id.addr[3], mesh_id.addr[4], mesh_id.addr[5]);
+    ESP_LOGI(TAG, "Free heap after mesh init: %lu bytes", esp_get_free_heap_size());
 }

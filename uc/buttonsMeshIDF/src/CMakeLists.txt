@@ -6,6 +6,7 @@ idf_component_register(
         "node_root.c"
         "node_switch.c"
         "node_relay.c"
+        "health_ota.c"
     INCLUDE_DIRS "."
     REQUIRES 
         esp_wifi 
@@ -15,4 +16,5 @@ idf_component_register(
         mqtt 
         json 
         led_strip
+        esp_https_ota
 )

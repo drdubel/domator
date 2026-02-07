@@ -9,6 +9,9 @@
 
 static const char *TAG = "NODE_RELAY";
 
+// Relay initialization flag to prevent operations before init complete
+static bool g_relay_initialized = false;
+
 // ====================
 // Helper Functions
 // ====================
@@ -100,6 +103,18 @@ void relay_set(int index, bool state)
         return;
     }
     
+    // Safety check: ensure relay is initialized before operations
+    if (!g_relay_initialized) {
+        ESP_LOGW(TAG, "Relay not initialized, skipping operation");
+        return;
+    }
+    
+    // Safety check: ensure mutex exists
+    if (g_relay_mutex == NULL) {
+        ESP_LOGE(TAG, "Relay mutex not created, cannot operate relay");
+        return;
+    }
+    
     if (xSemaphoreTake(g_relay_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
         ESP_LOGW(TAG, "Failed to acquire relay mutex");
         return;
@@ -138,6 +153,18 @@ void relay_toggle(int index)
         return;
     }
     
+    // Safety check: ensure relay is initialized
+    if (!g_relay_initialized) {
+        ESP_LOGW(TAG, "Relay not initialized, skipping operation");
+        return;
+    }
+    
+    // Safety check: ensure mutex exists
+    if (g_relay_mutex == NULL) {
+        ESP_LOGE(TAG, "Relay mutex not created, cannot operate relay");
+        return;
+    }
+    
     if (xSemaphoreTake(g_relay_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
         ESP_LOGW(TAG, "Failed to acquire relay mutex");
         return;
@@ -156,6 +183,16 @@ bool relay_get_state(int index)
     int max_relays = (g_board_type == BOARD_TYPE_16_RELAY) ? MAX_RELAYS_16 : MAX_RELAYS_8;
     
     if (index < 0 || index >= max_relays) {
+        return false;
+    }
+    
+    // Safety check: ensure relay is initialized
+    if (!g_relay_initialized) {
+        return false;
+    }
+    
+    // Safety check: ensure mutex exists
+    if (g_relay_mutex == NULL) {
         return false;
     }
     
@@ -222,6 +259,12 @@ void relay_handle_command(const char *cmd_data)
 {
     if (cmd_data == NULL || strlen(cmd_data) == 0) {
         ESP_LOGW(TAG, "Empty relay command");
+        return;
+    }
+    
+    // Safety check: ensure relay is initialized before processing commands
+    if (!g_relay_initialized) {
+        ESP_LOGW(TAG, "Relay not initialized, ignoring command: %s", cmd_data);
         return;
     }
     
@@ -433,4 +476,8 @@ void relay_init(void)
     }
     
     relay_board_detect();
+    
+    // Mark relay as initialized - safe to perform operations now
+    g_relay_initialized = true;
+    ESP_LOGI(TAG, "Relay initialization complete - ready for operations");
 }

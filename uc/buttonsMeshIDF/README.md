@@ -44,10 +44,42 @@ This project replaces the previous 3 separate ESP-NOW Arduino firmwares (rootLig
 - **Connection map parsing (#13)**: Configure button → relay mappings via MQTT JSON
 - **Button type config (#14)**: Support toggle (type=0) and stateful (type=1) buttons
 - **Button → relay routing (#15)**: Automatically route button presses to configured relay targets
-- **MQTT → node forwarding (#16)**: Forward MQTT commands to mesh nodes (already implemented)
+- **MQTT → node forwarding (#16)**: Forward MQTT commands to mesh nodes with device-specific targeting
 - **Relay state → MQTT (#17)**: Publish relay states to MQTT (already implemented)
 - **Node status → MQTT (#18)**: Forward node status reports (already implemented)
 - **MQTT config receive (#19)**: Receive and apply configuration via `/switch/cmd/root`
+- **Device-specific targeting**: Commands to specific device IDs use direct routing (not broadcast)
+  - MQTT topics with device ID: `/relay/cmd/1074207536`
+  - Root maintains device_id → MAC address mapping
+  - Direct sends when device known, broadcasts as fallback
+  - See [DEVICE_TARGETING.md](DEVICE_TARGETING.md) for details
+
+### Phase 5 - Reliability
+- **Peer health tracking (#20)**: Track node connectivity and health metrics
+- **OTA updates (#22)**: Firmware updates via esp_https_ota
+- **OTA trigger via mesh (#23)**: Trigger OTA updates through mesh network
+- **Root-loss reset (#25)**: Auto-reset nodes after 5 minutes of root disconnection
+- **Heap health monitoring (#26)**: Monitor heap usage with low (40KB) and critical (20KB) thresholds
+
+### Phase 6 - Gestures & Scenes
+- **Button gesture state machine (#1)**: Single/double/long press detection
+  - Single press: Quick press and release (< 800ms)
+  - Double press: Two quick presses within 400ms window
+  - Long press: Hold button for 800ms or more
+- **Configurable gesture enable bitmask (#2)**: NVS-persisted gesture config per button
+  - Bit 0: Single press enabled
+  - Bit 1: Double press enabled
+  - Bit 2: Long press enabled
+- **Gesture char encoding (#3)**: Character encoding for gesture types
+  - Single press: 'a'-'g' (buttons 0-6)
+  - Double press: 'h'-'n' (buttons 0-6)
+  - Long press: 'o'-'u' (buttons 0-6)
+- **Root connections map extension (#4)**: Gesture characters routed through existing connection map
+- **Explicit relay set commands (#5)**: "a0"/"a1" commands for scenes (already supported)
+- **Scene mapping (#6)**: One gesture can trigger multiple relay actions via routing
+- **NVS backup of gesture config (#7)**: Gesture config persists across reboots
+- **End-to-end config delivery (#8)**: MQTT → Root → Mesh → Switch → NVS flow
+- **Fallback logic (#9)**: Disabled gestures gracefully default to single press
 
 #### Configuration Examples
 **Connection Map:**
@@ -75,6 +107,29 @@ This project replaces the previous 3 separate ESP-NOW Arduino firmwares (rootLig
   }
 }
 ```
+
+**Gesture Configuration:**
+```json
+{
+  "type": "gesture_config",
+  "device_id": "switchDeviceId",
+  "data": {
+    "0": 7,
+    "1": 3,
+    "2": 1
+  }
+}
+```
+Note: Bitmask values: 1=single only, 3=single+double, 7=all enabled
+
+**OTA Trigger:**
+```json
+{
+  "type": "ota_trigger",
+  "url": "https://example.com/firmware.bin"
+}
+```
+Note: Firmware can be hosted on any HTTP/HTTPS server. See [OTA_FIRMWARE_HOSTING.md](OTA_FIRMWARE_HOSTING.md) for detailed hosting options.
 
 ## Hardware Support
 
@@ -175,6 +230,105 @@ Configuration is done via `menuconfig` or by editing `sdkconfig.defaults`:
 - `CONFIG_MQTT_USERNAME` - MQTT username
 - `CONFIG_MQTT_PASSWORD` - MQTT password
 
+### Root Election
+
+ESP-WIFI-MESH automatically elects one device as the root node based on WiFi signal strength. The root node:
+- Connects to the WiFi router and gets an IP address
+- Handles MQTT communication with external services
+- Forwards commands between MQTT and mesh nodes
+
+**For details**, see [ROOT_ELECTION.md](ROOT_ELECTION.md)
+
+### WiFi Configuration
+
+⚠️ **IMPORTANT:** WiFi credentials must be configured before deployment!
+
+Default configuration has **empty WiFi credentials**, causing devices to operate in isolated mode with IP `192.168.4.x` instead of connecting to your home WiFi.
+
+**Configure WiFi:**
+```bash
+idf.py menuconfig
+# Navigate to: Domator Mesh Configuration
+# Set: WiFi SSID = "YourNetworkName"
+# Set: WiFi Password = "YourPassword"
+# Save and exit (S, Enter, Q)
+idf.py build flash monitor
+```
+
+**Verify correct connection:**
+After configuration, logs should show:
+```
+I (7245) esp_netif_handlers: sta ip: 192.168.1.45, gw: 192.168.1.1
+                                          ↑ Your home network, NOT 192.168.4.x
+```
+
+**If you see `192.168.4.x` network**, WiFi is not configured correctly. See [IP_ADDRESSING_GUIDE.md](IP_ADDRESSING_GUIDE.md) for detailed explanation and troubleshooting.
+
+### Root Transitions
+
+ESP-WIFI-MESH automatically handles root node changes (root healing) when:
+- Current root's WiFi signal degrades
+- Current root device powers off or fails
+- A device with better WiFi signal appears
+
+**Key points:**
+- Only ONE device is root at any time
+- Root transitions take ~12 seconds
+- Each device has unique MQTT client ID (no conflicts)
+- Old root cleanly disconnects MQTT before new root connects
+- System continues functioning during transitions
+
+**For details**, see [ROOT_TRANSITIONS.md](ROOT_TRANSITIONS.md)
+
+### MQTT Setup
+
+The root node requires an MQTT broker to be running and accessible. Default configuration:
+```
+MQTT Broker: mqtt://192.168.1.100:1883
+Username: domator
+Password: domator
+```
+
+**Important:** Each device has a unique MQTT client ID (format: `domator_<device_id>`) to prevent conflicts during root transitions.
+
+**Common issue:** If you see MQTT connection errors, you need to:
+1. Install Mosquitto (MQTT broker) or use a cloud broker
+2. Update the MQTT configuration to match your broker's IP address
+3. Ensure WiFi is configured correctly (see above)
+
+**For troubleshooting**, see [MQTT_TROUBLESHOOTING.md](MQTT_TROUBLESHOOTING.md) or [MQTT_QUICKSTART.md](MQTT_QUICKSTART.md)
+
+### Connection Status Messages
+
+The root node automatically publishes its connection status to MQTT:
+
+**Topic:** `/status/root/connection`
+
+**On connection:**
+```json
+{
+  "status": "connected",
+  "device_id": 1074205304,
+  "timestamp": 1707308070,
+  "firmware": "48925a3",
+  "ip": "192.168.1.45",
+  "mesh_layer": 1
+}
+```
+
+**Monitor connection status:**
+```bash
+mosquitto_sub -t "/status/root/connection" -v
+```
+
+This allows you to:
+- Detect when the mesh network comes online
+- Monitor root node availability
+- Integrate with home automation (Home Assistant, Node-RED)
+- Track firmware versions and IP addresses
+
+**For details**, see [MQTT_STATUS_MESSAGES.md](MQTT_STATUS_MESSAGES.md)
+
 ## Project Structure
 
 ```
@@ -247,6 +401,115 @@ uc/buttonsMeshIDF/
 ```
 
 After forwarding by root, `parentId` is added.
+
+## Troubleshooting
+
+### IP Address is 192.168.4.x (Most Common Issue)
+If you see `sta ip: 192.168.4.2, gw: 192.168.4.1` in logs:
+- **Problem:** Not connected to home WiFi router - mesh is in isolated mode
+- **Cause:** WiFi credentials not configured or incorrect
+- **Impact:** MQTT won't work (can't reach broker on home network)
+- **Solution:** See [IP_ADDRESSING_GUIDE.md](IP_ADDRESSING_GUIDE.md) for detailed explanation and fix
+
+### MQTT Connection Errors
+If you're seeing repeated MQTT connection errors like `esp-tls: [sock=48] select() timeout`:
+- **Quick fix:** See [MQTT_QUICKSTART.md](MQTT_QUICKSTART.md) for 5-minute setup guide
+- **Detailed troubleshooting:** See [MQTT_TROUBLESHOOTING.md](MQTT_TROUBLESHOOTING.md)
+- **Common cause:** No MQTT broker installed/running, or wrong broker IP configured
+
+### MQTT Reconnection Storm (Fixed in v1.2.0+)
+If you see MQTT constantly connecting/disconnecting with duplicate messages:
+```
+/status/root/connection {"status":"disconnected","reason":"ungraceful"}
+/status/root/connection {"status":"connected",...}
+/status/root/connection {"status":"connected",...} ← DUPLICATE
+```
+- **Symptoms:** Reconnects every ~20 seconds, multiple duplicate "connected" messages
+- **Cause:** Critical bug in earlier versions (dangling pointer to stack buffers)
+- **Fixed:** Version 1.2.0+ (commit 86febe6)
+- **Solution:** Update to latest firmware
+- **Details:** See [MQTT_RECONNECTION_STORM_FIX.md](MQTT_RECONNECTION_STORM_FIX.md)
+
+### Root Election
+If you want to understand which device becomes root and how it works:
+- See [ROOT_ELECTION.md](ROOT_ELECTION.md) for ESP-WIFI-MESH automatic root election details
+- Root is elected based on strongest WiFi signal to router
+- Any device can be root (no functional difference)
+
+### Root Transitions and MQTT
+If you're concerned about multiple devices connecting to MQTT or root changes:
+- See [ROOT_TRANSITIONS.md](ROOT_TRANSITIONS.md) for complete explanation
+- Only ONE device is root at any time
+- Each device has unique MQTT client ID (no conflicts)
+- Root transitions take ~12 seconds
+- Old root cleanly disconnects before new root connects
+
+### Leaf Node Status Reporting
+If leaf nodes aren't sending status to root or you see MQTT warnings on non-root nodes:
+- **Symptom:** "Not connected to mesh, skipping status report"
+- **Symptom:** "MQTT init called on NON-ROOT node" (this is NORMAL - guard is working)
+- **Cause:** Mesh not fully connected, or confusion about leaf node behavior
+- **Expected:** Leaf nodes send status via mesh to root, NOT via MQTT
+- **Details:** See [LEAF_NODE_STATUS_GUIDE.md](LEAF_NODE_STATUS_GUIDE.md)
+
+### Hardware Misdetection - Relay Detected as Switch
+If ESP32 relay board is detected as SWITCH and crashes with WDT reset:
+- See [HARDWARE_DETECTION_FIX.md](HARDWARE_DETECTION_FIX.md) for:
+  - Auto-detection algorithm explanation
+  - NVS hardware type override procedure
+  - Manual configuration methods
+
+### Device-Specific Targeting Not Working
+If seeing warning: "Specific device targeting not implemented, broadcasting":
+- See [DEVICE_TARGETING.md](DEVICE_TARGETING.md) for how device-specific routing works
+- Devices must send at least one message to be tracked
+- Check device ID matches in MQTT topic and logs
+
+### Crashes and Resets
+For watchdog resets, stack overflows, or other crashes:
+- **Master guide:** See [MESH_CRASH_SUMMARY.md](MESH_CRASH_SUMMARY.md) for all crash types
+- **Hardware misdetection:** [HARDWARE_DETECTION_FIX.md](HARDWARE_DETECTION_FIX.md)
+- **Relay race condition:** [RELAY_CRASH_FIX.md](RELAY_CRASH_FIX.md)
+- **Memory exhaustion:** [MESH_INIT_CRASH_FIX.md](MESH_INIT_CRASH_FIX.md)
+
+### General Mesh Issues
+For mesh formation, communication, or performance problems:
+- See [MESH_TROUBLESHOOTING.md](MESH_TROUBLESHOOTING.md) for comprehensive troubleshooting guide
+
+**Quick fix:** Set hardware type in NVS: `nvs_set domator hardware_type u8 1` (0=switch, 1=relay_8, 2=relay_16)
+
+### Mesh Crashes After "WiFi STA started"
+If device resets immediately after WiFi STA starts with incomplete mesh log `I (xxx) mesh:`, see [MESH_INIT_CRASH_FIX.md](MESH_INIT_CRASH_FIX.md) for:
+- Memory exhaustion diagnosis
+- WiFi buffer configuration fixes
+- Heap monitoring techniques
+
+**Quick fix:** Use provided `sdkconfig.defaults` which reduces WiFi buffers to prevent memory exhaustion.
+
+### Relay Board Crashes on Startup (Initialization Order)
+If relay board resets during mesh initialization with message like `I (xxx) mesh:`, see [RELAY_CRASH_FIX.md](RELAY_CRASH_FIX.md) for:
+- Root cause explanation
+- Verification steps
+- Advanced debugging
+
+**Quick fix:** Ensure firmware version ≥ v1.1.0 which includes initialization order fix.
+
+### Device-Specific Targeting
+Commands to specific devices use direct routing instead of broadcast. For details on how device targeting works, see [DEVICE_TARGETING.md](DEVICE_TARGETING.md).
+
+**Usage:** Include device ID in MQTT topic:
+```bash
+# Target specific relay
+mosquitto_pub -t "/relay/cmd/1074207536" -m "a1"
+
+# Broadcast to all relays
+mosquitto_pub -t "/relay/cmd" -m "S"
+```
+
+### Other Issues
+- OTA firmware hosting: See [OTA_FIRMWARE_HOSTING.md](OTA_FIRMWARE_HOSTING.md)
+- Phase 5 & 6 features: See [PHASE5_6_GUIDE.md](PHASE5_6_GUIDE.md)
+- Quick start: See [QUICKSTART.md](QUICKSTART.md)
 
 ## License
 

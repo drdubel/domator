@@ -7,8 +7,13 @@
 #include "domator_mesh.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_netif.h"
 
 static const char* TAG = "NODE_ROOT";
+
+// Static buffers for MQTT configuration (must persist after mqtt_init returns)
+static char g_mqtt_client_id[32] = {0};
+static char g_mqtt_lwt_message[256] = {0};
 
 // ====================
 // Helper Functions
@@ -59,17 +64,64 @@ static uint32_t parse_device_id_from_string(const char *device_id_str) {
 
 /**
  * Convert button character to array index
- * @param button_char Button character ('a'-'p' for buttons 0-15)
+ * Handles gesture characters:
+ * - Single press: 'a'-'g' (indices 0-6)
+ * - Double press: 'h'-'n' (indices 0-6, mapped from h=0, i=1, ..., n=6)
+ * - Long press: 'o'-'u' (indices 0-6, mapped from o=0, p=1, ..., u=6)
+ * - Extended buttons: 'a'-'p' for 16-button support (indices 0-15)
+ * @param button_char Button character
  * @return Button index (0-15), or -1 if invalid
  */
 static int button_char_to_index(char button_char) {
+    // Single press or extended buttons: 'a'-'p' → 0-15
     if (button_char >= 'a' && button_char <= 'p') {
         return button_char - 'a';
     }
     if (button_char >= 'A' && button_char <= 'P') {
         return button_char - 'A';
     }
+    
+    // Double press: 'h'-'n' → map back to base button 0-6
+    // h=button0, i=button1, ..., n=button6
+    if (button_char >= 'h' && button_char <= 'n') {
+        return button_char - 'h';  // 0-6
+    }
+    if (button_char >= 'H' && button_char <= 'N') {
+        return button_char - 'H';  // 0-6
+    }
+    
+    // Long press: 'o'-'u' → map back to base button 0-6
+    // o=button0, p=button1, ..., u=button6
+    if (button_char >= 'o' && button_char <= 'u') {
+        return button_char - 'o';  // 0-6
+    }
+    if (button_char >= 'O' && button_char <= 'U') {
+        return button_char - 'O';  // 0-6
+    }
+    
     return -1;
+}
+
+/**
+ * Find device MAC address by device ID
+ * @param device_id Device ID to look up
+ * @param mac_addr Output: MAC address if found
+ * @return true if device found, false otherwise
+ */
+static bool find_device_mac(uint32_t device_id, mesh_addr_t *mac_addr) {
+    if (mac_addr == NULL) {
+        return false;
+    }
+    
+    // Search in peer health tracking table
+    for (uint8_t i = 0; i < g_peer_count; i++) {
+        if (g_peer_health[i].device_id == device_id && g_peer_health[i].is_alive) {
+            memcpy(mac_addr, &g_peer_health[i].mac_addr, sizeof(mesh_addr_t));
+            return true;
+        }
+    }
+    
+    return false;
 }
 
 // ====================
@@ -89,7 +141,113 @@ static void handle_mqtt_command(const char* topic, int topic_len,
     memcpy(topic_str, topic, copy_len);
     topic_str[copy_len] = '\0';
 
-    // Extract command string
+    ESP_LOGI(TAG, "Processing MQTT command: topic=%s", topic_str);
+
+    // Check if this is a configuration message for root
+    if (strstr(topic_str, "/switch/cmd/root") != NULL) {
+        // Try to parse as JSON configuration
+        if (data[0] == '{') {
+            // Looks like JSON, try to parse it
+            cJSON *json = cJSON_Parse(data);
+            if (json != NULL) {
+                cJSON *type_item = cJSON_GetObjectItem(json, "type");
+                if (type_item != NULL && cJSON_IsString(type_item)) {
+                    const char *config_type = type_item->valuestring;
+                    
+                    if (strcmp(config_type, "connections") == 0) {
+                        ESP_LOGI(TAG, "Received connections configuration");
+                        root_parse_connections(data);
+                    } else if (strcmp(config_type, "button_types") == 0) {
+                        ESP_LOGI(TAG, "Received button types configuration");
+                        root_parse_button_types(data);
+                    } else if (strcmp(config_type, "gesture_config") == 0) {
+                        ESP_LOGI(TAG, "Received gesture configuration for switch nodes");
+                        // Forward gesture config to all switch nodes
+                        cJSON *target_device_item = cJSON_GetObjectItem(json, "device_id");
+                        if (target_device_item != NULL && cJSON_IsString(target_device_item)) {
+                            const char *target_device_str = target_device_item->valuestring;
+                            uint32_t target_device = parse_device_id_from_string(target_device_str);
+                            
+                            if (target_device != 0) {
+                                ESP_LOGI(TAG, "Forwarding gesture config to device %" PRIu32, target_device);
+                                
+                                // Create mesh config message
+                                mesh_app_msg_t msg = {0};
+                                msg.msg_type = MSG_TYPE_CONFIG;
+                                msg.device_id = g_device_id;  // From root
+                                
+                                // Copy JSON data
+                                size_t json_len = strlen(data);
+                                if (json_len >= MESH_MSG_DATA_SIZE) {
+                                    json_len = MESH_MSG_DATA_SIZE - 1;
+                                    ESP_LOGW(TAG, "Gesture config truncated to %d bytes", MESH_MSG_DATA_SIZE - 1);
+                                }
+                                memcpy(msg.data, data, json_len);
+                                msg.data[json_len] = '\0';
+                                msg.data_len = json_len;
+                                
+                                // Broadcast to all nodes (they filter by their device ID)
+                                mesh_data_t mdata;
+                                mdata.data = (uint8_t*)&msg;
+                                mdata.size = sizeof(mesh_app_msg_t);
+                                mdata.proto = MESH_PROTO_BIN;
+                                mdata.tos = MESH_TOS_P2P;
+                                
+                                esp_mesh_send(NULL, &mdata, MESH_DATA_P2P, NULL, 0);
+                                ESP_LOGI(TAG, "Gesture config broadcasted to mesh");
+                            } else {
+                                ESP_LOGW(TAG, "Invalid target device ID in gesture config");
+                            }
+                        } else {
+                            ESP_LOGW(TAG, "No device_id in gesture config, cannot forward");
+                        }
+                    } else if (strcmp(config_type, "ota_trigger") == 0) {
+                        ESP_LOGI(TAG, "Received OTA trigger configuration");
+                        // Forward OTA trigger to all nodes
+                        cJSON *url_item = cJSON_GetObjectItem(json, "url");
+                        if (url_item != NULL && cJSON_IsString(url_item)) {
+                            const char *ota_url = url_item->valuestring;
+                            
+                            ESP_LOGI(TAG, "Broadcasting OTA trigger: %s", ota_url);
+                            
+                            // Create OTA trigger message
+                            mesh_app_msg_t msg = {0};
+                            msg.msg_type = MSG_TYPE_OTA_TRIGGER;
+                            msg.device_id = g_device_id;
+                            
+                            size_t url_len = strlen(ota_url);
+                            if (url_len >= MESH_MSG_DATA_SIZE) {
+                                url_len = MESH_MSG_DATA_SIZE - 1;
+                            }
+                            memcpy(msg.data, ota_url, url_len);
+                            msg.data[url_len] = '\0';
+                            msg.data_len = url_len;
+                            
+                            // Broadcast to all nodes
+                            mesh_data_t mdata;
+                            mdata.data = (uint8_t*)&msg;
+                            mdata.size = sizeof(mesh_app_msg_t);
+                            mdata.proto = MESH_PROTO_BIN;
+                            mdata.tos = MESH_TOS_P2P;
+                            
+                            esp_mesh_send(NULL, &mdata, MESH_DATA_P2P, NULL, 0);
+                            ESP_LOGI(TAG, "OTA trigger broadcasted to mesh");
+                        }
+                    } else {
+                        ESP_LOGW(TAG, "Unknown config type: %s", config_type);
+                    }
+                } else {
+                    ESP_LOGW(TAG, "JSON missing 'type' field");
+                }
+                cJSON_Delete(json);
+            } else {
+                ESP_LOGW(TAG, "Failed to parse JSON configuration");
+            }
+            return;  // Configuration handled, return early
+        }
+    }
+
+    // Extract command string for non-JSON commands
     char cmd_str[64];
     copy_len =
         (data_len < sizeof(cmd_str) - 1) ? data_len : sizeof(cmd_str) - 1;
@@ -141,27 +299,95 @@ static void handle_mqtt_command(const char* topic, int topic_len,
     mdata.proto = MESH_PROTO_BIN;
     mdata.tos = MESH_TOS_P2P;
 
-    // LIMITATION: Direct device addressing not yet implemented
-    // ESP-WIFI-MESH requires MAC address for direct routing, but we only have
-    // device ID Current workaround: All commands are broadcast to all nodes
-    // Each node checks if command is relevant and ignores if not
-    // Future: Maintain a device ID -> MAC address mapping table for direct
-    // routing
-
+    // Attempt device-specific targeting if device ID provided
     if (target_device_id != 0) {
-        ESP_LOGW(TAG,
-                 "Specific device targeting (%" PRIu32
-                 ") not implemented, broadcasting",
-                 target_device_id);
-        ESP_LOGI(TAG,
-                 "Broadcasting command to all nodes (intended for %" PRIu32 ")",
-                 target_device_id);
-        esp_mesh_send(NULL, &mdata, MESH_DATA_P2P, NULL, 0);
+        mesh_addr_t target_mac;
+        
+        // Try to find device MAC address
+        if (find_device_mac(target_device_id, &target_mac)) {
+            // Found device MAC - send directly to target device
+            ESP_LOGI(TAG, "Sending command to device %" PRIu32 " (MAC: %02X:%02X:%02X:%02X:%02X:%02X)",
+                     target_device_id,
+                     target_mac.addr[0], target_mac.addr[1], target_mac.addr[2],
+                     target_mac.addr[3], target_mac.addr[4], target_mac.addr[5]);
+            
+            esp_err_t err = esp_mesh_send(&target_mac, &mdata, MESH_DATA_P2P, NULL, 0);
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "Failed to send to device %" PRIu32 ": %s, broadcasting instead",
+                         target_device_id, esp_err_to_name(err));
+                esp_mesh_send(NULL, &mdata, MESH_DATA_P2P, NULL, 0);
+            }
+        } else {
+            // Device not found in tracking table - broadcast as fallback
+            ESP_LOGW(TAG, "Device %" PRIu32 " not found in tracking table, broadcasting",
+                     target_device_id);
+            ESP_LOGI(TAG, "Broadcasting command to all nodes (intended for %" PRIu32 ")",
+                     target_device_id);
+            esp_mesh_send(NULL, &mdata, MESH_DATA_P2P, NULL, 0);
+        }
     } else {
-        // Broadcast to all nodes
+        // No specific device ID - broadcast to all nodes
         ESP_LOGI(TAG, "Broadcasting command to all nodes");
         esp_mesh_send(NULL, &mdata, MESH_DATA_P2P, NULL, 0);
     }
+}
+
+// ====================
+// MQTT Connection Status
+// ====================
+
+/**
+ * Publish connection status message to MQTT
+ * @param connected true for connected, false for disconnected
+ */
+static void publish_connection_status(bool connected) {
+    if (!g_mqtt_client) {
+        return;
+    }
+
+    // Create JSON status message
+    cJSON* json = cJSON_CreateObject();
+    if (!json) {
+        ESP_LOGE(TAG, "Failed to create connection status JSON");
+        return;
+    }
+
+    cJSON_AddStringToObject(json, "status", connected ? "connected" : "disconnected");
+    cJSON_AddNumberToObject(json, "device_id", g_device_id);
+    cJSON_AddNumberToObject(json, "timestamp", (double)(esp_timer_get_time() / 1000000));
+    
+    if (connected) {
+        // Add additional info on connection
+        cJSON_AddStringToObject(json, "firmware", g_firmware_version);
+        cJSON_AddNumberToObject(json, "mesh_layer", g_mesh_layer);
+        
+        // Get IP address if available
+        esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        if (netif) {
+            esp_netif_ip_info_t ip_info;
+            if (esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
+                char ip_str[16];
+                snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_info.ip));
+                cJSON_AddStringToObject(json, "ip", ip_str);
+            }
+        }
+    }
+
+    char* json_str = cJSON_PrintUnformatted(json);
+    if (json_str) {
+        // Publish with QoS 1 and retain flag for monitoring
+        int msg_id = esp_mqtt_client_publish(g_mqtt_client, "/status/root/connection",
+                                              json_str, 0, 1, 1);
+        if (msg_id >= 0) {
+            ESP_LOGI(TAG, "Published connection status: %s (msg_id=%d)", 
+                     connected ? "connected" : "disconnected", msg_id);
+        } else {
+            ESP_LOGE(TAG, "Failed to publish connection status");
+        }
+        free(json_str);
+    }
+    
+    cJSON_Delete(json);
 }
 
 // ====================
@@ -171,6 +397,7 @@ static void handle_mqtt_command(const char* topic, int topic_len,
 void mqtt_event_handler(void* handler_args, esp_event_base_t base,
                         int32_t event_id, void* event_data) {
     esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
+    static bool connection_status_published = false;
 
     switch ((esp_mqtt_event_id_t)event_id) {
         case MQTT_EVENT_CONNECTED:
@@ -183,11 +410,19 @@ void mqtt_event_handler(void* handler_args, esp_event_base_t base,
             esp_mqtt_client_subscribe(g_mqtt_client, "/relay/cmd/+", 0);
             esp_mqtt_client_subscribe(g_mqtt_client, "/relay/cmd", 0);
             esp_mqtt_client_subscribe(g_mqtt_client, "/switch/cmd/root", 0);  // For config
+            
+            // Publish connection status only once per connection
+            // (prevent duplicate publishes if event fires multiple times)
+            if (!connection_status_published) {
+                publish_connection_status(true);
+                connection_status_published = true;
+            }
             break;
 
         case MQTT_EVENT_DISCONNECTED:
             ESP_LOGW(TAG, "MQTT disconnected");
             g_mqtt_connected = false;
+            connection_status_published = false;  // Reset for next connection
             break;
 
         case MQTT_EVENT_SUBSCRIBED:
@@ -217,12 +452,15 @@ void mqtt_event_handler(void* handler_args, esp_event_base_t base,
 // ====================
 
 void mqtt_init(void) {
+    // Strong guard: Only root node should initialize MQTT
     if (!g_is_root) {
-        ESP_LOGW(TAG, "Not root node, skipping MQTT init");
+        ESP_LOGW(TAG, "❌ MQTT init called on NON-ROOT node (device_id: %" PRIu32 ", layer: %d) - skipping", 
+                 g_device_id, g_mesh_layer);
+        ESP_LOGW(TAG, "   This is expected for leaf nodes. Only root connects to MQTT.");
         return;
     }
 
-    ESP_LOGI(TAG, "Initializing MQTT client");
+    ESP_LOGI(TAG, "✓ Initializing MQTT client (ROOT node, device_id: %" PRIu32 ")", g_device_id);
 
     // Build complete MQTT broker URI
     char broker_uri[128];
@@ -238,10 +476,29 @@ void mqtt_init(void) {
         snprintf(broker_uri, sizeof(broker_uri), "%s", url);
     }
 
+    // Generate unique MQTT client ID based on device ID
+    // Store in static buffer so it persists after function returns
+    snprintf(g_mqtt_client_id, sizeof(g_mqtt_client_id), "domator_%" PRIu32, g_device_id);
+    ESP_LOGI(TAG, "Using MQTT client ID: %s", g_mqtt_client_id);
+
+    // Prepare Last Will and Testament (LWT) message for ungraceful disconnects
+    // Store in static buffer so it persists after function returns
+    snprintf(g_mqtt_lwt_message, sizeof(g_mqtt_lwt_message),
+             "{\"status\":\"disconnected\",\"device_id\":%" PRIu32 ",\"timestamp\":%" PRId64 ",\"reason\":\"ungraceful\"}",
+             g_device_id, esp_timer_get_time() / 1000000);
+
     esp_mqtt_client_config_t mqtt_cfg = {
         .broker.address.uri = broker_uri,
+        .credentials.client_id = g_mqtt_client_id,
         .credentials.username = CONFIG_MQTT_USERNAME,
         .credentials.authentication.password = CONFIG_MQTT_PASSWORD,
+        .session.last_will = {
+            .topic = "/status/root/connection",
+            .msg = g_mqtt_lwt_message,
+            .msg_len = strlen(g_mqtt_lwt_message),
+            .qos = 1,
+            .retain = 1,
+        },
     };
 
     g_mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
@@ -258,6 +515,29 @@ void mqtt_init(void) {
         ESP_LOGE(TAG, "Failed to start MQTT client: %s", esp_err_to_name(err));
     } else {
         ESP_LOGI(TAG, "MQTT client started");
+    }
+}
+
+// ====================
+// MQTT Cleanup (when losing root status)
+// ====================
+
+void mqtt_cleanup(void) {
+    if (g_mqtt_client != NULL) {
+        ESP_LOGI(TAG, "Cleaning up MQTT client (no longer root)");
+        
+        // Publish disconnection status if still connected
+        if (g_mqtt_connected) {
+            publish_connection_status(false);
+        }
+        
+        // Stop and destroy MQTT client
+        esp_mqtt_client_stop(g_mqtt_client);
+        esp_mqtt_client_destroy(g_mqtt_client);
+        g_mqtt_client = NULL;
+        g_mqtt_connected = false;
+        
+        ESP_LOGI(TAG, "MQTT client cleaned up");
     }
 }
 
@@ -310,12 +590,20 @@ void root_publish_status(void) {
     cJSON_Delete(json);
 
     if (json_str != NULL) {
+        // Build topic based on node type: /switch/state/{deviceId} or /relay/state/{deviceId}
+        char topic[64];
+        const char* node_type_prefix = "switch";  // Default to switch
+        if (g_node_type == NODE_TYPE_RELAY) {
+            node_type_prefix = "relay";
+        }
+        snprintf(topic, sizeof(topic), "/%s/state/%" PRIu32, node_type_prefix, g_device_id);
+        
         int msg_id = esp_mqtt_client_publish(
-            g_mqtt_client, "/switch/state/root", json_str, 0, 0, 0);
+            g_mqtt_client, topic, json_str, 0, 0, 0);
         if (msg_id >= 0) {
-            ESP_LOGD(TAG, "Published root status: %s", json_str);
+            ESP_LOGI(TAG, "Published root status to %s: %s", topic, json_str);
         } else {
-            ESP_LOGW(TAG, "Failed to publish root status");
+            ESP_LOGW(TAG, "Failed to publish root status to %s", topic);
 
             if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
                 g_stats.mqtt_dropped++;
@@ -336,11 +624,34 @@ void root_forward_leaf_status(const char* json_str) {
         return;
     }
 
-    // Parse the JSON to add parentId
+    // Parse the JSON to extract deviceId and type
     cJSON* json = cJSON_Parse(json_str);
     if (json == NULL) {
         ESP_LOGE(TAG, "Failed to parse leaf status JSON");
         return;
+    }
+
+    // Extract deviceId
+    cJSON* device_id_item = cJSON_GetObjectItem(json, "deviceId");
+    if (device_id_item == NULL || !cJSON_IsNumber(device_id_item)) {
+        ESP_LOGW(TAG, "Leaf status missing deviceId, skipping");
+        cJSON_Delete(json);
+        return;
+    }
+    uint32_t device_id = (uint32_t)device_id_item->valuedouble;
+
+    // Extract type (switch/relay/root)
+    cJSON* type_item = cJSON_GetObjectItem(json, "type");
+    const char* node_type_str = "switch";  // Default to switch
+    if (type_item != NULL && cJSON_IsString(type_item)) {
+        const char* type_value = type_item->valuestring;
+        if (strcmp(type_value, "relay") == 0) {
+            node_type_str = "relay";
+        } else if (strcmp(type_value, "root") == 0) {
+            // Root nodes use switch topic
+            node_type_str = "switch";
+        }
+        // Default "switch" for any other type
     }
 
     // Add parentId (root's device ID)
@@ -350,12 +661,16 @@ void root_forward_leaf_status(const char* json_str) {
     cJSON_Delete(json);
 
     if (modified_json != NULL) {
+        // Build topic: /switch/state/{deviceId} or /relay/state/{deviceId}
+        char topic[64];
+        snprintf(topic, sizeof(topic), "/%s/state/%" PRIu32, node_type_str, device_id);
+        
         int msg_id = esp_mqtt_client_publish(
-            g_mqtt_client, "/switch/state/root", modified_json, 0, 0, 0);
+            g_mqtt_client, topic, modified_json, 0, 0, 0);
         if (msg_id >= 0) {
-            ESP_LOGD(TAG, "Forwarded leaf status: %s", modified_json);
+            ESP_LOGI(TAG, "Forwarded %s status to %s: %s", node_type_str, topic, modified_json);
         } else {
-            ESP_LOGW(TAG, "Failed to forward leaf status");
+            ESP_LOGW(TAG, "Failed to forward %s status to %s", node_type_str, topic);
 
             if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
                 g_stats.mqtt_dropped++;
@@ -379,6 +694,10 @@ void root_handle_mesh_message(const mesh_addr_t* from,
 
     ESP_LOGD(TAG, "Processing message type '%c' from device %" PRIu32,
              msg->msg_type, msg->device_id);
+    
+    // Update peer health tracking with MAC address
+    // Note: RSSI not available from mesh_addr_t, using 0 as placeholder
+    peer_health_update(msg->device_id, from, 0);
 
     switch (msg->msg_type) {
         case MSG_TYPE_BUTTON: {

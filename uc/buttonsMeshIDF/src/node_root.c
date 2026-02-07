@@ -7,6 +7,7 @@
 #include "domator_mesh.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_netif.h"
 
 static const char* TAG = "NODE_ROOT";
 
@@ -328,6 +329,65 @@ static void handle_mqtt_command(const char* topic, int topic_len,
 }
 
 // ====================
+// MQTT Connection Status
+// ====================
+
+/**
+ * Publish connection status message to MQTT
+ * @param connected true for connected, false for disconnected
+ */
+static void publish_connection_status(bool connected) {
+    if (!g_mqtt_client) {
+        return;
+    }
+
+    // Create JSON status message
+    cJSON* json = cJSON_CreateObject();
+    if (!json) {
+        ESP_LOGE(TAG, "Failed to create connection status JSON");
+        return;
+    }
+
+    cJSON_AddStringToObject(json, "status", connected ? "connected" : "disconnected");
+    cJSON_AddNumberToObject(json, "device_id", g_device_id);
+    cJSON_AddNumberToObject(json, "timestamp", (double)(esp_timer_get_time() / 1000000));
+    
+    if (connected) {
+        // Add additional info on connection
+        extern const char* g_firmware_version;
+        cJSON_AddStringToObject(json, "firmware", g_firmware_version);
+        cJSON_AddNumberToObject(json, "mesh_layer", g_mesh_layer);
+        
+        // Get IP address if available
+        esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        if (netif) {
+            esp_netif_ip_info_t ip_info;
+            if (esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
+                char ip_str[16];
+                snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_info.ip));
+                cJSON_AddStringToObject(json, "ip", ip_str);
+            }
+        }
+    }
+
+    char* json_str = cJSON_PrintUnformatted(json);
+    if (json_str) {
+        // Publish with QoS 1 and retain flag for monitoring
+        int msg_id = esp_mqtt_client_publish(g_mqtt_client, "/status/root/connection",
+                                              json_str, 0, 1, 1);
+        if (msg_id >= 0) {
+            ESP_LOGI(TAG, "Published connection status: %s (msg_id=%d)", 
+                     connected ? "connected" : "disconnected", msg_id);
+        } else {
+            ESP_LOGE(TAG, "Failed to publish connection status");
+        }
+        free(json_str);
+    }
+    
+    cJSON_Delete(json);
+}
+
+// ====================
 // MQTT Event Handler
 // ====================
 
@@ -346,6 +406,9 @@ void mqtt_event_handler(void* handler_args, esp_event_base_t base,
             esp_mqtt_client_subscribe(g_mqtt_client, "/relay/cmd/+", 0);
             esp_mqtt_client_subscribe(g_mqtt_client, "/relay/cmd", 0);
             esp_mqtt_client_subscribe(g_mqtt_client, "/switch/cmd/root", 0);  // For config
+            
+            // Publish connection status
+            publish_connection_status(true);
             break;
 
         case MQTT_EVENT_DISCONNECTED:
@@ -401,10 +464,23 @@ void mqtt_init(void) {
         snprintf(broker_uri, sizeof(broker_uri), "%s", url);
     }
 
+    // Prepare Last Will and Testament (LWT) message for ungraceful disconnects
+    char lwt_message[256];
+    snprintf(lwt_message, sizeof(lwt_message),
+             "{\"status\":\"disconnected\",\"device_id\":%" PRIu32 ",\"timestamp\":%" PRId64 ",\"reason\":\"ungraceful\"}",
+             g_device_id, esp_timer_get_time() / 1000000);
+
     esp_mqtt_client_config_t mqtt_cfg = {
         .broker.address.uri = broker_uri,
         .credentials.username = CONFIG_MQTT_USERNAME,
         .credentials.authentication.password = CONFIG_MQTT_PASSWORD,
+        .session.last_will = {
+            .topic = "/status/root/connection",
+            .msg = lwt_message,
+            .msg_len = strlen(lwt_message),
+            .qos = 1,
+            .retain = 1,
+        },
     };
 
     g_mqtt_client = esp_mqtt_client_init(&mqtt_cfg);

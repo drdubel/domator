@@ -1,283 +1,142 @@
 #include "domator_mesh.h"
-#include <string.h>
-#include <inttypes.h>
-#include "esp_log.h"
-#include "esp_wifi.h"
-#include "esp_mac.h"
-#include "esp_event.h"
-#include "esp_netif.h"
-#include "nvs_flash.h"
 
-static const char *TAG = "MESH_INIT";
+static const char* TAG = "MESH_INIT";
 
-// ====================
-// WiFi Event Handler
-// ====================
+static void ip_event_handler(void* arg, esp_event_base_t event_base,
+                             int32_t event_id, void* event_data) {
+    if (event_id == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t* event = (ip_event_got_ip_t*)event_data;
+        ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
 
-static void wifi_event_handler(void *arg, esp_event_base_t event_base,
-                               int32_t event_id, void *event_data)
-{
-    if (event_base == WIFI_EVENT) {
-        switch (event_id) {
-            case WIFI_EVENT_STA_START:
-                ESP_LOGI(TAG, "WiFi STA started");
-                break;
-            case WIFI_EVENT_STA_DISCONNECTED:
-                ESP_LOGW(TAG, "WiFi STA disconnected");
-                if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-                    g_stats.mesh_disconnects++;
-                    xSemaphoreGive(g_stats_mutex);
-                }
-                break;
-            default:
-                break;
+        if (esp_mesh_is_root()) {
+            node_root_mqtt_connect();
         }
     }
 }
 
-// ====================
-// IP Event Handler  
-// ====================
-
-static void ip_event_handler(void *arg, esp_event_base_t event_base,
-                             int32_t event_id, void *event_data)
-{
-    if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
-        ESP_LOGI(TAG, "Root got IP: " IPSTR, IP2STR(&event->ip_info.ip));
-        
-        g_is_root = true;
-        g_mesh_layer = 1;
-        
-        // Initialize MQTT for root node (only if not already initialized)
-        // This prevents multiple MQTT clients on repeated IP events
-        extern esp_mqtt_client_handle_t g_mqtt_client;
-        if (g_mqtt_client == NULL) {
-            mqtt_init();
-        } else {
-            ESP_LOGI(TAG, "MQTT client already initialized, skipping");
-        }
-    }
-    
-    if (event_base == IP_EVENT && event_id == IP_EVENT_STA_LOST_IP) {
-        ESP_LOGW(TAG, "Root lost IP - cleaning up MQTT");
-        g_is_root = false;
-        g_mesh_layer = 0;
-        mqtt_cleanup();
-    }
-}
-
-// ====================
-// Mesh Event Handler
-// ====================
-
-static void mesh_event_handler(void *arg, esp_event_base_t event_base,
-                               int32_t event_id, void *event_data)
-{
-    mesh_event_id_t event = (mesh_event_id_t)event_id;
-    
-    switch (event) {
+static void mesh_event_handler(void* arg, esp_event_base_t event_base,
+                               int32_t event_id, void* event_data) {
+    switch (event_id) {
         case MESH_EVENT_STARTED:
             ESP_LOGI(TAG, "Mesh started");
-            g_mesh_started = true;
             break;
-            
-        case MESH_EVENT_STOPPED:
-            ESP_LOGI(TAG, "Mesh stopped");
-            g_mesh_started = false;
-            g_mesh_connected = false;
-            break;
-            
+
         case MESH_EVENT_PARENT_CONNECTED: {
-            mesh_event_connected_t *connected = (mesh_event_connected_t *)event_data;
+            mesh_event_connected_t* connected =
+                (mesh_event_connected_t*)event_data;
+            ESP_LOGI(TAG, "Parent connected, layer:%d", connected->self_layer);
             g_mesh_connected = true;
-            g_mesh_layer = connected->self_layer;
-            
-            // For now, we'll derive parent ID from MAC when needed
-            // The connected structure contains parent MAC info
-            
-            ESP_LOGI(TAG, "✓ Parent connected - Layer: %d, Mesh connected, status reports will be sent to root", g_mesh_layer);
-            break;
-        }
-        
-        case MESH_EVENT_PARENT_DISCONNECTED: {
-            mesh_event_disconnected_t *disconnected = (mesh_event_disconnected_t *)event_data;
-            g_mesh_connected = false;
-            
-            ESP_LOGW(TAG, "Parent disconnected - Reason: %d", disconnected->reason);
-            
-            if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-                g_stats.mesh_disconnects++;
-                xSemaphoreGive(g_stats_mutex);
+
+            if (esp_mesh_is_root()) {
+                ESP_LOGI(TAG, "*** I AM ROOT ***");
+                g_is_root = true;
+                esp_netif_dhcpc_start(
+                    esp_netif_get_handle_from_ifkey("WIFI_STA_DEF"));
+                node_root_start();
             }
             break;
         }
-        
-        case MESH_EVENT_CHILD_CONNECTED: {
-            mesh_event_child_connected_t *child = (mesh_event_child_connected_t *)event_data;
-            ESP_LOGI(TAG, "Child connected - MAC: %02X:%02X:%02X:%02X:%02X:%02X",
-                     child->mac[0], child->mac[1], child->mac[2],
-                     child->mac[3], child->mac[4], child->mac[5]);
+
+        case MESH_EVENT_PARENT_DISCONNECTED:
+            ESP_LOGW(TAG, "Parent disconnected");
+            g_mesh_connected = false;
             break;
-        }
-        
-        case MESH_EVENT_CHILD_DISCONNECTED: {
-            mesh_event_child_disconnected_t *child = (mesh_event_child_disconnected_t *)event_data;
-            ESP_LOGI(TAG, "Child disconnected - MAC: %02X:%02X:%02X:%02X:%02X:%02X",
-                     child->mac[0], child->mac[1], child->mac[2],
-                     child->mac[3], child->mac[4], child->mac[5]);
-            break;
-        }
-        
-        case MESH_EVENT_ROUTING_TABLE_ADD:
-        case MESH_EVENT_ROUTING_TABLE_REMOVE:
-            // Routing table changes
-            break;
-            
-        case MESH_EVENT_ROOT_ADDRESS: {
-            mesh_event_root_address_t *root_addr = (mesh_event_root_address_t *)event_data;
-            ESP_LOGI(TAG, "Root address: %02X:%02X:%02X:%02X:%02X:%02X",
-                     root_addr->addr[0], root_addr->addr[1], root_addr->addr[2],
-                     root_addr->addr[3], root_addr->addr[4], root_addr->addr[5]);
-            break;
-        }
-        
+
         case MESH_EVENT_TODS_STATE: {
-            mesh_event_toDS_state_t *toDS = (mesh_event_toDS_state_t *)event_data;
-            ESP_LOGI(TAG, "Root toDS state: %d", *toDS);
+            mesh_event_toDS_state_t* state =
+                (mesh_event_toDS_state_t*)event_data;
+            ESP_LOGI(TAG, "toDS state: %d", *state);
             break;
         }
-        
-        case MESH_EVENT_ROOT_FIXED:
-            ESP_LOGI(TAG, "Root fixed");
+
+        case MESH_EVENT_ROOT_SWITCH_REQ:
+            ESP_LOGI(TAG, "Root switch requested");
             break;
-            
-        case MESH_EVENT_ROOT_ASKED_YIELD:
-            ESP_LOGI(TAG, "Root asked to yield");
-            // Note: MESH_EVENT_ROOT_LOST doesn't exist in ESP-IDF
-            // Root changes are detected via MESH_EVENT_TODS_STATE changing
-            // or when device becomes non-root (layer > 1)
-            // For now, we rely on IP loss detection in IP_EVENT_STA_LOST_IP
+
+        case MESH_EVENT_ROOT_SWITCH_ACK:
+            g_is_root = esp_mesh_is_root();
+            ESP_LOGI(TAG, "Root switched, am I root? %s",
+                     g_is_root ? "YES" : "NO");
+            if (g_is_root) {
+                node_root_start();
+            } else {
+                node_root_stop();
+            }
             break;
-            
+
+        case MESH_EVENT_CHILD_CONNECTED: {
+            mesh_event_child_connected_t* child =
+                (mesh_event_child_connected_t*)event_data;
+            ESP_LOGI(TAG, "Child connected: " MACSTR, MAC2STR(child->mac));
+            break;
+        }
+
+        case MESH_EVENT_CHILD_DISCONNECTED: {
+            mesh_event_child_disconnected_t* child =
+                (mesh_event_child_disconnected_t*)event_data;
+            ESP_LOGW(TAG, "Child disconnected: " MACSTR, MAC2STR(child->mac));
+            break;
+        }
+
         default:
-            ESP_LOGD(TAG, "Mesh event: %d", event);
+            ESP_LOGD(TAG, "Mesh event: %" PRId32, event_id);
             break;
     }
 }
 
-// ====================
-// WiFi Initialization
-// ====================
-
-void wifi_init(void)
-{
-    ESP_LOGI(TAG, "Initializing WiFi");
-    
+void mesh_network_init(void) {
+    // WiFi init
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    
-    // Create network interfaces
+
     esp_netif_create_default_wifi_sta();
     esp_netif_create_default_wifi_ap();
-    
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-    
-    // Register event handlers
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
-                                                &wifi_event_handler, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
-                                                &ip_event_handler, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_LOST_IP,
-                                                &ip_event_handler, NULL));
-    
+
+    wifi_init_config_t wifi_cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&wifi_cfg));
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_FLASH));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_start());
-}
 
-// ====================
-// Mesh Initialization
-// ====================
-
-void mesh_init(void)
-{
-    ESP_LOGI(TAG, "Initializing mesh network");
-    
-    // Log available heap before mesh init
-    ESP_LOGI(TAG, "Free heap before mesh init: %lu bytes", esp_get_free_heap_size());
-    
-    // Initialize NVS
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ret = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(ret);
-    
-    // Initialize WiFi
-    wifi_init();
-    
-    // Log heap after WiFi init, before mesh
-    ESP_LOGI(TAG, "Free heap after WiFi init: %lu bytes", esp_get_free_heap_size());
-    
-    // Check if we have enough heap for mesh (minimum 80KB recommended)
-    uint32_t free_heap = esp_get_free_heap_size();
-    if (free_heap < 80000) {
-        ESP_LOGW(TAG, "Low heap before mesh init: %lu bytes (80KB+ recommended)", free_heap);
-    }
-    
-    // Initialize mesh
-    ESP_LOGI(TAG, "Calling esp_mesh_init()...");
+    // Mesh init
     ESP_ERROR_CHECK(esp_mesh_init());
-    ESP_LOGI(TAG, "esp_mesh_init() completed");
-    
-    // Register mesh event handler
+
+    // Register event handlers
     ESP_ERROR_CHECK(esp_event_handler_register(MESH_EVENT, ESP_EVENT_ANY_ID,
-                                                &mesh_event_handler, NULL));
-    
-    // Set mesh ID from config
-    const char *mesh_id_str = CONFIG_MESH_ID;
-    mesh_addr_t mesh_id;
-    if (strlen(mesh_id_str) >= 6) {
-        memcpy(mesh_id.addr, mesh_id_str, 6);
-    } else {
-        // Default mesh ID
-        memcpy(mesh_id.addr, "DMESH0", 6);
-    }
-    ESP_ERROR_CHECK(esp_mesh_set_id(&mesh_id));
-    
-    // Configure mesh
-    ESP_LOGI(TAG, "Configuring mesh parameters...");
-    mesh_cfg_t mesh_cfg = MESH_INIT_CONFIG_DEFAULT();
-    memcpy((uint8_t *)&mesh_cfg.mesh_id, mesh_id.addr, 6);
-    mesh_cfg.channel = 0;  // Auto channel selection
-    mesh_cfg.router.ssid_len = strlen(CONFIG_WIFI_SSID);
-    memcpy((uint8_t *)&mesh_cfg.router.ssid, CONFIG_WIFI_SSID, mesh_cfg.router.ssid_len);
-    memcpy((uint8_t *)&mesh_cfg.router.password, CONFIG_WIFI_PASSWORD, strlen(CONFIG_WIFI_PASSWORD));
-    mesh_cfg.mesh_ap.max_connection = 6;
-    mesh_cfg.mesh_ap.nonmesh_max_connection = 0;
-    
-    ESP_ERROR_CHECK(esp_mesh_set_config(&mesh_cfg));
-    
-    // Set mesh topology to tree
-    ESP_ERROR_CHECK(esp_mesh_set_topology(MESH_TOPO_TREE));
-    
-    // Allow root node switching
-    ESP_ERROR_CHECK(esp_mesh_set_root_healing_delay(10000));
-    ESP_ERROR_CHECK(esp_mesh_allow_root_conflicts(true));
-    ESP_ERROR_CHECK(esp_mesh_set_vote_percentage(0.9));
-    
-    // Set self-organized
+                                               &mesh_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
+                                               &ip_event_handler, NULL));
+
+    // Mesh config
+    mesh_cfg_t cfg = MESH_INIT_CONFIG_DEFAULT();
+
+    // Mesh ID
+    uint8_t mesh_id[6] = {0x77, 0x77, 0x77, 0x77, 0x77, 0x01};
+    memcpy(&cfg.mesh_id, mesh_id, 6);
+
+    // Router (your WiFi AP)
+    cfg.channel = 0;  // auto-detect
+    cfg.router.ssid_len = strlen(CONFIG_ROUTER_SSID);
+    memcpy(cfg.router.ssid, CONFIG_ROUTER_SSID, cfg.router.ssid_len);
+    memcpy(cfg.router.password, CONFIG_ROUTER_PASSWD,
+           strlen(CONFIG_ROUTER_PASSWD));
+
+    // Mesh softAP
+    cfg.mesh_ap.max_connection = CONFIG_MESH_AP_CONNECTIONS;
+    memcpy(cfg.mesh_ap.password, CONFIG_MESH_AP_PASSWD,
+           strlen(CONFIG_MESH_AP_PASSWD));
+
+    ESP_ERROR_CHECK(esp_mesh_set_config(&cfg));
+
+    // Self-organized root election based on RSSI
     ESP_ERROR_CHECK(esp_mesh_set_self_organized(true, true));
-    
+
+    ESP_ERROR_CHECK(esp_mesh_set_max_layer(CONFIG_MESH_MAX_LAYER));
+
+    ESP_ERROR_CHECK(esp_mesh_set_vote_percentage(0.9));
+
     // Start mesh
-    ESP_LOGI(TAG, "Starting mesh network...");
     ESP_ERROR_CHECK(esp_mesh_start());
-    
-    ESP_LOGI(TAG, "Mesh initialized - SSID: %s, Mesh ID: %02X%02X%02X%02X%02X%02X",
-             CONFIG_WIFI_SSID, 
-             mesh_id.addr[0], mesh_id.addr[1], mesh_id.addr[2],
-             mesh_id.addr[3], mesh_id.addr[4], mesh_id.addr[5]);
-    ESP_LOGI(TAG, "Free heap after mesh init: %lu bytes", esp_get_free_heap_size());
+
+    ESP_LOGI(TAG, "Mesh initialized, waiting for root election...");
 }

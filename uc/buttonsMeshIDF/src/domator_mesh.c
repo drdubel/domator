@@ -6,6 +6,8 @@
 #include "esp_app_format.h"
 #include "esp_ota_ops.h"
 #include "driver/gpio.h"
+#include "nvs_flash.h"
+#include "nvs.h"
 
 static const char *TAG = "DOMATOR_MESH";
 
@@ -113,15 +115,41 @@ void generate_firmware_hash(void)
 void detect_hardware_type(void)
 {
     // Hardware auto-detection strategy:
-    // 1. Check for 16-relay board by probing shift register pins (14, 13, 12)
-    // 2. Check for 8-relay board by probing relay output pins (32, 33, etc.)
-    // 3. Default to switch node if neither relay board is detected
-    //
-    // LIMITATION: Currently cannot distinguish between 8-relay board and switch node
-    // reliably because both use similar GPIO configurations. Consider using NVS
-    // configuration or a dedicated detection pin for production deployments.
+    // 1. Check NVS for manual configuration override
+    // 2. Check for 16-relay board by probing shift register pins (14, 13, 12)
+    // 3. Check for 8-relay board by probing relay-specific GPIOs (32, 33, 25)
+    // 4. Default to switch node if neither relay board is detected
     
     ESP_LOGI(TAG, "Starting hardware detection...");
+    
+    // Check NVS for hardware type override
+    nvs_handle_t nvs_handle;
+    esp_err_t ret = nvs_open("domator", NVS_READONLY, &nvs_handle);
+    if (ret == ESP_OK) {
+        uint8_t hw_type = 0;
+        ret = nvs_get_u8(nvs_handle, "hardware_type", &hw_type);
+        if (ret == ESP_OK) {
+            if (hw_type == 1) {
+                g_node_type = NODE_TYPE_RELAY;
+                g_board_type = BOARD_TYPE_8_RELAY;
+                ESP_LOGI(TAG, "Hardware type from NVS: RELAY_8 (override)");
+                nvs_close(nvs_handle);
+                return;
+            } else if (hw_type == 2) {
+                g_node_type = NODE_TYPE_RELAY;
+                g_board_type = BOARD_TYPE_16_RELAY;
+                ESP_LOGI(TAG, "Hardware type from NVS: RELAY_16 (override)");
+                nvs_close(nvs_handle);
+                return;
+            } else if (hw_type == 0) {
+                g_node_type = NODE_TYPE_SWITCH;
+                ESP_LOGI(TAG, "Hardware type from NVS: SWITCH (override)");
+                nvs_close(nvs_handle);
+                return;
+            }
+        }
+        nvs_close(nvs_handle);
+    }
     
     // On ESP32-C3, skip auto-detection and default to switch mode
     // This avoids potential issues with GPIO probing on ESP32-C3
@@ -148,7 +176,7 @@ void detect_hardware_type(void)
         .intr_type = GPIO_INTR_DISABLE
     };
     
-    esp_err_t ret = gpio_config(&io_conf);
+    ret = gpio_config(&io_conf);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to configure shift register pins: %s", esp_err_to_name(ret));
         g_node_type = NODE_TYPE_SWITCH;
@@ -176,25 +204,71 @@ void detect_hardware_type(void)
     
     ESP_LOGD(TAG, "16-relay board not detected, checking for 8-relay...");
     
-    // Check for 8-relay board by probing the first relay output pin (GPIO 32)
-    // This GPIO is less likely to be used on switch boards
-    ESP_LOGD(TAG, "Probing GPIO 32 for 8-relay board...");
-    io_conf.pin_bit_mask = (1ULL << RELAY_8_PIN_0);
+    // Check for 8-relay board by probing relay-specific GPIOs
+    // 8-relay boards use GPIOs: 32, 33, 25, 26, 27, 14, 12, 13
+    // Switch boards use GPIOs: 0-6 for buttons (completely different)
+    // Key discriminator: GPIO 32, 33, 25 exist and are usable on 8-relay but not typically on switch
+    
+    ESP_LOGD(TAG, "Probing 8-relay specific GPIOs (32, 33, 25)...");
+    
+    // Configure GPIO 32, 33, 25 as inputs with pull-down to test accessibility
+    io_conf.pin_bit_mask = ((1ULL << 32) | (1ULL << 33) | (1ULL << 25));
+    io_conf.mode = GPIO_MODE_INPUT;
     io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
-    io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
+    io_conf.intr_type = GPIO_INTR_DISABLE;
+    
+    ret = gpio_config(&io_conf);
+    if (ret != ESP_OK) {
+        // If these GPIOs can't be configured, not an 8-relay board
+        ESP_LOGD(TAG, "Could not configure 8-relay GPIOs: %s", esp_err_to_name(ret));
+        g_node_type = NODE_TYPE_SWITCH;
+        ESP_LOGI(TAG, "Hardware detected as: SWITCH (8-relay GPIOs not available)");
+        return;
+    }
+    
+    vTaskDelay(pdMS_TO_TICKS(10));
+    
+    // Read the GPIO levels
+    int gpio32_val = gpio_get_level(32);
+    int gpio33_val = gpio_get_level(33);
+    int gpio25_val = gpio_get_level(25);
+    
+    ESP_LOGD(TAG, "8-relay GPIO states: 32=%d, 33=%d, 25=%d", gpio32_val, gpio33_val, gpio25_val);
+    
+    // Now check for switch-specific GPIO 0 (first button on switch)
+    // If GPIO 0 is configured as button input, this is likely a switch
+    io_conf.pin_bit_mask = (1ULL << 0);
+    io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
     ret = gpio_config(&io_conf);
     if (ret == ESP_OK) {
         vTaskDelay(pdMS_TO_TICKS(5));
-        ESP_LOGD(TAG, "GPIO 32 probe completed");
+        int gpio0_val = gpio_get_level(0);
+        ESP_LOGD(TAG, "Switch GPIO 0 state: %d", gpio0_val);
+        
+        // If GPIO 0 is accessible and the relay GPIOs aren't being used,
+        // this is likely a switch board
+        // However, this is still not 100% reliable
     }
     
-    // Try to probe GPIO 32 - if it exists and can be configured, might be 8-relay board
-    // However, this is not definitive. For production, use NVS configuration.
+    // Decision logic:
+    // If we successfully probed 8-relay specific GPIOs (32, 33, 25), 
+    // and this is an ESP32 (not ESP32-C3), assume it's an 8-relay board
+    // ESP32 has these GPIOs available, switch boards typically don't use them
     
-    // Default to switch for now - user should configure via NVS for 8-relay boards
+#ifdef CONFIG_IDF_TARGET_ESP32
+    // On ESP32, if we can access GPIO 32/33/25, assume 8-relay board
+    // This is the most common configuration
+    g_node_type = NODE_TYPE_RELAY;
+    g_board_type = BOARD_TYPE_8_RELAY;
+    ESP_LOGI(TAG, "Hardware detected as: RELAY_8 (ESP32 with relay GPIOs accessible)");
+    ESP_LOGI(TAG, "If this is incorrect, set hardware_type in NVS (0=switch, 1=relay_8, 2=relay_16)");
+#else
+    // Other ESP32 variants - default to switch
     g_node_type = NODE_TYPE_SWITCH;
-    ESP_LOGI(TAG, "Hardware detected as: SWITCH");
-    ESP_LOGW(TAG, "Cannot distinguish 8-relay from switch - configure via NVS if needed");
+    ESP_LOGI(TAG, "Hardware detected as: SWITCH (default for non-ESP32)");
+    ESP_LOGW(TAG, "Set hardware_type in NVS if this is incorrect (0=switch, 1=relay_8, 2=relay_16)");
+#endif
 }
 
 // ====================

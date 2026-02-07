@@ -300,6 +300,14 @@ After forwarding by root, `parentId` is added.
 
 ## Troubleshooting
 
+### Hardware Misdetection - Relay Detected as Switch
+If ESP32 relay board is detected as SWITCH (check logs for "Hardware detected as: SWITCH") and crashes with WDT reset, see [HARDWARE_DETECTION_FIX.md](HARDWARE_DETECTION_FIX.md) for:
+- Auto-detection algorithm explanation
+- NVS hardware type override procedure
+- Manual configuration methods
+
+**Quick fix:** Set hardware type in NVS: `nvs_set domator hardware_type u8 1` (0=switch, 1=relay_8, 2=relay_16)
+
 ### Mesh Crashes After "WiFi STA started"
 If device resets immediately after WiFi STA starts with incomplete mesh log `I (xxx) mesh:`, see [MESH_INIT_CRASH_FIX.md](MESH_INIT_CRASH_FIX.md) for:
 - Memory exhaustion diagnosis
@@ -308,7 +316,7 @@ If device resets immediately after WiFi STA starts with incomplete mesh log `I (
 
 **Quick fix:** Use provided `sdkconfig.defaults` which reduces WiFi buffers to prevent memory exhaustion.
 
-### Relay Board Crashes on Startup
+### Relay Board Crashes on Startup (Initialization Order)
 If relay board resets during mesh initialization with message like `I (xxx) mesh:`, see [RELAY_CRASH_FIX.md](RELAY_CRASH_FIX.md) for:
 - Root cause explanation
 - Verification steps

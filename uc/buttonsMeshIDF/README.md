@@ -417,6 +417,19 @@ If you're seeing repeated MQTT connection errors like `esp-tls: [sock=48] select
 - **Detailed troubleshooting:** See [MQTT_TROUBLESHOOTING.md](MQTT_TROUBLESHOOTING.md)
 - **Common cause:** No MQTT broker installed/running, or wrong broker IP configured
 
+### MQTT Reconnection Storm (Fixed in v1.2.0+)
+If you see MQTT constantly connecting/disconnecting with duplicate messages:
+```
+/status/root/connection {"status":"disconnected","reason":"ungraceful"}
+/status/root/connection {"status":"connected",...}
+/status/root/connection {"status":"connected",...} ← DUPLICATE
+```
+- **Symptoms:** Reconnects every ~20 seconds, multiple duplicate "connected" messages
+- **Cause:** Critical bug in earlier versions (dangling pointer to stack buffers)
+- **Fixed:** Version 1.2.0+ (commit 86febe6)
+- **Solution:** Update to latest firmware
+- **Details:** See [MQTT_RECONNECTION_STORM_FIX.md](MQTT_RECONNECTION_STORM_FIX.md)
+
 ### Root Election
 If you want to understand which device becomes root and how it works:
 - See [ROOT_ELECTION.md](ROOT_ELECTION.md) for ESP-WIFI-MESH automatic root election details

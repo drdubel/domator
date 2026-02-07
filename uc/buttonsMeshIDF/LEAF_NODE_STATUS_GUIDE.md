@@ -44,7 +44,31 @@ Leaf Node → Mesh Network → Root Node → MQTT Broker → Home Automation
    }
    ```
 3. Queues message to root via mesh
-4. Root receives and publishes to MQTT topic: `/switch/state/<device_id>`
+4. Root receives and adds `parentId`, then publishes to MQTT topic: `/switch/state/171447004`
+
+**Leaf Relay (Device 987654321):**
+1. Connects to mesh parent
+2. Every 20 seconds, creates status JSON including relay outputs
+3. Queues message to root via mesh
+4. Root receives and publishes to MQTT topic: `/relay/state/987654321`
+
+**Root Node (Device 1074205304):**
+1. Connects to WiFi and MQTT directly
+2. Every 20 seconds, creates status JSON
+3. Publishes directly to MQTT topic: `/switch/state/1074205304`
+
+## MQTT Topics
+
+All nodes (root and leaf) publish their status to individual topics based on their device ID and type:
+
+- **Switch nodes:** `/switch/state/{deviceId}`
+- **Relay nodes:** `/relay/state/{deviceId}`
+- **Root nodes:** `/switch/state/{deviceId}` or `/relay/state/{deviceId}` (depending on hardware)
+
+**Examples:**
+- Switch 171447004 → `/switch/state/171447004`
+- Relay 987654321 → `/relay/state/987654321`
+- Root 1074205304 (switch type) → `/switch/state/1074205304`
 
 ## Expected Log Patterns
 

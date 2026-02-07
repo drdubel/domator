@@ -590,12 +590,20 @@ void root_publish_status(void) {
     cJSON_Delete(json);
 
     if (json_str != NULL) {
+        // Build topic based on node type: /switch/state/{deviceId} or /relay/state/{deviceId}
+        char topic[64];
+        const char* node_type_prefix = "switch";  // Default to switch
+        if (g_node_type == NODE_TYPE_RELAY) {
+            node_type_prefix = "relay";
+        }
+        snprintf(topic, sizeof(topic), "/%s/state/%" PRIu32, node_type_prefix, g_device_id);
+        
         int msg_id = esp_mqtt_client_publish(
-            g_mqtt_client, "/switch/state/root", json_str, 0, 0, 0);
+            g_mqtt_client, topic, json_str, 0, 0, 0);
         if (msg_id >= 0) {
-            ESP_LOGD(TAG, "Published root status: %s", json_str);
+            ESP_LOGI(TAG, "Published root status to %s: %s", topic, json_str);
         } else {
-            ESP_LOGW(TAG, "Failed to publish root status");
+            ESP_LOGW(TAG, "Failed to publish root status to %s", topic);
 
             if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
                 g_stats.mqtt_dropped++;
@@ -616,11 +624,34 @@ void root_forward_leaf_status(const char* json_str) {
         return;
     }
 
-    // Parse the JSON to add parentId
+    // Parse the JSON to extract deviceId and type
     cJSON* json = cJSON_Parse(json_str);
     if (json == NULL) {
         ESP_LOGE(TAG, "Failed to parse leaf status JSON");
         return;
+    }
+
+    // Extract deviceId
+    cJSON* device_id_item = cJSON_GetObjectItem(json, "deviceId");
+    if (device_id_item == NULL || !cJSON_IsNumber(device_id_item)) {
+        ESP_LOGW(TAG, "Leaf status missing deviceId, skipping");
+        cJSON_Delete(json);
+        return;
+    }
+    uint32_t device_id = (uint32_t)device_id_item->valuedouble;
+
+    // Extract type (switch/relay/root)
+    cJSON* type_item = cJSON_GetObjectItem(json, "type");
+    const char* node_type_str = "switch";  // Default to switch
+    if (type_item != NULL && cJSON_IsString(type_item)) {
+        const char* type_value = type_item->valuestring;
+        if (strcmp(type_value, "relay") == 0) {
+            node_type_str = "relay";
+        } else if (strcmp(type_value, "root") == 0) {
+            // Root nodes use switch topic
+            node_type_str = "switch";
+        }
+        // Default "switch" for any other type
     }
 
     // Add parentId (root's device ID)
@@ -630,12 +661,16 @@ void root_forward_leaf_status(const char* json_str) {
     cJSON_Delete(json);
 
     if (modified_json != NULL) {
+        // Build topic: /switch/state/{deviceId} or /relay/state/{deviceId}
+        char topic[64];
+        snprintf(topic, sizeof(topic), "/%s/state/%" PRIu32, node_type_str, device_id);
+        
         int msg_id = esp_mqtt_client_publish(
-            g_mqtt_client, "/switch/state/root", modified_json, 0, 0, 0);
+            g_mqtt_client, topic, modified_json, 0, 0, 0);
         if (msg_id >= 0) {
-            ESP_LOGD(TAG, "Forwarded leaf status: %s", modified_json);
+            ESP_LOGI(TAG, "Forwarded %s status to %s: %s", node_type_str, topic, modified_json);
         } else {
-            ESP_LOGW(TAG, "Failed to forward leaf status");
+            ESP_LOGW(TAG, "Failed to forward %s status to %s", node_type_str, topic);
 
             if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
                 g_stats.mqtt_dropped++;

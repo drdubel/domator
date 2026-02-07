@@ -44,10 +44,15 @@ This project replaces the previous 3 separate ESP-NOW Arduino firmwares (rootLig
 - **Connection map parsing (#13)**: Configure button → relay mappings via MQTT JSON
 - **Button type config (#14)**: Support toggle (type=0) and stateful (type=1) buttons
 - **Button → relay routing (#15)**: Automatically route button presses to configured relay targets
-- **MQTT → node forwarding (#16)**: Forward MQTT commands to mesh nodes (already implemented)
+- **MQTT → node forwarding (#16)**: Forward MQTT commands to mesh nodes with device-specific targeting
 - **Relay state → MQTT (#17)**: Publish relay states to MQTT (already implemented)
 - **Node status → MQTT (#18)**: Forward node status reports (already implemented)
 - **MQTT config receive (#19)**: Receive and apply configuration via `/switch/cmd/root`
+- **Device-specific targeting**: Commands to specific device IDs use direct routing (not broadcast)
+  - MQTT topics with device ID: `/relay/cmd/1074207536`
+  - Root maintains device_id → MAC address mapping
+  - Direct sends when device known, broadcasts as fallback
+  - See [DEVICE_TARGETING.md](DEVICE_TARGETING.md) for details
 
 ### Phase 5 - Reliability
 - **Peer health tracking (#20)**: Track node connectivity and health metrics
@@ -323,6 +328,18 @@ If relay board resets during mesh initialization with message like `I (xxx) mesh
 - Advanced debugging
 
 **Quick fix:** Ensure firmware version ≥ v1.1.0 which includes initialization order fix.
+
+### Device-Specific Targeting
+Commands to specific devices use direct routing instead of broadcast. For details on how device targeting works, see [DEVICE_TARGETING.md](DEVICE_TARGETING.md).
+
+**Usage:** Include device ID in MQTT topic:
+```bash
+# Target specific relay
+mosquitto_pub -t "/relay/cmd/1074207536" -m "a1"
+
+# Broadcast to all relays
+mosquitto_pub -t "/relay/cmd" -m "S"
+```
 
 ### Other Issues
 - OTA firmware hosting: See [OTA_FIRMWARE_HOSTING.md](OTA_FIRMWARE_HOSTING.md)

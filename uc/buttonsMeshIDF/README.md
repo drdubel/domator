@@ -239,6 +239,31 @@ ESP-WIFI-MESH automatically elects one device as the root node based on WiFi sig
 
 **For details**, see [ROOT_ELECTION.md](ROOT_ELECTION.md)
 
+### WiFi Configuration
+
+⚠️ **IMPORTANT:** WiFi credentials must be configured before deployment!
+
+Default configuration has **empty WiFi credentials**, causing devices to operate in isolated mode with IP `192.168.4.x` instead of connecting to your home WiFi.
+
+**Configure WiFi:**
+```bash
+idf.py menuconfig
+# Navigate to: Domator Mesh Configuration
+# Set: WiFi SSID = "YourNetworkName"
+# Set: WiFi Password = "YourPassword"
+# Save and exit (S, Enter, Q)
+idf.py build flash monitor
+```
+
+**Verify correct connection:**
+After configuration, logs should show:
+```
+I (7245) esp_netif_handlers: sta ip: 192.168.1.45, gw: 192.168.1.1
+                                          ↑ Your home network, NOT 192.168.4.x
+```
+
+**If you see `192.168.4.x` network**, WiFi is not configured correctly. See [IP_ADDRESSING_GUIDE.md](IP_ADDRESSING_GUIDE.md) for detailed explanation and troubleshooting.
+
 ### MQTT Setup
 
 The root node requires an MQTT broker to be running and accessible. Default configuration:
@@ -251,8 +276,9 @@ Password: domator
 **Common issue:** If you see MQTT connection errors, you need to:
 1. Install Mosquitto (MQTT broker) or use a cloud broker
 2. Update the MQTT configuration to match your broker's IP address
+3. Ensure WiFi is configured correctly (see above)
 
-**For troubleshooting**, see [MQTT_TROUBLESHOOTING.md](MQTT_TROUBLESHOOTING.md)
+**For troubleshooting**, see [MQTT_TROUBLESHOOTING.md](MQTT_TROUBLESHOOTING.md) or [MQTT_QUICKSTART.md](MQTT_QUICKSTART.md)
 
 ### Connection Status Messages
 
@@ -360,18 +386,48 @@ After forwarding by root, `parentId` is added.
 
 ## Troubleshooting
 
-### Root Election and MQTT Connection
-If you're seeing MQTT connection errors or want to understand which device becomes root:
-- **Root election:** See [ROOT_ELECTION.md](ROOT_ELECTION.md) for how ESP-WIFI-MESH automatically elects the root node
-- **MQTT errors:** See [MQTT_TROUBLESHOOTING.md](MQTT_TROUBLESHOOTING.md) for fixing connection timeout errors
+### IP Address is 192.168.4.x (Most Common Issue)
+If you see `sta ip: 192.168.4.2, gw: 192.168.4.1` in logs:
+- **Problem:** Not connected to home WiFi router - mesh is in isolated mode
+- **Cause:** WiFi credentials not configured or incorrect
+- **Impact:** MQTT won't work (can't reach broker on home network)
+- **Solution:** See [IP_ADDRESSING_GUIDE.md](IP_ADDRESSING_GUIDE.md) for detailed explanation and fix
 
-**Common issue:** `esp-tls: [sock=48] select() timeout` → You need to install and configure an MQTT broker (e.g., Mosquitto)
+### MQTT Connection Errors
+If you're seeing repeated MQTT connection errors like `esp-tls: [sock=48] select() timeout`:
+- **Quick fix:** See [MQTT_QUICKSTART.md](MQTT_QUICKSTART.md) for 5-minute setup guide
+- **Detailed troubleshooting:** See [MQTT_TROUBLESHOOTING.md](MQTT_TROUBLESHOOTING.md)
+- **Common cause:** No MQTT broker installed/running, or wrong broker IP configured
+
+### Root Election
+If you want to understand which device becomes root and how it works:
+- See [ROOT_ELECTION.md](ROOT_ELECTION.md) for ESP-WIFI-MESH automatic root election details
+- Root is elected based on strongest WiFi signal to router
+- Any device can be root (no functional difference)
 
 ### Hardware Misdetection - Relay Detected as Switch
-If ESP32 relay board is detected as SWITCH (check logs for "Hardware detected as: SWITCH") and crashes with WDT reset, see [HARDWARE_DETECTION_FIX.md](HARDWARE_DETECTION_FIX.md) for:
-- Auto-detection algorithm explanation
-- NVS hardware type override procedure
-- Manual configuration methods
+If ESP32 relay board is detected as SWITCH and crashes with WDT reset:
+- See [HARDWARE_DETECTION_FIX.md](HARDWARE_DETECTION_FIX.md) for:
+  - Auto-detection algorithm explanation
+  - NVS hardware type override procedure
+  - Manual configuration methods
+
+### Device-Specific Targeting Not Working
+If seeing warning: "Specific device targeting not implemented, broadcasting":
+- See [DEVICE_TARGETING.md](DEVICE_TARGETING.md) for how device-specific routing works
+- Devices must send at least one message to be tracked
+- Check device ID matches in MQTT topic and logs
+
+### Crashes and Resets
+For watchdog resets, stack overflows, or other crashes:
+- **Master guide:** See [MESH_CRASH_SUMMARY.md](MESH_CRASH_SUMMARY.md) for all crash types
+- **Hardware misdetection:** [HARDWARE_DETECTION_FIX.md](HARDWARE_DETECTION_FIX.md)
+- **Relay race condition:** [RELAY_CRASH_FIX.md](RELAY_CRASH_FIX.md)
+- **Memory exhaustion:** [MESH_INIT_CRASH_FIX.md](MESH_INIT_CRASH_FIX.md)
+
+### General Mesh Issues
+For mesh formation, communication, or performance problems:
+- See [MESH_TROUBLESHOOTING.md](MESH_TROUBLESHOOTING.md) for comprehensive troubleshooting guide
 
 **Quick fix:** Set hardware type in NVS: `nvs_set domator hardware_type u8 1` (0=switch, 1=relay_8, 2=relay_16)
 

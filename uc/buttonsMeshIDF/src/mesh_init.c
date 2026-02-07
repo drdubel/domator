@@ -143,6 +143,16 @@ static void mesh_event_handler(void *arg, esp_event_base_t event_base,
             ESP_LOGI(TAG, "Root asked to yield");
             break;
             
+        case MESH_EVENT_ROOT_LOST: {
+            ESP_LOGW(TAG, "Root lost - this device is no longer root");
+            g_is_root = false;
+            g_mesh_layer = 0;
+            
+            // Cleanup MQTT connection when losing root status
+            mqtt_cleanup();
+            break;
+        }
+            
         default:
             ESP_LOGD(TAG, "Mesh event: %d", event);
             break;

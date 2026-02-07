@@ -258,6 +258,7 @@ void handle_mesh_recv(const mesh_addr_t *from, const mesh_app_msg_t *msg);
 
 // node_root.c (root node functions)
 void mqtt_init(void);
+void mqtt_cleanup(void);
 void mqtt_event_handler(void *handler_args, esp_event_base_t base, 
                         int32_t event_id, void *event_data);
 void root_handle_mesh_message(const mesh_addr_t *from, const mesh_app_msg_t *msg);

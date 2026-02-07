@@ -463,6 +463,11 @@ void mqtt_init(void) {
         snprintf(broker_uri, sizeof(broker_uri), "%s", url);
     }
 
+    // Generate unique MQTT client ID based on device ID
+    char client_id[32];
+    snprintf(client_id, sizeof(client_id), "domator_%u", g_device_id);
+    ESP_LOGI(TAG, "Using MQTT client ID: %s", client_id);
+
     // Prepare Last Will and Testament (LWT) message for ungraceful disconnects
     char lwt_message[256];
     snprintf(lwt_message, sizeof(lwt_message),
@@ -471,6 +476,7 @@ void mqtt_init(void) {
 
     esp_mqtt_client_config_t mqtt_cfg = {
         .broker.address.uri = broker_uri,
+        .credentials.client_id = client_id,
         .credentials.username = CONFIG_MQTT_USERNAME,
         .credentials.authentication.password = CONFIG_MQTT_PASSWORD,
         .session.last_will = {
@@ -496,6 +502,29 @@ void mqtt_init(void) {
         ESP_LOGE(TAG, "Failed to start MQTT client: %s", esp_err_to_name(err));
     } else {
         ESP_LOGI(TAG, "MQTT client started");
+    }
+}
+
+// ====================
+// MQTT Cleanup (when losing root status)
+// ====================
+
+void mqtt_cleanup(void) {
+    if (g_mqtt_client != NULL) {
+        ESP_LOGI(TAG, "Cleaning up MQTT client (no longer root)");
+        
+        // Publish disconnection status if still connected
+        if (g_mqtt_connected) {
+            publish_disconnection_status();
+        }
+        
+        // Stop and destroy MQTT client
+        esp_mqtt_client_stop(g_mqtt_client);
+        esp_mqtt_client_destroy(g_mqtt_client);
+        g_mqtt_client = NULL;
+        g_mqtt_connected = false;
+        
+        ESP_LOGI(TAG, "MQTT client cleaned up");
     }
 }
 

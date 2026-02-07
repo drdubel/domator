@@ -96,7 +96,7 @@ static void mesh_event_handler(void *arg, esp_event_base_t event_base,
             // For now, we'll derive parent ID from MAC when needed
             // The connected structure contains parent MAC info
             
-            ESP_LOGI(TAG, "Parent connected - Layer: %d", g_mesh_layer);
+            ESP_LOGI(TAG, "✓ Parent connected - Layer: %d, Mesh connected, status reports will be sent to root", g_mesh_layer);
             break;
         }
         

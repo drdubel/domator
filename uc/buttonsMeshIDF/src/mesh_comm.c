@@ -185,6 +185,8 @@ void mesh_recv_task(void *arg)
 void status_report_task(void *arg)
 {
     ESP_LOGI(TAG, "Status report task started");
+    uint32_t status_sent_count = 0;
+    uint32_t status_skipped_count = 0;
     
     // Wait for mesh to stabilize
     vTaskDelay(pdMS_TO_TICKS(5000));
@@ -198,6 +200,7 @@ void status_report_task(void *arg)
         if (g_is_root) {
             // Root node publishes its own status via MQTT
             root_publish_status();
+            status_sent_count++;
         } else {
             // Leaf nodes send status to root via mesh
             if (g_mesh_connected) {
@@ -268,14 +271,23 @@ void status_report_task(void *arg)
                         
                         esp_err_t err = mesh_queue_to_root(&msg);
                         if (err == ESP_OK) {
-                            ESP_LOGD(TAG, "Queued status report: %s", json_str);
+                            status_sent_count++;
+                            ESP_LOGI(TAG, "Status report sent to root (count: %" PRIu32 "): %s", status_sent_count, json_str);
+                        } else {
+                            ESP_LOGW(TAG, "Failed to queue status report");
                         }
+                    } else {
+                        ESP_LOGW(TAG, "Status report too large (%d bytes), max is %d", msg.data_len, sizeof(msg.data) - 1);
                     }
                     
                     free(json_str);
                 }
             } else {
-                ESP_LOGD(TAG, "Not connected to mesh, skipping status report");
+                status_skipped_count++;
+                // Log periodically (every 10 attempts) to avoid log spam
+                if (status_skipped_count % 10 == 1) {
+                    ESP_LOGW(TAG, "Not connected to mesh, skipping status report (skipped: %" PRIu32 ")", status_skipped_count);
+                }
             }
         }
         

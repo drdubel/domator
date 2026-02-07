@@ -452,12 +452,15 @@ void mqtt_event_handler(void* handler_args, esp_event_base_t base,
 // ====================
 
 void mqtt_init(void) {
+    // Strong guard: Only root node should initialize MQTT
     if (!g_is_root) {
-        ESP_LOGW(TAG, "Not root node, skipping MQTT init");
+        ESP_LOGW(TAG, "❌ MQTT init called on NON-ROOT node (device_id: %" PRIu32 ", layer: %d) - skipping", 
+                 g_device_id, g_mesh_layer);
+        ESP_LOGW(TAG, "   This is expected for leaf nodes. Only root connects to MQTT.");
         return;
     }
 
-    ESP_LOGI(TAG, "Initializing MQTT client");
+    ESP_LOGI(TAG, "✓ Initializing MQTT client (ROOT node, device_id: %" PRIu32 ")", g_device_id);
 
     // Build complete MQTT broker URI
     char broker_uri[128];

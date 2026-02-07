@@ -444,6 +444,14 @@ If you're concerned about multiple devices connecting to MQTT or root changes:
 - Root transitions take ~12 seconds
 - Old root cleanly disconnects before new root connects
 
+### Leaf Node Status Reporting
+If leaf nodes aren't sending status to root or you see MQTT warnings on non-root nodes:
+- **Symptom:** "Not connected to mesh, skipping status report"
+- **Symptom:** "MQTT init called on NON-ROOT node" (this is NORMAL - guard is working)
+- **Cause:** Mesh not fully connected, or confusion about leaf node behavior
+- **Expected:** Leaf nodes send status via mesh to root, NOT via MQTT
+- **Details:** See [LEAF_NODE_STATUS_GUIDE.md](LEAF_NODE_STATUS_GUIDE.md)
+
 ### Hardware Misdetection - Relay Detected as Switch
 If ESP32 relay board is detected as SWITCH and crashes with WDT reset:
 - See [HARDWARE_DETECTION_FIX.md](HARDWARE_DETECTION_FIX.md) for:

@@ -1,10 +1,36 @@
 # ESP-WIFI-MESH Crash Issues - Complete Summary
 
-This document summarizes the two related but distinct mesh initialization crash issues and their fixes.
+This document summarizes the three related but distinct mesh initialization crash issues and their fixes.
 
 ---
 
-## Issue 1: Relay Board Initialization Race Condition
+## Issue 1: Hardware Misdetection - Relay Detected as Switch
+
+### Symptom
+```
+I (750) DOMATOR_MESH: Hardware detected as: SWITCH
+W (750) DOMATOR_MESH: Cannot distinguish 8-relay from switch
+...
+I (1026) mesh: 
+rst:0x8 (TG1WDT_SYS_RESET)
+```
+
+8-relay board detected as SWITCH, causes watchdog reset after ~1 second.
+
+### Root Cause
+**Hardware misdetection:** Auto-detection incorrectly identifies 8-relay board as SWITCH → wrong init code runs → GPIO conflicts → mesh hangs → watchdog fires.
+
+### Solution
+- Improved auto-detection: On ESP32, if GPIO 32/33/25 accessible → assume RELAY_8
+- NVS override capability: `nvs_set domator hardware_type u8 1`
+- Better logging and error messages
+
+### Documentation
+See [HARDWARE_DETECTION_FIX.md](HARDWARE_DETECTION_FIX.md)
+
+---
+
+## Issue 2: Relay Board Initialization Race Condition
 
 ### Symptom
 ```
@@ -27,7 +53,7 @@ See [RELAY_CRASH_FIX.md](RELAY_CRASH_FIX.md)
 
 ---
 
-## Issue 2: Mesh Initialization Memory Exhaustion
+## Issue 3: Mesh Initialization Memory Exhaustion
 
 ### Symptom
 ```
@@ -56,45 +82,59 @@ See [MESH_INIT_CRASH_FIX.md](MESH_INIT_CRASH_FIX.md)
 
 ### Check the Timing
 
-**Issue 1 (Relay Race Condition):**
+**Issue 1 (Hardware Misdetection):**
+- Occurs at ~1000ms
+- After "Hardware detected as: SWITCH" log
+- WDT reset with PC at context save
+
+**Issue 2 (Relay Race Condition):**
 - Occurs at ~1200ms
 - Only on relay boards
 - After "mesh:" log from ESP-IDF
 
-**Issue 2 (Memory Exhaustion):**
+**Issue 3 (Memory Exhaustion):**
 - Occurs at ~970ms
 - Any node type
 - After "WiFi STA started"
-
 ### Check Node Type
 
-**Issue 1:** Only affects relay boards (NODE_TYPE_RELAY)  
-**Issue 2:** Affects all node types (root, switch, relay)
+**Issue 1 (Hardware Misdetection):** Only affects relay boards on ESP32
+**Issue 2 (Relay Race Condition):** Only affects relay boards (NODE_TYPE_RELAY)  
+**Issue 3 (Memory Exhaustion):** Affects all node types (root, switch, relay)
 
 ### Check Configuration
 
-**Issue 1:** Related to hardware initialization order  
-**Issue 2:** Related to WiFi buffer memory allocation
+**Issue 1:** Related to hardware detection logic
+**Issue 2:** Related to hardware initialization order  
+**Issue 3:** Related to WiFi buffer memory allocation
+
+### Check Logs
+
+**Issue 1:** Look for "Hardware detected as: SWITCH" when it should be RELAY
+**Issue 2:** Look for relay init after mesh init (wrong order)
+**Issue 3:** Look for low heap warnings before mesh init
 
 ---
 
 ## Combined Fix Verification
 
-After applying both fixes, your logs should show:
+After applying all fixes, your logs should show:
 
 ### Successful Startup Sequence
 
 ```
 I (100) DOMATOR_MESH: Domator Mesh starting...
 I (150) DOMATOR_MESH: Device ID: 12345678
-I (160) DOMATOR_MESH: Hardware detected as: RELAY_8
 
-# Issue 1 Fix - Relay before mesh
+# Issue 1 Fix - Correct hardware detection
+I (160) DOMATOR_MESH: Hardware detected as: RELAY_8 (ESP32 with relay GPIOs accessible)
+
+# Issue 2 Fix - Relay init before mesh
 I (170) DOMATOR_MESH: Pre-initializing relay board (type: 8-relay)
 I (180) NODE_RELAY: Initializing relay board
 I (200) NODE_RELAY: Relay initialization complete - ready for operations
 
-# Issue 2 Fix - Heap monitoring
+# Issue 3 Fix - Heap monitoring
 I (250) MESH_INIT: Initializing mesh network
 I (260) MESH_INIT: Free heap before mesh init: 180000 bytes
 I (500) MESH_INIT: WiFi STA started
@@ -112,6 +152,7 @@ I (5000) MESH_INIT: Parent connected - Layer: 2
 ```
 
 **Key indicators:**
+- ✅ Correct hardware detection (RELAY_8, not SWITCH)
 - ✅ Relay init **before** mesh init
 - ✅ Heap > 120KB after WiFi init
 - ✅ Heap > 100KB after mesh init
@@ -124,23 +165,27 @@ I (5000) MESH_INIT: Parent connected - Layer: 2
 
 ### If Device Still Crashes
 
-1. **Check heap after WiFi init**
+1. **Check hardware detection**
+   - Look for "Hardware detected as:" log
+   - If wrong: Use NVS override `nvs_set domator hardware_type u8 1`
+
+2. **Check heap after WiFi init**
    - Required: > 120KB
    - If less: Reduce buffers further or reduce application memory
 
-2. **Check initialization order in logs**
+3. **Check initialization order in logs**
    - For relay boards: "Pre-initializing relay board" must appear before "Initializing mesh network"
    - If wrong order: Update firmware to include relay init fix
 
-3. **Check for stack overflow**
+4. **Check for stack overflow**
    - Look for: `***ERROR*** A stack overflow in task`
    - If present: Increase stack sizes further (6144 or 8192)
 
-4. **Check total heap at boot**
+5. **Check total heap at boot**
    - Required: > 150KB initially
    - If less: Reduce static allocations or use SPIRAM
 
-5. **Verify configuration**
+6. **Verify configuration**
    - Use provided `sdkconfig.defaults`
    - Do clean rebuild: `idf.py fullclean build`
 
@@ -181,24 +226,29 @@ xTaskCreate(relay_button_task, "relay_button", 5120, NULL, 6, NULL);
 
 ### For Future Development
 
-1. **Always initialize hardware before network services**
+1. **Verify hardware detection early**
+   - Test detection on first boot
+   - Configure NVS if auto-detection unreliable
+   - Document expected hardware type per device
+
+2. **Always initialize hardware before network services**
    - Hardware → Mutexes → Network → Tasks
 
-2. **Monitor heap at critical points**
+3. **Monitor heap at critical points**
    - After each major initialization step
    - Warn if < 80KB available
 
-3. **Use adequate stack sizes**
+4. **Use adequate stack sizes**
    - Minimum 4KB for simple tasks
    - 5KB+ for network/mesh tasks
    - 6-8KB for tasks with recursion
 
-4. **Test with memory constraints**
+5. **Test with memory constraints**
    - Simulate low heap conditions
    - Test with various WiFi buffer configs
    - Monitor minimum heap over time
 
-5. **Document resource requirements**
+6. **Document resource requirements**
    - Heap requirements per feature
    - Stack requirements per task
    - Buffer configuration trade-offs
@@ -207,6 +257,7 @@ xTaskCreate(relay_button_task, "relay_button", 5120, NULL, 6, NULL);
 
 ## Related Resources
 
+- [HARDWARE_DETECTION_FIX.md](HARDWARE_DETECTION_FIX.md) - Hardware misdetection issue
 - [RELAY_CRASH_FIX.md](RELAY_CRASH_FIX.md) - Relay initialization race condition
 - [MESH_INIT_CRASH_FIX.md](MESH_INIT_CRASH_FIX.md) - Mesh memory exhaustion
 - [README.md](README.md) - Project overview and features
@@ -217,19 +268,21 @@ xTaskCreate(relay_button_task, "relay_button", 5120, NULL, 6, NULL);
 
 ## Version History
 
-- **v1.0.x**: Initial release (both issues present)
+- **v1.0.x**: Initial release (all three issues present)
 - **v1.1.0**: Fixed relay initialization race condition
 - **v1.1.1**: Fixed mesh initialization memory exhaustion
-- **Current**: Both issues resolved, stable operation
+- **v1.1.2**: Fixed hardware misdetection on ESP32 relay boards
+- **Current**: All three issues resolved, stable operation
 
 ---
 
 ## Summary
 
-Both crash issues are now resolved:
+All three crash issues are now resolved:
 
-1. **Relay race condition** → Fixed by initialization order
-2. **Mesh memory exhaustion** → Fixed by reduced WiFi buffers
+1. **Hardware misdetection** → Fixed by improved detection + NVS override
+2. **Relay race condition** → Fixed by initialization order
+3. **Mesh memory exhaustion** → Fixed by reduced WiFi buffers
 
 Update to latest firmware and use provided configuration files for stable operation.
 

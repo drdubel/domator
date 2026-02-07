@@ -123,7 +123,7 @@ void health_monitor_task(void *arg)
 // Peer Health Tracking (Root Node)
 // ====================
 
-void peer_health_update(uint32_t device_id, int8_t rssi)
+void peer_health_update(uint32_t device_id, const mesh_addr_t *mac_addr, int8_t rssi)
 {
     uint32_t current_time = esp_timer_get_time() / 1000;  // ms
     
@@ -142,11 +142,27 @@ void peer_health_update(uint32_t device_id, int8_t rssi)
             peer_idx = g_peer_count;
             g_peer_health[peer_idx].device_id = device_id;
             g_peer_health[peer_idx].disconnect_count = 0;
+            
+            // Store MAC address if provided
+            if (mac_addr != NULL) {
+                memcpy(&g_peer_health[peer_idx].mac_addr, mac_addr, sizeof(mesh_addr_t));
+                ESP_LOGI(TAG, "Added peer %" PRIu32 " (MAC: %02X:%02X:%02X:%02X:%02X:%02X) to health tracking",
+                         device_id,
+                         mac_addr->addr[0], mac_addr->addr[1], mac_addr->addr[2],
+                         mac_addr->addr[3], mac_addr->addr[4], mac_addr->addr[5]);
+            } else {
+                ESP_LOGI(TAG, "Added peer %" PRIu32 " to health tracking", device_id);
+            }
+            
             g_peer_count++;
-            ESP_LOGI(TAG, "Added peer %" PRIu32 " to health tracking", device_id);
         } else {
             ESP_LOGW(TAG, "Peer health table full, cannot add device %" PRIu32, device_id);
             return;
+        }
+    } else {
+        // Update MAC address if provided (in case it changed)
+        if (mac_addr != NULL) {
+            memcpy(&g_peer_health[peer_idx].mac_addr, mac_addr, sizeof(mesh_addr_t));
         }
     }
     

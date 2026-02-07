@@ -97,6 +97,28 @@ static int button_char_to_index(char button_char) {
     return -1;
 }
 
+/**
+ * Find device MAC address by device ID
+ * @param device_id Device ID to look up
+ * @param mac_addr Output: MAC address if found
+ * @return true if device found, false otherwise
+ */
+static bool find_device_mac(uint32_t device_id, mesh_addr_t *mac_addr) {
+    if (mac_addr == NULL) {
+        return false;
+    }
+    
+    // Search in peer health tracking table
+    for (uint8_t i = 0; i < g_peer_count; i++) {
+        if (g_peer_health[i].device_id == device_id && g_peer_health[i].is_alive) {
+            memcpy(mac_addr, &g_peer_health[i].mac_addr, sizeof(mesh_addr_t));
+            return true;
+        }
+    }
+    
+    return false;
+}
+
 // ====================
 // MQTT Command Handling
 // ====================
@@ -272,24 +294,34 @@ static void handle_mqtt_command(const char* topic, int topic_len,
     mdata.proto = MESH_PROTO_BIN;
     mdata.tos = MESH_TOS_P2P;
 
-    // LIMITATION: Direct device addressing not yet implemented
-    // ESP-WIFI-MESH requires MAC address for direct routing, but we only have
-    // device ID Current workaround: All commands are broadcast to all nodes
-    // Each node checks if command is relevant and ignores if not
-    // Future: Maintain a device ID -> MAC address mapping table for direct
-    // routing
-
+    // Attempt device-specific targeting if device ID provided
     if (target_device_id != 0) {
-        ESP_LOGW(TAG,
-                 "Specific device targeting (%" PRIu32
-                 ") not implemented, broadcasting",
-                 target_device_id);
-        ESP_LOGI(TAG,
-                 "Broadcasting command to all nodes (intended for %" PRIu32 ")",
-                 target_device_id);
-        esp_mesh_send(NULL, &mdata, MESH_DATA_P2P, NULL, 0);
+        mesh_addr_t target_mac;
+        
+        // Try to find device MAC address
+        if (find_device_mac(target_device_id, &target_mac)) {
+            // Found device MAC - send directly to target device
+            ESP_LOGI(TAG, "Sending command to device %" PRIu32 " (MAC: %02X:%02X:%02X:%02X:%02X:%02X)",
+                     target_device_id,
+                     target_mac.addr[0], target_mac.addr[1], target_mac.addr[2],
+                     target_mac.addr[3], target_mac.addr[4], target_mac.addr[5]);
+            
+            esp_err_t err = esp_mesh_send(&target_mac, &mdata, MESH_DATA_P2P, NULL, 0);
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "Failed to send to device %" PRIu32 ": %s, broadcasting instead",
+                         target_device_id, esp_err_to_name(err));
+                esp_mesh_send(NULL, &mdata, MESH_DATA_P2P, NULL, 0);
+            }
+        } else {
+            // Device not found in tracking table - broadcast as fallback
+            ESP_LOGW(TAG, "Device %" PRIu32 " not found in tracking table, broadcasting",
+                     target_device_id);
+            ESP_LOGI(TAG, "Broadcasting command to all nodes (intended for %" PRIu32 ")",
+                     target_device_id);
+            esp_mesh_send(NULL, &mdata, MESH_DATA_P2P, NULL, 0);
+        }
     } else {
-        // Broadcast to all nodes
+        // No specific device ID - broadcast to all nodes
         ESP_LOGI(TAG, "Broadcasting command to all nodes");
         esp_mesh_send(NULL, &mdata, MESH_DATA_P2P, NULL, 0);
     }
@@ -511,9 +543,9 @@ void root_handle_mesh_message(const mesh_addr_t* from,
     ESP_LOGD(TAG, "Processing message type '%c' from device %" PRIu32,
              msg->msg_type, msg->device_id);
     
-    // Update peer health tracking
+    // Update peer health tracking with MAC address
     // Note: RSSI not available from mesh_addr_t, using 0 as placeholder
-    peer_health_update(msg->device_id, 0);
+    peer_health_update(msg->device_id, from, 0);
 
     switch (msg->msg_type) {
         case MSG_TYPE_BUTTON: {

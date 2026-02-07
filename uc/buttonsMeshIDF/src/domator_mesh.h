@@ -175,6 +175,7 @@ typedef struct {
 // Peer health tracking
 typedef struct {
     uint32_t device_id;
+    mesh_addr_t mac_addr;  // MAC address for direct routing
     uint32_t last_seen;
     uint32_t disconnect_count;
     int8_t last_rssi;
@@ -300,7 +301,7 @@ void ota_trigger_from_mesh(const char *url);
 
 // Health monitoring (all nodes)
 void health_monitor_task(void *arg);
-void peer_health_update(uint32_t device_id, int8_t rssi);
+void peer_health_update(uint32_t device_id, const mesh_addr_t *mac_addr, int8_t rssi);
 void peer_health_check_task(void *arg);
 void root_loss_check_task(void *arg);
 

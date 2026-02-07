@@ -11,6 +11,10 @@
 
 static const char* TAG = "NODE_ROOT";
 
+// Static buffers for MQTT configuration (must persist after mqtt_init returns)
+static char g_mqtt_client_id[32] = {0};
+static char g_mqtt_lwt_message[256] = {0};
+
 // ====================
 // Helper Functions
 // ====================
@@ -393,6 +397,7 @@ static void publish_connection_status(bool connected) {
 void mqtt_event_handler(void* handler_args, esp_event_base_t base,
                         int32_t event_id, void* event_data) {
     esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
+    static bool connection_status_published = false;
 
     switch ((esp_mqtt_event_id_t)event_id) {
         case MQTT_EVENT_CONNECTED:
@@ -406,13 +411,18 @@ void mqtt_event_handler(void* handler_args, esp_event_base_t base,
             esp_mqtt_client_subscribe(g_mqtt_client, "/relay/cmd", 0);
             esp_mqtt_client_subscribe(g_mqtt_client, "/switch/cmd/root", 0);  // For config
             
-            // Publish connection status
-            publish_connection_status(true);
+            // Publish connection status only once per connection
+            // (prevent duplicate publishes if event fires multiple times)
+            if (!connection_status_published) {
+                publish_connection_status(true);
+                connection_status_published = true;
+            }
             break;
 
         case MQTT_EVENT_DISCONNECTED:
             ESP_LOGW(TAG, "MQTT disconnected");
             g_mqtt_connected = false;
+            connection_status_published = false;  // Reset for next connection
             break;
 
         case MQTT_EVENT_SUBSCRIBED:
@@ -464,25 +474,25 @@ void mqtt_init(void) {
     }
 
     // Generate unique MQTT client ID based on device ID
-    char client_id[32];
-    snprintf(client_id, sizeof(client_id), "domator_%u", g_device_id);
-    ESP_LOGI(TAG, "Using MQTT client ID: %s", client_id);
+    // Store in static buffer so it persists after function returns
+    snprintf(g_mqtt_client_id, sizeof(g_mqtt_client_id), "domator_%" PRIu32, g_device_id);
+    ESP_LOGI(TAG, "Using MQTT client ID: %s", g_mqtt_client_id);
 
     // Prepare Last Will and Testament (LWT) message for ungraceful disconnects
-    char lwt_message[256];
-    snprintf(lwt_message, sizeof(lwt_message),
+    // Store in static buffer so it persists after function returns
+    snprintf(g_mqtt_lwt_message, sizeof(g_mqtt_lwt_message),
              "{\"status\":\"disconnected\",\"device_id\":%" PRIu32 ",\"timestamp\":%" PRId64 ",\"reason\":\"ungraceful\"}",
              g_device_id, esp_timer_get_time() / 1000000);
 
     esp_mqtt_client_config_t mqtt_cfg = {
         .broker.address.uri = broker_uri,
-        .credentials.client_id = client_id,
+        .credentials.client_id = g_mqtt_client_id,
         .credentials.username = CONFIG_MQTT_USERNAME,
         .credentials.authentication.password = CONFIG_MQTT_PASSWORD,
         .session.last_will = {
             .topic = "/status/root/connection",
-            .msg = lwt_message,
-            .msg_len = strlen(lwt_message),
+            .msg = g_mqtt_lwt_message,
+            .msg_len = strlen(g_mqtt_lwt_message),
             .qos = 1,
             .retain = 1,
         },
@@ -515,7 +525,7 @@ void mqtt_cleanup(void) {
         
         // Publish disconnection status if still connected
         if (g_mqtt_connected) {
-            publish_disconnection_status();
+            publish_connection_status(false);
         }
         
         // Stop and destroy MQTT client

@@ -49,8 +49,21 @@ static void ip_event_handler(void *arg, esp_event_base_t event_base,
         g_is_root = true;
         g_mesh_layer = 1;
         
-        // Initialize MQTT for root node
-        mqtt_init();
+        // Initialize MQTT for root node (only if not already initialized)
+        // This prevents multiple MQTT clients on repeated IP events
+        extern esp_mqtt_client_handle_t g_mqtt_client;
+        if (g_mqtt_client == NULL) {
+            mqtt_init();
+        } else {
+            ESP_LOGI(TAG, "MQTT client already initialized, skipping");
+        }
+    }
+    
+    if (event_base == IP_EVENT && event_id == IP_EVENT_STA_LOST_IP) {
+        ESP_LOGW(TAG, "Root lost IP - cleaning up MQTT");
+        g_is_root = false;
+        g_mesh_layer = 0;
+        mqtt_cleanup();
     }
 }
 
@@ -141,17 +154,11 @@ static void mesh_event_handler(void *arg, esp_event_base_t event_base,
             
         case MESH_EVENT_ROOT_ASKED_YIELD:
             ESP_LOGI(TAG, "Root asked to yield");
+            // Note: MESH_EVENT_ROOT_LOST doesn't exist in ESP-IDF
+            // Root changes are detected via MESH_EVENT_TODS_STATE changing
+            // or when device becomes non-root (layer > 1)
+            // For now, we rely on IP loss detection in IP_EVENT_STA_LOST_IP
             break;
-            
-        case MESH_EVENT_ROOT_LOST: {
-            ESP_LOGW(TAG, "Root lost - this device is no longer root");
-            g_is_root = false;
-            g_mesh_layer = 0;
-            
-            // Cleanup MQTT connection when losing root status
-            mqtt_cleanup();
-            break;
-        }
             
         default:
             ESP_LOGD(TAG, "Mesh event: %d", event);
@@ -181,6 +188,8 @@ void wifi_init(void)
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                                 &wifi_event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
+                                                &ip_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_LOST_IP,
                                                 &ip_event_handler, NULL));
     
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_FLASH));

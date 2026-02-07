@@ -51,9 +51,12 @@ menu "Domator Mesh Configuration"
     config MESH_MAX_LAYER
         int "Max mesh layers"
         default 6
+<<<<<<< HEAD
 
     config OTA_URL
         string "URL for OTA"
         default "http://127.0.0.1/firmware.bin"
 
+=======
+>>>>>>> 75e1902 (changed to my version)
 endmenu

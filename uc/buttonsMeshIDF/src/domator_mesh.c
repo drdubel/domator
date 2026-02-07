@@ -1,5 +1,6 @@
 #include "domator_mesh.h"
 
+<<<<<<< HEAD
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
@@ -284,11 +285,22 @@ void detect_hardware_type(void) {
              "1=relay_8, 2=relay_16)");
 #endif
 }
+=======
+static const char* TAG = "DOMATOR";
+
+node_type_t g_node_type = NODE_TYPE_UNKNOWN;
+uint32_t g_device_id = 0;
+bool g_is_root = false;
+bool g_mesh_connected = false;
+>>>>>>> 75e1902 (changed to my version)
 
 void app_main(void) {
     ESP_LOGI(TAG, "Domator Mesh starting...");
 
+<<<<<<< HEAD
     // Initialize NVS
+=======
+>>>>>>> 75e1902 (changed to my version)
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
         ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -297,6 +309,7 @@ void app_main(void) {
     }
     ESP_ERROR_CHECK(ret);
 
+<<<<<<< HEAD
     generate_device_id();
     generate_firmware_hash();
     detect_hardware_type();
@@ -338,12 +351,21 @@ void app_main(void) {
         relay_init();
         relay_button_init();
     }
+=======
+    g_node_type = NODE_TYPE_SWITCH_C3;
+
+    uint8_t mac[6];
+    esp_wifi_get_mac(WIFI_IF_STA, mac);
+    g_device_id = (mac[2] << 24) | (mac[3] << 16) | (mac[4] << 8) | mac[5];
+    ESP_LOGI(TAG, "Device ID: %" PRIu32, g_device_id);
+>>>>>>> 75e1902 (changed to my version)
 
     mesh_network_init();
 
     xTaskCreate(mesh_rx_task, "mesh_rx", 8192, NULL, 5, NULL);
     xTaskCreate(mesh_tx_task, "mesh_tx", 4096, NULL, 4, NULL);
     xTaskCreate(status_report_task, "status", 4096, NULL, 1, NULL);
+<<<<<<< HEAD
     xTaskCreate(health_monitor_task, "health_monitor", 3072, NULL, 2, NULL);
     xTaskCreate(ota_task, "ota", 8192, NULL, 10, NULL);
 
@@ -362,4 +384,6 @@ void app_main(void) {
     }
 
     ESP_LOGI(TAG, "Domator Mesh initialized");
+=======
+>>>>>>> 75e1902 (changed to my version)
 }

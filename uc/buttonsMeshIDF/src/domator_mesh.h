@@ -18,6 +18,7 @@
 #include "mqtt_client.h"
 #include "nvs_flash.h"
 
+<<<<<<< HEAD
 // ====================
 // Constants and Limits
 // ====================
@@ -109,11 +110,17 @@
 typedef enum {
     NODE_TYPE_UNKNOWN = 0,
     NODE_TYPE_ROOT,
+=======
+// ============ NODE TYPES ============
+typedef enum {
+    NODE_TYPE_UNKNOWN = 0,
+>>>>>>> 75e1902 (changed to my version)
     NODE_TYPE_SWITCH_C3,
     NODE_TYPE_RELAY_8,
     NODE_TYPE_RELAY_16,
 } node_type_t;
 
+<<<<<<< HEAD
 // Relay board types
 typedef enum { BOARD_TYPE_8_RELAY = 0, BOARD_TYPE_16_RELAY } board_type_t;
 
@@ -270,17 +277,41 @@ void led_init(void);
 void led_task(void* arg);
 void led_set_color(uint8_t r, uint8_t g, uint8_t b);
 void led_flash_cyan(void);
+=======
+// ============ APP MESSAGE PROTOCOL ============
+typedef struct __attribute__((packed)) {
+    uint32_t src_id;
+    uint8_t msg_type;
+    uint8_t data_len;
+    char data[200];
+} mesh_app_msg_t;
+
+// ============ GLOBALS ============
+extern node_type_t g_node_type;
+extern uint32_t g_device_id;
+extern bool g_is_root;
+extern bool g_mesh_connected;
+
+// ============ mesh_init.c ============
+void mesh_network_init(void);
+>>>>>>> 75e1902 (changed to my version)
 
 // ============ mesh_comm.c ============
 void mesh_rx_task(void* arg);
 void mesh_tx_task(void* arg);
+<<<<<<< HEAD
 void mesh_queue_to_node(mesh_app_msg_t* msg, tx_priority_t prio,
                         mesh_addr_t* dest);
+=======
+void mesh_queue_to_root(mesh_app_msg_t* msg);
+void mesh_queue_to_node(mesh_addr_t* dest, mesh_app_msg_t* msg);
+>>>>>>> 75e1902 (changed to my version)
 void status_report_task(void* arg);
 
 // ============ node_root.c ============
 void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg);
 void node_root_start(void);
+<<<<<<< HEAD
 void mqtt_init(void);
 void node_root_stop(void);
 void root_publish_status(void);
@@ -308,3 +339,8 @@ void telnet_task(void* arg);
 int dual_log_vprintf(const char* fmt, va_list args);
 void telnet_start(void);
 void telnet_stop(void);
+=======
+void node_root_stop(void);
+void node_root_mqtt_connect(void);
+void root_publish_status(const char* payload);
+>>>>>>> 75e1902 (changed to my version)

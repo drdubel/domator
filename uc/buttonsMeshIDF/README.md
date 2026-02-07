@@ -264,6 +264,22 @@ I (7245) esp_netif_handlers: sta ip: 192.168.1.45, gw: 192.168.1.1
 
 **If you see `192.168.4.x` network**, WiFi is not configured correctly. See [IP_ADDRESSING_GUIDE.md](IP_ADDRESSING_GUIDE.md) for detailed explanation and troubleshooting.
 
+### Root Transitions
+
+ESP-WIFI-MESH automatically handles root node changes (root healing) when:
+- Current root's WiFi signal degrades
+- Current root device powers off or fails
+- A device with better WiFi signal appears
+
+**Key points:**
+- Only ONE device is root at any time
+- Root transitions take ~12 seconds
+- Each device has unique MQTT client ID (no conflicts)
+- Old root cleanly disconnects MQTT before new root connects
+- System continues functioning during transitions
+
+**For details**, see [ROOT_TRANSITIONS.md](ROOT_TRANSITIONS.md)
+
 ### MQTT Setup
 
 The root node requires an MQTT broker to be running and accessible. Default configuration:
@@ -272,6 +288,8 @@ MQTT Broker: mqtt://192.168.1.100:1883
 Username: domator
 Password: domator
 ```
+
+**Important:** Each device has a unique MQTT client ID (format: `domator_<device_id>`) to prevent conflicts during root transitions.
 
 **Common issue:** If you see MQTT connection errors, you need to:
 1. Install Mosquitto (MQTT broker) or use a cloud broker
@@ -404,6 +422,14 @@ If you want to understand which device becomes root and how it works:
 - See [ROOT_ELECTION.md](ROOT_ELECTION.md) for ESP-WIFI-MESH automatic root election details
 - Root is elected based on strongest WiFi signal to router
 - Any device can be root (no functional difference)
+
+### Root Transitions and MQTT
+If you're concerned about multiple devices connecting to MQTT or root changes:
+- See [ROOT_TRANSITIONS.md](ROOT_TRANSITIONS.md) for complete explanation
+- Only ONE device is root at any time
+- Each device has unique MQTT client ID (no conflicts)
+- Root transitions take ~12 seconds
+- Old root cleanly disconnects before new root connects
 
 ### Hardware Misdetection - Relay Detected as Switch
 If ESP32 relay board is detected as SWITCH and crashes with WDT reset:

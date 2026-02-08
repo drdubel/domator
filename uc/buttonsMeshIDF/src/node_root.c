@@ -385,7 +385,7 @@ static void publish_connection_status(bool connected) {
     if (json_str) {
         // Publish with QoS 1 and retain flag for monitoring
         int msg_id = esp_mqtt_client_publish(
-            g_mqtt_client, "/switch/state/root/", json_str, 0, 1, 1);
+            g_mqtt_client, "/switch/state/root", json_str, 0, 1, 1);
         if (msg_id >= 0) {
             ESP_LOGI(TAG, "Published connection status: %s (msg_id=%d)",
                      connected ? "connected" : "disconnected", msg_id);

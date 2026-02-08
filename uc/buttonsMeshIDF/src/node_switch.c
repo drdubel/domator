@@ -4,6 +4,8 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "led_strip.h"
 #include "nvs.h"
 #include "nvs_flash.h"
@@ -137,6 +139,20 @@ void gesture_config_save(void) {
 // Button Initialization
 // ====================
 
+static void IRAM_ATTR button_isr_handler(void* arg) {
+    uint32_t button_index = (uint32_t)arg;
+
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+    // Notify task, set bit corresponding to button index
+    xTaskNotifyFromISR(button_task_handle, (1 << button_index), eSetBits,
+                       &xHigherPriorityTaskWoken);
+
+    if (xHigherPriorityTaskWoken) {
+        portYIELD_FROM_ISR();
+    }
+}
+
 void button_init(void) {
     ESP_LOGI(TAG, "Initializing buttons");
 
@@ -150,7 +166,7 @@ void button_init(void) {
             .mode = GPIO_MODE_INPUT,
             .pull_up_en = GPIO_PULLUP_DISABLE,
             .pull_down_en = GPIO_PULLDOWN_ENABLE,
-            .intr_type = GPIO_INTR_DISABLE,
+            .intr_type = GPIO_INTR_ANYEDGE,
         };
         gpio_config(&io_conf);
 
@@ -165,6 +181,13 @@ void button_init(void) {
         ESP_LOGI(TAG, "Button %d initialized on GPIO %d, gestures: 0x%02X", i,
                  g_button_pins[i], g_gesture_config[i].enabled_gestures);
     }
+
+    ESP_ERROR_CHECK(gpio_install_isr_service(ESP_INTR_FLAG_IRAM));
+
+    for (int i = 0; i < NUM_BUTTONS; i++) {
+        ESP_ERROR_CHECK(gpio_isr_handler_add(g_button_pins[i],
+                                             button_isr_handler, (void*)i));
+    }
 }
 
 // ====================
@@ -174,9 +197,9 @@ void button_init(void) {
 void button_task(void* arg) {
     ESP_LOGI(TAG, "Button task started");
 
-    while (1) {
-        vTaskDelay(pdMS_TO_TICKS(BUTTON_POLL_INTERVAL_MS));
+    uint32_t notified_value;
 
+    while (1) {
         if (g_ota_in_progress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
@@ -184,187 +207,34 @@ void button_task(void* arg) {
 
         uint32_t current_time = esp_timer_get_time() / 1000;  // Convert to ms
 
-        for (int i = 0; i < NUM_BUTTONS; i++) {
-            int current_state = gpio_get_level(g_button_pins[i]);
-            button_state_t* btn = &g_button_states[i];
+        if (xTaskNotifyWait(0, 0xFFFFFFFF, &notified_value, portMAX_DELAY)) {
+            for (int i = 0; i < NUM_BUTTONS; i++) {
+                if (notified_value & (1 << i)) {
+                    int gpio_num = g_button_pins[i];
+                    int current_state = gpio_get_level(gpio_num);
 
-            // Detect state transitions
-            if (current_state != btn->last_state) {
-                // Debounce check
-                if (current_time - btn->last_press_time < BUTTON_DEBOUNCE_MS) {
-                    continue;
-                }
+                    if (current_state != g_button_states[i].last_state) {
+                        // Debounce check
+                        if ((current_time -
+                             g_button_states[i].last_press_time) >
+                            BUTTON_DEBOUNCE_MS) {
+                            g_button_states[i].last_press_time = current_time;
 
-                if (current_state == 1) {
-                    // Button pressed (LOW → HIGH transition)
-                    btn->press_start_time = current_time;
-                    btn->last_press_time = current_time;
+                            ESP_LOGI(TAG, "Button %d pressed", i);
 
-                    // Check if this is a double press
-                    if (btn->waiting_for_double &&
-                        (current_time - btn->last_release_time) <
-                            DOUBLE_PRESS_WINDOW_MS) {
-                        // Double press detected!
-                        btn->waiting_for_double = false;
-                        btn->pending_gesture = GESTURE_DOUBLE;
-
-                        ESP_LOGI(TAG, "Button %d: Double press detected", i);
-
-                        // Send immediately if double gesture is enabled
-                        if (is_gesture_enabled(i, GESTURE_DOUBLE)) {
-                            // Increment counter
-                            if (xSemaphoreTake(g_stats_mutex,
-                                               pdMS_TO_TICKS(100)) == pdTRUE) {
-                                g_stats.button_presses++;
-                                xSemaphoreGive(g_stats_mutex);
-                            }
-
-                            char button_char =
-                                gesture_to_char(i, GESTURE_DOUBLE);
-                            ESP_LOGI(TAG, "Sending double press: '%c'",
-                                     button_char);
-
-                            if (g_mesh_connected) {
-                                mesh_app_msg_t msg = {0};
-                                msg.msg_type = MSG_TYPE_BUTTON;
-                                msg.src_id = g_device_id;
-                                msg.data_len = 1;
-                                msg.data[0] = button_char;
-
-                                mesh_queue_to_root(&msg);
-                                led_flash_cyan();
-                            }
-                        } else {
-                            // Double disabled, fall back to single
-                            ESP_LOGI(
-                                TAG,
-                                "Double press disabled, sending single press");
-                            char button_char =
-                                gesture_to_char(i, GESTURE_SINGLE);
-
-                            if (g_mesh_connected) {
-                                mesh_app_msg_t msg = {0};
-                                msg.msg_type = MSG_TYPE_BUTTON;
-                                msg.src_id = g_device_id;
-                                msg.data_len = 1;
-                                msg.data[0] = button_char;
-
-                                mesh_queue_to_root(&msg);
-                                led_flash_cyan();
-                            }
+                            // Send button press message to root
+                            char button_char = 'a' + i;  // 'a'-'g'
+                            mesh_app_msg_t msg = {0};
+                            msg.src_id = g_device_id;
+                            msg.msg_type = MSG_TYPE_BUTTON;
+                            msg.data[0] = button_char;
+                            msg.data[1] = current_state + '0';  // '0' or '1'
+                            msg.data_len = 2;
+                            mesh_queue_to_root(&msg);
                         }
-                    } else {
-                        // First press - wait to see if it's single, double, or
-                        // long
-                        btn->pending_gesture = GESTURE_SINGLE;
-                    }
-                } else {
-                    // Button released (HIGH → LOW transition)
-                    btn->last_release_time = current_time;
-                    uint32_t press_duration =
-                        current_time - btn->press_start_time;
-
-                    // Check if it was a long press
-                    if (press_duration >= LONG_PRESS_THRESHOLD_MS &&
-                        btn->pending_gesture != GESTURE_DOUBLE) {
-                        // Long press detected
-                        btn->pending_gesture = GESTURE_LONG;
-                        btn->waiting_for_double = false;
-
-                        ESP_LOGI(TAG, "Button %d: Long press detected (%lu ms)",
-                                 i, press_duration);
-
-                        if (is_gesture_enabled(i, GESTURE_LONG)) {
-                            // Increment counter
-                            if (xSemaphoreTake(g_stats_mutex,
-                                               pdMS_TO_TICKS(100)) == pdTRUE) {
-                                g_stats.button_presses++;
-                                xSemaphoreGive(g_stats_mutex);
-                            }
-
-                            char button_char = gesture_to_char(i, GESTURE_LONG);
-                            ESP_LOGI(TAG, "Sending long press: '%c'",
-                                     button_char);
-
-                            if (g_mesh_connected) {
-                                mesh_app_msg_t msg = {0};
-                                msg.msg_type = MSG_TYPE_BUTTON;
-                                msg.src_id = g_device_id;
-                                msg.data_len = 1;
-                                msg.data[0] = button_char;
-
-                                mesh_queue_to_root(&msg);
-                                led_flash_cyan();
-                            }
-                        } else {
-                            // Long disabled, fall back to single
-                            ESP_LOGI(
-                                TAG,
-                                "Long press disabled, sending single press");
-                            char button_char =
-                                gesture_to_char(i, GESTURE_SINGLE);
-
-                            if (g_mesh_connected) {
-                                mesh_app_msg_t msg = {0};
-                                msg.msg_type = MSG_TYPE_BUTTON;
-                                msg.src_id = g_device_id;
-                                msg.data_len = 1;
-                                msg.data[0] = button_char;
-                                mesh_queue_to_root(&msg);
-                                led_flash_cyan();
-                            }
-                        }
-                    } else if (btn->pending_gesture == GESTURE_SINGLE &&
-                               btn->pending_gesture != GESTURE_DOUBLE) {
-                        // Short press - wait for possible double press
-                        btn->waiting_for_double = true;
-                        ESP_LOGD(TAG,
-                                 "Button %d: Waiting for possible double press",
-                                 i);
-                    }
-                }
-
-                btn->last_state = current_state;
-            }
-
-            // Check for double press timeout
-            if (btn->waiting_for_double/* &&
-                (current_time - btn->last_release_time) >
-                    DOUBLE_PRESS_WINDOW_MS */) {
-                // Double press window expired - send single press
-                btn->waiting_for_double = false;
-
-                ESP_LOGI(TAG, "Button %d: Single press confirmed", i);
-
-                if (is_gesture_enabled(i, GESTURE_SINGLE)) {
-                    // Increment counter
-                    if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(100)) ==
-                        pdTRUE) {
-                        g_stats.button_presses++;
-                        xSemaphoreGive(g_stats_mutex);
                     }
 
-                    char button_char = gesture_to_char(i, GESTURE_SINGLE);
-                    ESP_LOGI(TAG, "Sending single press: '%c'", button_char);
-
-                    if (g_mesh_connected) {
-                        mesh_app_msg_t msg = {0};
-                        msg.msg_type = MSG_TYPE_BUTTON;
-                        msg.src_id = g_device_id;
-                        msg.data_len = 1;
-                        msg.data[0] = button_char;
-
-                        mesh_queue_to_root(&msg);
-                        led_flash_cyan();
-                    } else {
-                        ESP_LOGW(
-                            TAG,
-                            "Not connected to mesh, cannot send button press");
-                    }
-                } else {
-                    // Single disabled but this shouldn't happen (fallback
-                    // default)
-                    ESP_LOGW(TAG, "Single press disabled for button %d", i);
+                    g_button_states[i].last_state = current_state;
                 }
             }
         }

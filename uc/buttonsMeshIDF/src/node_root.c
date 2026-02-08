@@ -59,7 +59,7 @@ static void registry_update(uint32_t device_id, mesh_addr_t* addr,
 
 static mesh_addr_t* registry_find(uint32_t device_id) {
     xSemaphoreTake(registry_mutex, portMAX_DELAY);
-    for (int i = 0; i < node_count; i++) {
+    for (int i = 0; i < MAX_DEVICES; i++) {
         if (node_registry[i].device_id == device_id) {
             xSemaphoreGive(registry_mutex);
             return &node_registry[i].mesh_addr;
@@ -72,7 +72,7 @@ static mesh_addr_t* registry_find(uint32_t device_id) {
 // Find device index by device ID
 static int registry_find_index(uint32_t device_id) {
     xSemaphoreTake(registry_mutex, portMAX_DELAY);
-    for (int i = 0; i < node_count; i++) {
+    for (int i = 0; i < MAX_DEVICES; i++) {
         if (node_registry[i].device_id == device_id) {
             xSemaphoreGive(registry_mutex);
             return i;
@@ -84,7 +84,7 @@ static int registry_find_index(uint32_t device_id) {
 
 static int get_button_type(uint32_t device_id, char button) {
     xSemaphoreTake(g_button_types_mutex, portMAX_DELAY);
-    for (int i = 0; i < g_num_devices; i++) {
+    for (int i = 0; i < MAX_DEVICES; i++) {
         if (g_connections[i].device_id == device_id) {
             int button_idx = button - 'a';
             if (button_idx >= 0 && button_idx < MAX_BUTTONS) {
@@ -242,10 +242,10 @@ static void route_button_to_relays(uint32_t from_id, char button, int state) {
             }
             mesh_queue_to_node(dest, &cmd);
             ESP_LOGI(TAG,
-                     "Routed button '%c' from %" PRIu32
+                     "Routed button '%c' of type %d from %" PRIu32
                      " to relay command '%c' on device %" PRIu32,
-                     button, from_id, target->relay_command[0],
-                     target->target_node_id);
+                     button, get_button_type(from_id, button), from_id,
+                     target->relay_command[0], target->target_node_id);
         } else {
             ESP_LOGW(TAG, "No mesh address found for target device %" PRIu32,
                      target->target_node_id);

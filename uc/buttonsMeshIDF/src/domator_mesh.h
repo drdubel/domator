@@ -250,6 +250,9 @@ extern uint8_t g_peer_count;
 extern QueueHandle_t g_mesh_tx_queue;
 extern SemaphoreHandle_t g_stats_mutex;
 
+// Task handles
+extern TaskHandle_t button_task_handle;
+
 // OTA flag
 extern bool g_ota_in_progress;
 

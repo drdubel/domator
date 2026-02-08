@@ -63,6 +63,8 @@ uint8_t g_peer_count = 0;
 QueueHandle_t g_mesh_tx_queue = NULL;
 SemaphoreHandle_t g_stats_mutex = NULL;
 
+TaskHandle_t button_task_handle = NULL;
+
 bool g_ota_in_progress = false;
 
 // ====================
@@ -356,7 +358,7 @@ void app_main(void) {
         ESP_LOGI(TAG, "Starting switch node tasks");
         button_init();
         led_init();
-        xTaskCreate(button_task, "button", 4096, NULL, 6, NULL);
+        xTaskCreate(button_task, "button", 4096, NULL, 6, &button_task_handle);
         xTaskCreate(led_task, "led", 3072, NULL, 2, NULL);
     } else if (g_node_type == NODE_TYPE_RELAY_8 ||
                g_node_type == NODE_TYPE_RELAY_16) {

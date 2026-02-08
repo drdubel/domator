@@ -41,6 +41,8 @@
 #define CRITICAL_HEAP_THRESHOLD 20000
 #define MAX_DEVICES 50
 #define MAX_ROUTES_PER_BUTTON 10
+#define MAX_BUTTONS_EXTENDED 24
+#define MAX_BUTTONS 8
 #define ROUTING_MUTEX_TIMEOUT_MS 200
 #define STATS_MUTEX_TIMEOUT_MS 10
 
@@ -160,7 +162,7 @@ typedef struct {
 // Routing target for button → relay mapping
 typedef struct {
     uint32_t target_node_id;
-    char relay_command[2];  // e.g., "a", "b1", etc.
+    char relay_command[2];
 } route_target_t;
 
 // Button routing entry
@@ -171,8 +173,16 @@ typedef struct {
 
 // Connection map entry for a device
 typedef struct {
-    button_route_t buttons[16];  // Support up to 16 buttons (a-p)
+    button_route_t
+        buttons[MAX_BUTTONS_EXTENDED];  // Support up to 24 buttons (a-x)
+    uint32_t device_id;
 } device_connections_t;
+
+typedef struct {
+    uint32_t device_id;
+    uint8_t
+        types[MAX_BUTTONS];  // Button type per button (0=toggle, 1=stateful)
+} button_types_t;
 
 // Gesture configuration per button (NVS-persisted)
 typedef struct {
@@ -214,10 +224,9 @@ extern bool g_mqtt_connected;
 
 // Routing configuration (root only)
 extern device_connections_t g_connections[MAX_DEVICES];
-extern uint32_t g_device_ids[MAX_DEVICES];
 extern uint8_t g_num_devices;
-extern uint8_t g_button_types[MAX_DEVICES][16];  // Button type per device
-                                                 // (0=toggle, 1=stateful)
+extern button_types_t g_button_types[MAX_DEVICES];  // Button type per device
+                                                    // (0=toggle, 1=stateful)
 extern SemaphoreHandle_t g_connections_mutex;
 extern SemaphoreHandle_t g_button_types_mutex;
 

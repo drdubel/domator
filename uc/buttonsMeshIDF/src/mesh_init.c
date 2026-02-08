@@ -52,7 +52,6 @@ static void mesh_event_handler(void* arg, esp_event_base_t event_base,
                 (mesh_event_connected_t*)event_data;
             ESP_LOGI(TAG, "Parent connected, layer:%d", connected->self_layer);
             g_mesh_connected = true;
-            uint8_t prev_layer = g_mesh_layer;
             g_mesh_layer = connected->self_layer;
 
             if (esp_mesh_is_root()) {

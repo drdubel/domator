@@ -69,15 +69,17 @@ void mesh_rx_task(void* arg) {
 
         // Leaf node handling
         switch (msg->msg_type) {
-            case MSG_TYPE_COMMAND:
+            case MSG_TYPE_COMMAND: {
                 // TODO: relay_handle_command when relay code is ported
                 ESP_LOGI(TAG, "Command received: %.*s", msg->data_len,
                          msg->data);
                 break;
+            }
 
-            case MSG_TYPE_OTA_TRIGGER:
+            case MSG_TYPE_OTA_TRIGGER: {
                 ESP_LOGI(TAG, "OTA update requested");
                 break;
+            }
 
             case MSG_TYPE_PING: {
                 ESP_LOGV(TAG, "Received ping from %" PRIu32, msg->src_id);
@@ -87,11 +89,13 @@ void mesh_rx_task(void* arg) {
                 pong.msg_type = MSG_TYPE_PING;
                 mesh_queue_to_node(&from, &pong);
                 ESP_LOGV(TAG, "Sent pong to %" PRIu32, msg->src_id);
+                break;
             }
 
-            default:
+            default: {
                 ESP_LOGW(TAG, "Unknown msg type: %c", msg->msg_type);
                 break;
+            }
         }
     }
 }

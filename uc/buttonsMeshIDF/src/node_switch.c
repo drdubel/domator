@@ -29,11 +29,11 @@ char gesture_to_char(int button_index, gesture_type_t gesture) {
 
     switch (gesture) {
         case GESTURE_SINGLE:
-            return 'a' + button_index;  // a-g
+            return 'a' + button_index;  // a-h
         case GESTURE_DOUBLE:
-            return 'h' + button_index;  // h-n
+            return 'i' + button_index;  // i-o
         case GESTURE_LONG:
-            return 'o' + button_index;  // o-u
+            return 'p' + button_index;  // p-v
         default:
             return '\0';
     }

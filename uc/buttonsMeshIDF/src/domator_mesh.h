@@ -207,8 +207,7 @@ typedef struct {
 // Device info
 extern uint32_t g_device_id;
 extern node_type_t g_node_type;
-extern char g_firmware_version[32];
-extern char g_firmware_hash[33];
+extern char g_firmware_hash[16];
 extern device_stats_t g_stats;
 
 // Mesh state

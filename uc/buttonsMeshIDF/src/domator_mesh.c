@@ -25,8 +25,7 @@ static const char* TAG = "DOMATOR";
 
 uint32_t g_device_id = 0;
 node_type_t g_node_type = NODE_TYPE_UNKNOWN;
-char g_firmware_version[32] = {0};
-char g_firmware_hash[33] = {0};
+char g_firmware_hash[16] = {0};
 device_stats_t g_stats = {0};
 
 bool g_mesh_connected = false;
@@ -96,13 +95,6 @@ void generate_device_id(void) {
 // Firmware Hash Generation
 // ====================
 
-void print_md5(uint8_t* md5) {
-    for (int i = 0; i < 16; i++) {
-        printf("%02x", md5[i]);
-    }
-    printf("\n");
-}
-
 void generate_firmware_hash() {
     const esp_partition_t* running = esp_ota_get_running_partition();
     if (!running) {
@@ -134,12 +126,17 @@ void generate_firmware_hash() {
         offset += to_read;
     }
 
-    uint8_t md5_result[16];
-    mbedtls_md5_finish(&ctx, md5_result);
+    // Get raw MD5 bytes
+    unsigned char md5_output[16];
+    mbedtls_md5_finish(&ctx, md5_output);
     mbedtls_md5_free(&ctx);
 
-    printf("Firmware MD5: ");
-    print_md5(md5_result);
+    // Convert to hex string
+    for (int i = 0; i < 16; i++) {
+        sprintf(&g_firmware_hash[i * 2], "%02x", md5_output[i]);
+    }
+
+    ESP_LOGI(TAG, "Firmware hash (MD5): %s", g_firmware_hash);
 }
 
 // ====================

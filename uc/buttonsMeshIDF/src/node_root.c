@@ -366,7 +366,7 @@ static void publish_connection_status(bool connected) {
 
     if (connected) {
         // Add additional info on connection
-        cJSON_AddStringToObject(json, "firmware", g_firmware_version);
+        cJSON_AddStringToObject(json, "firmware", g_firmware_hash);
         cJSON_AddNumberToObject(json, "mesh_layer", g_mesh_layer);
 
         // Get IP address if available

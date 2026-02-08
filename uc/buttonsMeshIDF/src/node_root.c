@@ -20,6 +20,8 @@ typedef struct {
     mesh_addr_t mesh_addr;
     char node_type[8];
     int64_t last_seen;
+    int64_t last_ping;
+    int32_t avg_ping;
     int outputs;
 } node_registry_entry_t;
 
@@ -64,10 +66,19 @@ static mesh_addr_t* registry_find(uint32_t device_id) {
     return NULL;
 }
 
+static int registry_find_index(uint32_t device_id) {
+    for (int i = 0; i < node_count; i++) {
+        if (node_registry[i].device_id == device_id) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 // ============ HANDLE MESH MESSAGES AS ROOT ============
 void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
     registry_update(msg->src_id, from, NULL);
-    ESP_LOGI(TAG, "Message from %" PRIu32 " (type=%c, len=%d)", msg->src_id,
+    ESP_LOGV(TAG, "Message from %" PRIu32 " (type=%c, len=%d)", msg->src_id,
              msg->msg_type, msg->data_len);
 
     switch (msg->msg_type) {
@@ -99,6 +110,41 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
                 esp_mqtt_client_publish(g_mqtt_client, topic, msg->data,
                                         msg->data_len, 0, 0);
             }
+            break;
+        }
+
+        case MSG_TYPE_PING: {
+            ESP_LOGV(TAG, "Received ping from %" PRIu32, msg->src_id);
+            int index = registry_find_index(msg->src_id);
+
+            uint16_t pingNum;
+            memcpy(&pingNum, msg->data, sizeof(uint16_t));
+            pingNum++;
+
+            int now = esp_timer_get_time() / 1000;
+            node_registry[index].avg_ping +=
+                now - node_registry[index].last_ping;
+            node_registry[index].last_ping = now;
+
+            if (pingNum > PING_PONG_NUMBER) {
+                node_registry[index].avg_ping /= pingNum;
+
+                ESP_LOGW(TAG,
+                         "Ping Pong communication test completed successfully "
+                         "with device %" PRIu32,
+                         msg->src_id);
+                ESP_LOGW(TAG, "Average ping time: %" PRId32 " ms",
+                         node_registry[index].avg_ping);
+                break;
+            }
+
+            mesh_app_msg_t pong = {0};
+            pong.src_id = g_device_id;
+            pong.msg_type = MSG_TYPE_PING;
+            pong.data_len = sizeof(uint16_t);
+            memcpy(pong.data, &pingNum, sizeof(uint16_t));
+            mesh_queue_to_node(from, &pong);
+            ESP_LOGV(TAG, "Sent pong to %" PRIu32, msg->src_id);
             break;
         }
 
@@ -331,6 +377,40 @@ static void handle_mqtt_command(const char* topic, int topic_len,
     // TODO: Port your mqttCallbackTask logic here
     // Parse topic, extract node ID, route command via mesh
     ESP_LOGI(TAG, "MQTT cmd: %.*s -> %.*s", topic_len, topic, data_len, data);
+
+    char topic_str[128];
+    int copy_len =
+        (topic_len < sizeof(topic_str) - 1) ? topic_len : sizeof(topic_str) - 1;
+    strncpy(topic_str, topic, copy_len);
+    topic_str[copy_len] = '\0';
+
+    if (strstr(topic_str, "/switch/cmd/root") != NULL) {
+        ESP_LOGI(TAG, "Received root config command");
+        // Handle root-specific config commands here
+
+        if (data[0] != '{') {
+            // Not JSON - treat as simple button command for testing
+            if (data_len == 1 && data[0] == MSG_TYPE_PING) {
+                // Send ping to all nodes in registry
+
+                for (int i = 0; i < node_count; i++) {
+                    mesh_app_msg_t ping = {0};
+                    ping.src_id = g_device_id;
+                    ping.msg_type = MSG_TYPE_PING;
+                    uint16_t pingNum = 1;
+                    memcpy(ping.data, &pingNum, sizeof(uint16_t));
+                    ping.data_len = sizeof(uint16_t);
+
+                    int index = registry_find_index(node_registry[i].device_id);
+                    node_registry[index].last_ping =
+                        esp_timer_get_time() / 1000;
+                    mesh_queue_to_node(&node_registry[i].mesh_addr, &ping);
+                    ESP_LOGV(TAG, "Sent MQTT ping to device %" PRIu32,
+                             node_registry[i].device_id);
+                }
+            }
+        }
+    }
 }
 
 // ============ ROOT START/STOP ============
@@ -355,9 +435,9 @@ void mqtt_init(void) {
                  "❌ MQTT init called on NON-ROOT node (device_id: %" PRIu32
                  ", layer: %d) - skipping",
                  g_device_id, g_mesh_layer);
-        ESP_LOGW(
-            TAG,
-            "   This is expected for leaf nodes. Only root connects to MQTT.");
+        ESP_LOGW(TAG,
+                 "   This is expected for leaf nodes. Only root connects "
+                 "to MQTT.");
         return;
     }
 
@@ -385,8 +465,9 @@ void mqtt_init(void) {
              g_device_id);
     ESP_LOGI(TAG, "Using MQTT client ID: %s", g_mqtt_client_id);
 
-    // Prepare Last Will and Testament (LWT) message for ungraceful disconnects
-    // Store in static buffer so it persists after function returns
+    // Prepare Last Will and Testament (LWT) message for ungraceful
+    // disconnects Store in static buffer so it persists after function
+    // returns
     snprintf(g_mqtt_lwt_message, sizeof(g_mqtt_lwt_message),
              "{\"status\":\"disconnected\",\"device_id\":%" PRIu32
              ",\"timestamp\":%" PRId64 ",\"reason\":\"ungraceful\"}",

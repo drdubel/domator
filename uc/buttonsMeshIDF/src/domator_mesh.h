@@ -31,6 +31,7 @@
 #define LONG_PRESS_THRESHOLD_MS 800
 #define ROOT_LOSS_RESET_TIMEOUT_MS 300000    // 5 minutes
 #define PEER_HEALTH_CHECK_INTERVAL_MS 30000  // 30 seconds
+#define PING_PONG_NUMBER 50
 
 #define NUM_BUTTONS 7
 #define MAX_QUEUE_SIZE 30
@@ -86,14 +87,15 @@
 #define NUM_RELAY_BUTTONS 8
 
 // Message types for mesh communication
-#define MSG_TYPE_BUTTON 'B'
-#define MSG_TYPE_STATUS 'S'
-#define MSG_TYPE_COMMAND 'C'
-#define MSG_TYPE_ACK 'A'
+#define MSG_TYPE_BUTTON 'B'   // Button press from switch to root
+#define MSG_TYPE_STATUS 'S'   // Status update from nodes to root
+#define MSG_TYPE_COMMAND 'C'  // Command from root to relay (e.g., toggle relay)
+#define MSG_TYPE_ACK 'A'      // Acknowledgment for command receipt
 #define MSG_TYPE_RELAY_STATE 'R'   // Relay state confirmation
 #define MSG_TYPE_SYNC_REQUEST 'Y'  // Request state sync
 #define MSG_TYPE_CONFIG 'G'        // Configuration message (gesture config)
 #define MSG_TYPE_OTA_TRIGGER 'O'   // OTA update trigger
+#define MSG_TYPE_PING 'P'          // Ping message for health check
 
 // Button gesture types
 typedef enum {

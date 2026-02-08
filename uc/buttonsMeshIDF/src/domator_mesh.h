@@ -245,6 +245,19 @@ extern bool g_ota_in_progress;
 // ============ mesh_init.c ============
 void mesh_network_init(void);
 
+// node_switch.c (switch node functions)
+void button_init(void);
+void button_task(void* arg);
+void led_init(void);
+void led_task(void* arg);
+void led_set_color(uint8_t r, uint8_t g, uint8_t b);
+void led_flash_cyan(void);
+void gesture_config_load(void);
+void gesture_config_save(void);
+void gesture_config_apply(const char* json_str);
+char gesture_to_char(int button_index, gesture_type_t gesture);
+bool is_gesture_enabled(int button_index, gesture_type_t gesture);
+
 // ============ mesh_comm.c ============
 void mesh_rx_task(void* arg);
 void mesh_tx_task(void* arg);

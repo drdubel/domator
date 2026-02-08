@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "domator_mesh.c"
         "mesh_init.c"
+        "node_switch.c"
         "mesh_comm.c"
         "node_root.c"
     INCLUDE_DIRS
@@ -12,6 +13,7 @@ idf_component_register(
         esp_netif
         esp_event
         esp_timer
+        led_strip
         mqtt
         driver
         json

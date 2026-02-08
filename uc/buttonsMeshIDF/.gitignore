@@ -5,6 +5,7 @@ build/
 .piolibdeps/
 .vscode/
 .cache/
+managed_components/
 
 # ESP-IDF specific
 sdkconfig

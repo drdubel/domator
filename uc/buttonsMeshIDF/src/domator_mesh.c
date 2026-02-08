@@ -34,9 +34,8 @@ bool g_mqtt_connected = false;
 
 // Routing configuration (root only)
 device_connections_t g_connections[MAX_DEVICES] = {0};
-uint32_t g_device_ids[MAX_DEVICES] = {0};
 uint8_t g_num_devices = 0;
-uint8_t g_button_types[MAX_DEVICES][16] = {0};
+button_types_t g_button_types[MAX_DEVICES] = {0};
 SemaphoreHandle_t g_connections_mutex = NULL;
 SemaphoreHandle_t g_button_types_mutex = NULL;
 
@@ -316,19 +315,16 @@ void app_main(void) {
         return;
     }
 
-    // Create routing mutexes for root node
-    if (g_is_root || g_node_type == NODE_TYPE_ROOT) {
-        g_connections_mutex = xSemaphoreCreateMutex();
-        if (g_connections_mutex == NULL) {
-            ESP_LOGE(TAG, "Failed to create connections mutex");
-            return;
-        }
+    g_connections_mutex = xSemaphoreCreateMutex();
+    if (g_connections_mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create connections mutex");
+        return;
+    }
 
-        g_button_types_mutex = xSemaphoreCreateMutex();
-        if (g_button_types_mutex == NULL) {
-            ESP_LOGE(TAG, "Failed to create button types mutex");
-            return;
-        }
+    g_button_types_mutex = xSemaphoreCreateMutex();
+    if (g_button_types_mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create button types mutex");
+        return;
     }
 
     mesh_network_init();

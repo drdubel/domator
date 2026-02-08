@@ -2200,7 +2200,7 @@ function updateOnlineStatus() {
 
     // Update all relays
     for (let relayId in relays) {
-        const element = document.getElementById(`relay - ${relayId} `)
+        const element = document.getElementById(`relay-${relayId}`)
         if (element) {
             const indicator = element.querySelector('.status-indicator')
             if (indicator) {
@@ -2320,31 +2320,32 @@ function changeSwitchState(relay_id, output_id) {
         return
     }
 
-    if (pendingClicks.has(`${relay_id} -${output_id} `)) {
+    if (pendingClicks.has(`${relay_id}-${output_id}`)) {
         return
     }
 
-    pendingClicks.add(`${relay_id} -${output_id} `)
-    var newState = lights[`${relay_id} -${output_id} `] === 1 ? 0 : 1
+    pendingClicks.add(`${relay_id}-${output_id}`)
+    var newState = lights[`${relay_id}-${output_id}`] === 1 ? 0 : 1
 
-    console.log('Changing state of', `${relay_id} -${output_id} `, 'to', newState)
+    console.log('Changing state of', `${relay_id}-${output_id}`, 'to', newState)
     var msg = JSON.stringify({ "relay_id": relay_id, "output_id": output_id, "state": newState })
     console.log(msg)
 
     if (!wsManager.send(msg)) {
-        pendingClicks.delete(`${relay_id} -${output_id} `)
+        pendingClicks.delete(`${relay_id}-${output_id}`)
+
     }
 
     setTimeout(function () {
-        pendingClicks.delete(`${relay_id} -${output_id} `)
+        pendingClicks.delete(`${relay_id}-${output_id}`)
     }, 2000)
 }
 
 function updateLightUI(relay_id, output_id, state) {
-    console.log('Updating UI for', `relay - ${relay_id} -output - ${output_id} `, 'to', state)
-    var outputElement = document.getElementById(`relay - ${relay_id} -output - ${output_id} `)
+    console.log('Updating UI for', `relay-${relay_id}-output-${output_id}`, 'to', state)
+    var outputElement = document.getElementById(`relay-${relay_id}-output-${output_id}`)
     if (!outputElement) {
-        console.warn('Output element not found:', `relay - ${relay_id} -output - ${output_id} `)
+        console.warn('Output element not found:', `relay-${relay_id}-output-${output_id}`)
         return
     }
 

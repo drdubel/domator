@@ -355,7 +355,7 @@ async def websocket_lights(websocket: WebSocket):
                 continue
 
             try:
-                topic = f"/switch/cmd/{cmd['relay_id']}"
+                topic = f"/relay/cmd/{cmd['relay_id']}"
                 mqtt.client.publish(topic, f"{cmd['output_id']}{cmd['state']}")
 
             except Exception as e:
@@ -447,7 +447,7 @@ async def websocket_rcm(websocket: WebSocket):
                 continue
 
             try:
-                topic = f"/switch/cmd/{cmd['relay_id']}"
+                topic = f"/relay/cmd/{cmd['relay_id']}"
                 mqtt.client.publish(topic, f"{cmd['output_id']}{cmd['state']}")
 
             except Exception as e:

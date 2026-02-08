@@ -39,7 +39,12 @@ typedef struct {
     mesh_addr_t mesh_addr;
     char node_type[8];
     int64_t last_seen;
+<<<<<<< HEAD
 >>>>>>> 75e1902 (changed to my version)
+=======
+    int64_t last_ping;
+    int32_t avg_ping;
+>>>>>>> 0b92131 (Add ping-pong message handling and average ping calculation for mesh nodes)
     int outputs;
 } node_registry_entry_t;
 
@@ -198,9 +203,23 @@ static mesh_addr_t* registry_find(uint32_t device_id) {
     return NULL;
 }
 
+static int registry_find_index(uint32_t device_id) {
+    for (int i = 0; i < node_count; i++) {
+        if (node_registry[i].device_id == device_id) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 // ============ HANDLE MESH MESSAGES AS ROOT ============
 void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
     registry_update(msg->src_id, from, NULL);
+<<<<<<< HEAD
+=======
+    ESP_LOGV(TAG, "Message from %" PRIu32 " (type=%c, len=%d)", msg->src_id,
+             msg->msg_type, msg->data_len);
+>>>>>>> 0b92131 (Add ping-pong message handling and average ping calculation for mesh nodes)
 
     switch (msg->msg_type) {
         case 'B': {
@@ -269,6 +288,7 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
         }
 
 <<<<<<< HEAD
+<<<<<<< HEAD
         case MSG_TYPE_TYPE_INFO: {
             char type_str;
             memcpy(&type_str, msg->data, msg->data_len);
@@ -290,6 +310,10 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
 
         case MSG_TYPE_PING: {
             ESP_LOGV(TAG, "Received ping from %" PRIu64, msg->src_id);
+=======
+        case MSG_TYPE_PING: {
+            ESP_LOGV(TAG, "Received ping from %" PRIu32, msg->src_id);
+>>>>>>> 0b92131 (Add ping-pong message handling and average ping calculation for mesh nodes)
             int index = registry_find_index(msg->src_id);
 
             uint16_t pingNum;
@@ -306,9 +330,16 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
 
                 ESP_LOGW(TAG,
                          "Ping Pong communication test completed successfully "
+<<<<<<< HEAD
                          "with device %" PRIu64 ". Average ping time: %" PRId32
                          " ms",
                          msg->src_id, node_registry[index].avg_ping);
+=======
+                         "with device %" PRIu32,
+                         msg->src_id);
+                ESP_LOGW(TAG, "Average ping time: %" PRId32 " ms",
+                         node_registry[index].avg_ping);
+>>>>>>> 0b92131 (Add ping-pong message handling and average ping calculation for mesh nodes)
                 break;
             }
 
@@ -317,6 +348,7 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
             pong.msg_type = MSG_TYPE_PING;
             pong.data_len = sizeof(uint16_t);
             memcpy(pong.data, &pingNum, sizeof(uint16_t));
+<<<<<<< HEAD
             mesh_queue_to_node(&pong, TX_PRIO_HIGH, from);
             ESP_LOGV(TAG, "Sent pong to %" PRIu64, msg->src_id);
 =======
@@ -326,6 +358,10 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
                                         msg->data, msg->data_len, 0, 0);
             }
 >>>>>>> 75e1902 (changed to my version)
+=======
+            mesh_queue_to_node(from, &pong);
+            ESP_LOGV(TAG, "Sent pong to %" PRIu32, msg->src_id);
+>>>>>>> 0b92131 (Add ping-pong message handling and average ping calculation for mesh nodes)
             break;
         }
 
@@ -916,6 +952,9 @@ static void handle_mqtt_command(const char* topic, int topic_len,
     // Parse topic, extract node ID, route command via mesh
     ESP_LOGI(TAG, "MQTT cmd: %.*s -> %.*s", topic_len, topic, data_len, data);
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 0b92131 (Add ping-pong message handling and average ping calculation for mesh nodes)
 
     char topic_str[128];
     int copy_len =
@@ -924,6 +963,7 @@ static void handle_mqtt_command(const char* topic, int topic_len,
     topic_str[copy_len] = '\0';
 
     if (strstr(topic_str, "/switch/cmd/root") != NULL) {
+<<<<<<< HEAD
         ESP_LOGI(TAG, "Received root command");
         // Handle root-specific config commands here
 
@@ -940,6 +980,34 @@ static void handle_mqtt_command(const char* topic, int topic_len,
     }
 =======
 >>>>>>> 75e1902 (changed to my version)
+=======
+        ESP_LOGI(TAG, "Received root config command");
+        // Handle root-specific config commands here
+
+        if (data[0] != '{') {
+            // Not JSON - treat as simple button command for testing
+            if (data_len == 1 && data[0] == MSG_TYPE_PING) {
+                // Send ping to all nodes in registry
+
+                for (int i = 0; i < node_count; i++) {
+                    mesh_app_msg_t ping = {0};
+                    ping.src_id = g_device_id;
+                    ping.msg_type = MSG_TYPE_PING;
+                    uint16_t pingNum = 1;
+                    memcpy(ping.data, &pingNum, sizeof(uint16_t));
+                    ping.data_len = sizeof(uint16_t);
+
+                    int index = registry_find_index(node_registry[i].device_id);
+                    node_registry[index].last_ping =
+                        esp_timer_get_time() / 1000;
+                    mesh_queue_to_node(&node_registry[i].mesh_addr, &ping);
+                    ESP_LOGV(TAG, "Sent MQTT ping to device %" PRIu32,
+                             node_registry[i].device_id);
+                }
+            }
+        }
+    }
+>>>>>>> 0b92131 (Add ping-pong message handling and average ping calculation for mesh nodes)
 }
 
 // ============ ROOT START/STOP ============

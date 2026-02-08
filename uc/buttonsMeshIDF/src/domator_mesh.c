@@ -1,6 +1,7 @@
 #include "domator_mesh.h"
 
 #include <inttypes.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "driver/gpio.h"
@@ -8,8 +9,13 @@
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_ota_ops.h"
+#include "esp_partition.h"
+#include "esp_system.h"
+#include "mbedtls/md5.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+
+#define CHUNK_SIZE 1024  // read 1 KB at a time
 
 static const char* TAG = "DOMATOR";
 
@@ -90,27 +96,50 @@ void generate_device_id(void) {
 // Firmware Hash Generation
 // ====================
 
-void generate_firmware_hash(void) {
-    const esp_app_desc_t* app_desc = esp_app_get_description();
-
-    if (app_desc != NULL) {
-        // Store firmware version string
-        snprintf(g_firmware_version, sizeof(g_firmware_version), "%s",
-                 app_desc->version);
-
-        // Use the SHA256 hash from the ELF file for a true firmware hash
-        // Convert first 16 bytes to hex string (32 chars)
-        for (int i = 0; i < 16; i++) {
-            sprintf(&g_firmware_hash[i * 2], "%02x",
-                    app_desc->app_elf_sha256[i]);
-        }
-        ESP_LOGI(TAG, "Firmware version: %s, hash: %s", g_firmware_version,
-                 g_firmware_hash);
-    } else {
-        snprintf(g_firmware_version, sizeof(g_firmware_version), "unknown");
-        snprintf(g_firmware_hash, sizeof(g_firmware_hash), "unknown");
-        ESP_LOGW(TAG, "Could not read app description");
+void print_md5(uint8_t* md5) {
+    for (int i = 0; i < 16; i++) {
+        printf("%02x", md5[i]);
     }
+    printf("\n");
+}
+
+void generate_firmware_hash() {
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    if (!running) {
+        printf("Failed to get running partition\n");
+        return;
+    }
+
+    mbedtls_md5_context ctx;
+    mbedtls_md5_init(&ctx);
+    mbedtls_md5_starts(&ctx);  // use old function
+
+    uint8_t buf[CHUNK_SIZE];
+    size_t offset = 0;
+
+    while (offset < running->size) {
+        size_t to_read = CHUNK_SIZE;
+        if (offset + to_read > running->size) {
+            to_read = running->size - offset;
+        }
+
+        esp_err_t err = esp_partition_read(running, offset, buf, to_read);
+        if (err != ESP_OK) {
+            printf("Partition read failed at offset %zu: %d\n", offset, err);
+            mbedtls_md5_free(&ctx);
+            return;
+        }
+
+        mbedtls_md5_update(&ctx, buf, to_read);
+        offset += to_read;
+    }
+
+    uint8_t md5_result[16];
+    mbedtls_md5_finish(&ctx, md5_result);
+    mbedtls_md5_free(&ctx);
+
+    printf("Firmware MD5: ");
+    print_md5(md5_result);
 }
 
 // ====================

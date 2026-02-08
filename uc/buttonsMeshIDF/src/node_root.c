@@ -605,7 +605,14 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
     ESP_LOGW(TAG, "Received non-JSON MQTT command: %.*s -> %.*s", topic_len,
              topic, data_len, data);
 
-    char* last_slash = strrchr(topic, '/');
+    // Create null-terminated copy of topic for string operations
+    char topic_str[128];
+    int copy_len =
+        (topic_len < sizeof(topic_str) - 1) ? topic_len : sizeof(topic_str) - 1;
+    strncpy(topic_str, topic, copy_len);
+    topic_str[copy_len] = '\0';
+
+    char* last_slash = strrchr(topic_str, '/');
     if (last_slash && *(last_slash + 1) != '\0') {
         uint32_t target_id = (uint32_t)strtoul(last_slash + 1, NULL, 10);
         ESP_LOGI(TAG, "Non-JSON command for target device %" PRIu32, target_id);
@@ -621,10 +628,11 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
             ESP_LOGI(TAG, "Routed non-JSON MQTT command to device %" PRIu32,
                      target_id);
         } else {
-            ESP_LOGW(TAG, "Could not extract target ID from topic: %s", topic);
+            ESP_LOGW(TAG, "Could not find target device %" PRIu32, target_id);
         }
     } else {
-        ESP_LOGW(TAG, "MQTT topic does not contain target ID: %s", topic);
+        ESP_LOGW(TAG, "MQTT topic does not contain target ID: %.*s", topic_len,
+                 topic);
     }
 }
 
@@ -725,7 +733,7 @@ void mqtt_init(void) {
         .credentials.authentication.password = CONFIG_MQTT_PASSWORD,
         .session.last_will =
             {
-                .topic = "/switch/state/root/",
+                .topic = "/switch/state/root",
                 .msg = g_mqtt_lwt_message,
                 .msg_len = strlen(g_mqtt_lwt_message),
                 .qos = 1,

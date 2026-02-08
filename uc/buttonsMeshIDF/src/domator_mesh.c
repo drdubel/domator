@@ -303,9 +303,48 @@ void app_main(void) {
     generate_firmware_hash();
     detect_hardware_type();
 
+    // Create synchronization primitives
+    g_mesh_tx_queue = xQueueCreate(MESH_TX_QUEUE_SIZE, sizeof(mesh_app_msg_t));
+    if (g_mesh_tx_queue == NULL) {
+        ESP_LOGE(TAG, "Failed to create mesh TX queue");
+        return;
+    }
+
+    g_stats_mutex = xSemaphoreCreateMutex();
+    if (g_stats_mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create stats mutex");
+        return;
+    }
+
+    // Create routing mutexes for root node
+    if (g_is_root || g_node_type == NODE_TYPE_ROOT) {
+        g_connections_mutex = xSemaphoreCreateMutex();
+        if (g_connections_mutex == NULL) {
+            ESP_LOGE(TAG, "Failed to create connections mutex");
+            return;
+        }
+
+        g_button_types_mutex = xSemaphoreCreateMutex();
+        if (g_button_types_mutex == NULL) {
+            ESP_LOGE(TAG, "Failed to create button types mutex");
+            return;
+        }
+    }
+
     mesh_network_init();
 
     xTaskCreate(mesh_rx_task, "mesh_rx", 8192, NULL, 5, NULL);
     xTaskCreate(mesh_tx_task, "mesh_tx", 4096, NULL, 4, NULL);
     xTaskCreate(status_report_task, "status", 4096, NULL, 1, NULL);
+
+    // Start node-specific tasks
+    if (g_node_type == NODE_TYPE_SWITCH_C3) {
+        ESP_LOGI(TAG, "Starting switch node tasks");
+        button_init();
+        led_init();
+        xTaskCreate(button_task, "button", 4096, NULL, 6, NULL);
+        xTaskCreate(led_task, "led", 3072, NULL, 2, NULL);
+    }
+
+    ESP_LOGI(TAG, "Domator Mesh initialized");
 }

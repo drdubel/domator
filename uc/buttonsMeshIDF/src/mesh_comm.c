@@ -207,7 +207,7 @@ void node_publish_status(void) {
         msg.msg_type = MSG_TYPE_STATUS;  // Status message
         msg.data_len = strlen(json_str);
 
-        if (msg.data_len <= MESH_MSG_DATA_SIZE - 1) {
+        if (strlen(json_str) <= MESH_MSG_DATA_SIZE - 1) {
             memcpy(msg.data, json_str, msg.data_len);
             msg.data[msg.data_len] = '\0';
 

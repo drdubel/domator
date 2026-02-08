@@ -71,7 +71,7 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
              msg->msg_type, msg->data_len);
 
     switch (msg->msg_type) {
-        case 'B': {
+        case MSG_TYPE_BUTTON: {
             char button = msg->data[0];
             int state = (msg->data_len > 1) ? msg->data[1] - '0' : -1;
 
@@ -91,23 +91,11 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
             break;
         }
 
-        case 'R': {
+        case MSG_TYPE_STATUS: {
             if (g_mqtt_connected) {
                 char topic[64];
                 snprintf(topic, sizeof(topic), "/switch/state/root");
                 ESP_LOGI(TAG, "Publishing relay status to MQTT: %s", msg->data);
-                esp_mqtt_client_publish(g_mqtt_client, topic, msg->data,
-                                        msg->data_len, 0, 0);
-            }
-            break;
-        }
-
-        case 'S': {
-            if (g_mqtt_connected) {
-                char topic[64];
-                snprintf(topic, sizeof(topic), "/switch/state/root");
-                ESP_LOGI(TAG, "Publishing switch status to MQTT: %s",
-                         msg->data);
                 esp_mqtt_client_publish(g_mqtt_client, topic, msg->data,
                                         msg->data_len, 0, 0);
             }
@@ -177,11 +165,22 @@ void root_publish_status(void) {
         ESP_LOGW(TAG, "Failed to get AP info for RSSI");
     }
 
+    // Add type based on node type
+    const char* type_str = "unknown";
+    if (g_node_type == NODE_TYPE_SWITCH_C3) {
+        type_str = "switch";
+    } else if (g_node_type == NODE_TYPE_RELAY_8) {
+        type_str = "relay8";
+    } else if (g_node_type == NODE_TYPE_RELAY_16) {
+        type_str = "relay16";
+    }
+
     // Build JSON status report
     cJSON_AddNumberToObject(json, "deviceId", g_device_id);
     cJSON_AddNumberToObject(json, "parentId",
                             g_device_id);  // Root's parent is itself
-    cJSON_AddStringToObject(json, "type", "root");
+    cJSON_AddStringToObject(json, "type", type_str);
+    cJSON_AddNumberToObject(json, "isRoot", 1);
     cJSON_AddNumberToObject(json, "freeHeap", free_heap);
     cJSON_AddNumberToObject(json, "uptime", uptime);
     cJSON_AddNumberToObject(json, "meshLayer", g_mesh_layer);
@@ -195,8 +194,6 @@ void root_publish_status(void) {
     cJSON_Delete(json);
 
     if (json_str != NULL) {
-        // Build topic based on node type: /switch/state/{deviceId} or
-        // /relay/state/{deviceId}
         char topic[64];
         snprintf(topic, sizeof(topic), "/switch/state/root");
 

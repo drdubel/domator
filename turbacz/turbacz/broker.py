@@ -169,7 +169,15 @@ async def handle_root_state(payload_str):
     relays = connection_manager.get_relays()
     switches = connection_manager.get_switches()
 
-    if payload_str == "connected":
+    try:
+        data = json.loads(payload_str)
+        logger.debug("Root State Data: %s", data)  # Debug log
+
+    except json.JSONDecodeError:
+        logger.error("Error processing root state JSON payload: %s", payload_str)
+        return
+
+    if data.get("status", "") == "connected":
         logger.debug("Connections: %s", connections)  # Debug log
 
         mqtt.client.publish("/switch/cmd/root", json.dumps({"type": "connections", "data": connections}))
@@ -177,14 +185,6 @@ async def handle_root_state(payload_str):
             "/switch/cmd/root", json.dumps({"type": "button_types", "data": connection_manager.get_all_buttons()})
         )
 
-        return
-
-    try:
-        data = json.loads(payload_str)
-        logger.debug("Root State Data: %s", data)  # Debug log
-
-    except json.JSONDecodeError:
-        logger.error("Error processing root state JSON payload: %s", payload_str)
         return
 
     url = f"{config.monitoring.metrics}/api/v2/write"
@@ -202,16 +202,19 @@ async def handle_root_state(payload_str):
             connection_manager.add_switch(data["deviceId"], name, 3)
             await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
 
-    elif data["type"] == "relay":
+    elif data["type"] == "relay8" or data["type"] == "relay16":
         if data["deviceId"] in relays:
             data["name"] = relays[data["deviceId"]][0]  # Extract name from tuple
         else:
             name = namer.generate(category="animals")
             data["name"] = name
-            connection_manager.add_relay(data["deviceId"], name, data.get("outputs", 8))
+            if data["type"] == "relay8":
+                connection_manager.add_relay(data["deviceId"], name, 8)
+            else:
+                connection_manager.add_relay(data["deviceId"], name, 16)
             await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
 
-    elif data["type"] == "root":
+    elif data.get("is_root") == "root":
         data["name"] = "root"
 
         connection_manager.rootId = data["deviceId"]

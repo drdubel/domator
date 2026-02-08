@@ -35,7 +35,7 @@
 #define NUM_BUTTONS 7
 #define MAX_QUEUE_SIZE 30
 #define MESH_TX_QUEUE_SIZE 20
-#define MESH_MSG_DATA_SIZE 200
+#define MESH_MSG_DATA_SIZE 500
 #define LOW_HEAP_THRESHOLD 40000
 #define CRITICAL_HEAP_THRESHOLD 20000
 #define MAX_DEVICES 50
@@ -255,6 +255,6 @@ void status_report_task(void* arg);
 // ============ node_root.c ============
 void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg);
 void node_root_start(void);
+void mqtt_init(void);
 void node_root_stop(void);
-void node_root_mqtt_connect(void);
-void root_publish_status(const char* payload);
+void root_publish_status(void);

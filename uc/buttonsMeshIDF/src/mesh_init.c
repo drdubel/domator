@@ -2,14 +2,33 @@
 
 static const char* TAG = "MESH_INIT";
 
+// ====================
+// IP Event Handler
+// ====================
+
 static void ip_event_handler(void* arg, esp_event_base_t event_base,
                              int32_t event_id, void* event_data) {
-    if (event_id == IP_EVENT_STA_GOT_IP) {
+    if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*)event_data;
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
 
+        // Only initialize MQTT if this node is actually the root
         if (esp_mesh_is_root()) {
-            node_root_mqtt_connect();
+            ESP_LOGI(TAG, "This node IS root, initializing MQTT");
+            g_is_root = true;
+            g_mesh_layer = 1;
+
+            // Initialize MQTT for root node (only if not already initialized)
+            // This prevents multiple MQTT clients on repeated IP events
+            extern esp_mqtt_client_handle_t g_mqtt_client;
+            if (g_mqtt_client == NULL) {
+                mqtt_init();
+            } else {
+                ESP_LOGI(TAG, "MQTT client already initialized, skipping");
+            }
+        } else {
+            ESP_LOGI(TAG, "Got IP but not root (layer %d), skipping MQTT init",
+                     g_mesh_layer);
         }
     }
 }
@@ -19,6 +38,13 @@ static void mesh_event_handler(void* arg, esp_event_base_t event_base,
     switch (event_id) {
         case MESH_EVENT_STARTED:
             ESP_LOGI(TAG, "Mesh started");
+            g_mesh_started = true;
+            break;
+
+        case MESH_EVENT_STOPPED:
+            ESP_LOGI(TAG, "Mesh stopped");
+            g_mesh_started = false;
+            g_mesh_connected = false;
             break;
 
         case MESH_EVENT_PARENT_CONNECTED: {
@@ -26,6 +52,8 @@ static void mesh_event_handler(void* arg, esp_event_base_t event_base,
                 (mesh_event_connected_t*)event_data;
             ESP_LOGI(TAG, "Parent connected, layer:%d", connected->self_layer);
             g_mesh_connected = true;
+            uint8_t prev_layer = g_mesh_layer;
+            g_mesh_layer = connected->self_layer;
 
             if (esp_mesh_is_root()) {
                 ESP_LOGI(TAG, "*** I AM ROOT ***");
@@ -33,13 +61,33 @@ static void mesh_event_handler(void* arg, esp_event_base_t event_base,
                 esp_netif_dhcpc_start(
                     esp_netif_get_handle_from_ifkey("WIFI_STA_DEF"));
                 node_root_start();
+            } else {
+                ESP_LOGI(TAG, "Not root (layer %d), ensuring MQTT is stopped",
+                         g_mesh_layer);
+                g_is_root = false;
+                node_root_stop();
             }
+
+            ESP_LOGI(TAG,
+                     "✓ Parent connected - Layer: %d, Mesh connected, status "
+                     "reports will be sent to root",
+                     g_mesh_layer);
             break;
         }
 
         case MESH_EVENT_PARENT_DISCONNECTED:
-            ESP_LOGW(TAG, "Parent disconnected");
+            mesh_event_disconnected_t* disconnected =
+                (mesh_event_disconnected_t*)event_data;
             g_mesh_connected = false;
+
+            ESP_LOGW(TAG, "Parent disconnected - Reason: %d",
+                     disconnected->reason);
+
+            if (g_stats_mutex &&
+                xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                g_stats.mesh_disconnects++;
+                xSemaphoreGive(g_stats_mutex);
+            }
             break;
 
         case MESH_EVENT_TODS_STATE: {

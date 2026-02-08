@@ -80,7 +80,8 @@ class ConnectionManager:
                 CREATE TABLE IF NOT EXISTS buttons (
                     switch_id BIGINT REFERENCES switches(id),
                     button_id TEXT,
-                    type INT
+                    type INT NOT NULL DEFAULT 0,
+                    PRIMARY KEY (switch_id, button_id)
                 );
                 """
             )

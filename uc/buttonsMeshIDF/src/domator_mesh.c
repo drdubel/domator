@@ -25,7 +25,7 @@ static const char* TAG = "DOMATOR";
 
 uint32_t g_device_id = 0;
 node_type_t g_node_type = NODE_TYPE_UNKNOWN;
-char g_firmware_hash[16] = {0};
+char g_firmware_hash[33] = {0};
 device_stats_t g_stats = {0};
 
 bool g_mesh_connected = false;
@@ -135,6 +135,7 @@ void generate_firmware_hash() {
     for (int i = 0; i < 16; i++) {
         sprintf(&g_firmware_hash[i * 2], "%02x", md5_output[i]);
     }
+    g_firmware_hash[32] = '\0';  // Ensure null termination
 
     ESP_LOGI(TAG, "Firmware hash (MD5): %s", g_firmware_hash);
 }

@@ -53,7 +53,7 @@ button_state_t g_relay_button_states[NUM_RELAY_BUTTONS] = {0};
 const int g_relay_8_pins[MAX_RELAYS_8] = {
     RELAY_8_PIN_0, RELAY_8_PIN_1, RELAY_8_PIN_2, RELAY_8_PIN_3,
     RELAY_8_PIN_4, RELAY_8_PIN_5, RELAY_8_PIN_6, RELAY_8_PIN_7};
-const int g_relay_16_button_pins[NUM_RELAY_BUTTONS] = {
+const int g_relay_button_pins[NUM_RELAY_BUTTONS] = {
     RELAY_8_BUTTON_0, RELAY_8_BUTTON_1, RELAY_8_BUTTON_2, RELAY_8_BUTTON_3,
     RELAY_8_BUTTON_4, RELAY_8_BUTTON_5, RELAY_8_BUTTON_6, RELAY_8_BUTTON_7};
 SemaphoreHandle_t g_relay_mutex = NULL;
@@ -327,6 +327,24 @@ void app_main(void) {
         return;
     }
 
+    // Create relay mutex if needed (BEFORE mesh_init to prevent race
+    // conditions)
+    if (g_node_type == NODE_TYPE_RELAY_8 || g_node_type == NODE_TYPE_RELAY_16) {
+        g_relay_mutex = xSemaphoreCreateMutex();
+        if (g_relay_mutex == NULL) {
+            ESP_LOGE(TAG, "Failed to create relay mutex");
+            return;
+        }
+
+        // Initialize relay hardware BEFORE mesh to prevent race conditions
+        // This ensures relays are ready before mesh events can trigger relay
+        // operations
+        ESP_LOGI(TAG, "Pre-initializing relay board (type: %s)",
+                 g_board_type == BOARD_TYPE_16_RELAY ? "16-relay" : "8-relay");
+        relay_init();
+        relay_button_init();
+    }
+
     mesh_network_init();
 
     xTaskCreate(mesh_rx_task, "mesh_rx", 8192, NULL, 5, NULL);
@@ -340,6 +358,10 @@ void app_main(void) {
         led_init();
         xTaskCreate(button_task, "button", 4096, NULL, 6, NULL);
         xTaskCreate(led_task, "led", 3072, NULL, 2, NULL);
+    } else if (g_node_type == NODE_TYPE_RELAY_8 ||
+               g_node_type == NODE_TYPE_RELAY_16) {
+        ESP_LOGI(TAG, "Starting relay tasks (hardware already initialized)");
+        xTaskCreate(relay_button_task, "relay_button", 5120, NULL, 6, NULL);
     }
 
     ESP_LOGI(TAG, "Domator Mesh initialized");

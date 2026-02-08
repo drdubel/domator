@@ -282,3 +282,16 @@ void node_root_start(void);
 void mqtt_init(void);
 void node_root_stop(void);
 void root_publish_status(void);
+
+// ============ node_relay.c ============
+void relay_board_detect(void);
+void relay_init(void);
+void relay_set(int index, bool state);
+void relay_toggle(int index);
+void relay_write_shift_register(uint16_t bits);
+bool relay_get_state(int index);
+void relay_sync_all_states(void);
+void relay_send_state_confirmation(int index);
+void relay_button_init(void);
+void relay_button_task(void* arg);
+void relay_handle_command(const char* cmd_data);

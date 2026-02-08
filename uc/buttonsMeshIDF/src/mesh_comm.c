@@ -73,6 +73,24 @@ void mesh_rx_task(void* arg) {
                 // TODO: relay_handle_command when relay code is ported
                 ESP_LOGI(TAG, "Command received: %.*s", msg->data_len,
                          msg->data);
+
+                if (g_node_type == NODE_TYPE_RELAY_8 ||
+                    g_node_type == NODE_TYPE_RELAY_16) {
+                    relay_handle_command((char*)msg->data);
+                }
+
+                break;
+            }
+
+            case MSG_TYPE_SYNC_REQUEST: {
+                ESP_LOGI(TAG, "Received sync request from root");
+
+                // Handle sync request for relay nodes
+                if (g_node_type == NODE_TYPE_RELAY_8 ||
+                    g_node_type == NODE_TYPE_RELAY_16) {
+                    relay_sync_all_states();
+                }
+
                 break;
             }
 

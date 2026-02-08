@@ -118,10 +118,27 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
                          msg->src_id);
                 char payload[2] = {button, '\0'};
                 ESP_LOGI(TAG, "Publishing button status to MQTT: %s", payload);
-                esp_mqtt_client_publish(g_mqtt_client, topic, payload, 0, 0, 0);
+                esp_mqtt_client_publish(g_mqtt_client, topic, payload, 1, 0, 0);
             }
 
             route_button_to_relays(msg->src_id, button, state);
+            break;
+        }
+
+        case MSG_TYPE_RELAY_STATE: {
+            char relay_char = msg->data[0];
+            char state_char = msg->data[1];
+            ESP_LOGI(TAG, "Relay state '%c'='%c' from device %" PRIu32,
+                     relay_char, state_char, msg->src_id);
+
+            if (g_mqtt_connected) {
+                char topic[64];
+                snprintf(topic, sizeof(topic), "/relay/state/%" PRIu32,
+                         msg->src_id);
+                char payload[3] = {relay_char, state_char, '\0'};
+                ESP_LOGI(TAG, "Publishing relay state to MQTT: %s", payload);
+                esp_mqtt_client_publish(g_mqtt_client, topic, payload, 2, 0, 0);
+            }
             break;
         }
 
@@ -190,17 +207,19 @@ static void route_button_to_relays(uint32_t from_id, char button, int state) {
         ESP_LOGW(TAG, "Invalid button index: %d", button_idx);
         return;
     }
-    button_route_t* route;
+    button_route_t* route = NULL;
     xSemaphoreTake(g_connections_mutex, portMAX_DELAY);
-    for (int i = 0; i < g_num_devices; i++) {
+    for (int i = 0; i < MAX_DEVICES; i++) {
         if (g_connections[i].device_id == from_id) {
+            ESP_LOGI(TAG, "Found device index %d for device ID %" PRIu32, i,
+                     from_id);
             route = &g_connections[i].buttons[button_idx];
             break;
         }
     }
     xSemaphoreGive(g_connections_mutex);
 
-    if (route == NULL || route->num_targets == 0) {
+    if (route == NULL) {
         ESP_LOGI(TAG,
                  "No routing configured for button '%c' from device %" PRIu32,
                  button, from_id);
@@ -431,8 +450,8 @@ static void mqtt_event_handler(void* handler_args, esp_event_base_t base,
 }
 
 // ============ HANDLE NON-JSON MQTT COMMANDS ============
-static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
-                                        const char* data, int data_len) {
+static void handle_nonJson_mqtt_root_command(const char* topic, int topic_len,
+                                             const char* data, int data_len) {
     if (data_len == 1 && data[0] == MSG_TYPE_PING) {
         // Send ping to all nodes in registry
 
@@ -453,6 +472,7 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
     }
 }
 
+// =========== HANDLE JSON MQTT COMMANDS ============
 static void parse_json_connections(cJSON* data) {
     int device_index = 0;
     cJSON* device_item = NULL;
@@ -540,9 +560,8 @@ static void parse_json_button_types(cJSON* data) {
     }
 }
 
-// =========== HANDLE JSON MQTT COMMANDS ============
-static void handle_json_mqtt_command(const char* topic, int topic_len,
-                                     const char* data, int data_len) {
+static void handle_json_mqtt_root_command(const char* topic, int topic_len,
+                                          const char* data, int data_len) {
     cJSON* json = cJSON_ParseWithLength(data, data_len);
 
     if (!json) {
@@ -580,6 +599,35 @@ static void handle_json_mqtt_command(const char* topic, int topic_len,
     cJSON_Delete(json);
 }
 
+static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
+                                        const char* data, int data_len) {
+    // For now, just log unrecognized non-JSON commands
+    ESP_LOGW(TAG, "Received non-JSON MQTT command: %.*s -> %.*s", topic_len,
+             topic, data_len, data);
+
+    char* last_slash = strrchr(topic, '/');
+    if (last_slash && *(last_slash + 1) != '\0') {
+        uint32_t target_id = (uint32_t)strtoul(last_slash + 1, NULL, 10);
+        ESP_LOGI(TAG, "Non-JSON command for target device %" PRIu32, target_id);
+
+        mesh_addr_t* dest = registry_find(target_id);
+        if (dest) {
+            mesh_app_msg_t cmd = {0};
+            cmd.src_id = g_device_id;
+            cmd.msg_type = MSG_TYPE_COMMAND;
+            memcpy(cmd.data, data, data_len);
+            cmd.data_len = data_len;
+            mesh_queue_to_node(dest, &cmd);
+            ESP_LOGI(TAG, "Routed non-JSON MQTT command to device %" PRIu32,
+                     target_id);
+        } else {
+            ESP_LOGW(TAG, "Could not extract target ID from topic: %s", topic);
+        }
+    } else {
+        ESP_LOGW(TAG, "MQTT topic does not contain target ID: %s", topic);
+    }
+}
+
 // ============ HANDLE MQTT COMMANDS ============
 static void handle_mqtt_command(const char* topic, int topic_len,
                                 const char* data, int data_len) {
@@ -598,12 +646,15 @@ static void handle_mqtt_command(const char* topic, int topic_len,
         // Handle root-specific config commands here
 
         if (data[0] != '{') {
-            handle_nonJson_mqtt_command(topic, topic_len, data, data_len);
+            handle_nonJson_mqtt_root_command(topic, topic_len, data, data_len);
             return;
         } else {
-            handle_json_mqtt_command(topic, topic_len, data, data_len);
+            handle_json_mqtt_root_command(topic, topic_len, data, data_len);
             return;
         }
+    } else {
+        handle_nonJson_mqtt_command(topic, topic_len, data, data_len);
+        return;
     }
 }
 

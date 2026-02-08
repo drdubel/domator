@@ -154,6 +154,9 @@ void mesh_network_init(void) {
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_start());
 
+    // Disable WiFi power save to improve mesh performance
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
+
     // Mesh init
     ESP_ERROR_CHECK(esp_mesh_init());
 

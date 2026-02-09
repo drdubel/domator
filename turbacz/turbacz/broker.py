@@ -177,7 +177,9 @@ async def handle_root_state(payload_str):
         logger.error("Error processing root state JSON payload: %s", payload_str)
         return
 
-    if data.get("status", "") == "connected":
+    status = data.get("status", "")
+
+    if status == "connected":
         logger.debug("Connections: %s", connections)  # Debug log
 
         mqtt.client.publish("/switch/cmd/root", json.dumps({"type": "connections", "data": connections}))
@@ -185,6 +187,9 @@ async def handle_root_state(payload_str):
             "/switch/cmd/root", json.dumps({"type": "button_types", "data": connection_manager.get_all_buttons()})
         )
 
+        return
+
+    if status == "disconnected":
         return
 
     url = f"{config.monitoring.metrics}/api/v2/write"
@@ -208,10 +213,13 @@ async def handle_root_state(payload_str):
         else:
             name = namer.generate(category="animals")
             data["name"] = name
+
             if data["type"] == "relay8":
                 connection_manager.add_relay(data["deviceId"], name, 8)
             else:
                 connection_manager.add_relay(data["deviceId"], name, 16)
+            connection_manager.add_switch(data["deviceId"], name, 8)
+
             await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
 
     elif data.get("is_root") == "root":

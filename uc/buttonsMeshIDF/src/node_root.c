@@ -112,13 +112,32 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
             ESP_LOGI(TAG, "Button '%c' from switch %" PRIu32, button,
                      msg->src_id);
 
+            int button_type = get_button_type(msg->src_id, button);
+
+            if (button_type == 0 && state == 1) {
+                ESP_LOGI(TAG, "Toggle button '%c' pressed from device %" PRIu32,
+                         button, msg->src_id);
+                break;
+            }
+
             if (g_mqtt_connected) {
                 char topic[64];
                 snprintf(topic, sizeof(topic), "/switch/state/%" PRIu32,
                          msg->src_id);
-                char payload[2] = {button, '\0'};
-                ESP_LOGI(TAG, "Publishing button status to MQTT: %s", payload);
-                esp_mqtt_client_publish(g_mqtt_client, topic, payload, 1, 0, 0);
+
+                if (button_type == 0) {
+                    char payload[2] = {button, '\0'};
+                    ESP_LOGI(TAG, "Publishing button status to MQTT: %s",
+                             payload);
+                    esp_mqtt_client_publish(g_mqtt_client, topic, payload, 2, 0,
+                                            0);
+                } else {
+                    char payload[3] = {button, state + '0', '\0'};
+                    ESP_LOGI(TAG, "Publishing button status to MQTT: %s",
+                             payload);
+                    esp_mqtt_client_publish(g_mqtt_client, topic, payload, 3, 0,
+                                            0);
+                }
             }
 
             route_button_to_relays(msg->src_id, button, state);
@@ -197,8 +216,6 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
 
 // ============ ROUTE BUTTON → RELAY (stub for now) ============
 static void route_button_to_relays(uint32_t from_id, char button, int state) {
-    // TODO: Port your connections map routing logic here
-    // For now, just log
     ESP_LOGI(TAG, "Route button '%c' from %" PRIu32 " (state=%d)", button,
              from_id, state);
 

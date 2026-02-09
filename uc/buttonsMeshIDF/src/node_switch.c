@@ -18,127 +18,15 @@ static led_color_t g_current_led_color = {0, 0, 0};
 static bool g_led_flash_active = false;
 static uint32_t g_led_flash_end_time = 0;
 
-// ====================
-// Gesture Configuration
-// ====================
-
-// Convert gesture type and button index to character
-// Single: 'a'-'g', Double: 'h'-'n', Long: 'o'-'u'
-char gesture_to_char(int button_index, gesture_type_t gesture) {
-    if (button_index < 0 || button_index >= NUM_BUTTONS) {
-        return '\0';
-    }
-
-    switch (gesture) {
-        case GESTURE_SINGLE:
-            return 'a' + button_index;  // a-h
-        case GESTURE_DOUBLE:
-            return 'i' + button_index;  // i-p
-        case GESTURE_LONG:
-            return 'q' + button_index;  // q-x
-        default:
-            return '\0';
+// ==================== Button Press Statistics ====================
+static void stats_increment_button_presses(void) {
+    if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        g_stats.button_presses++;
+        xSemaphoreGive(g_stats_mutex);
     }
 }
 
-// Check if a gesture is enabled for a button
-bool is_gesture_enabled(int button_index, gesture_type_t gesture) {
-    if (button_index < 0 || button_index >= NUM_BUTTONS) {
-        return false;
-    }
-
-    uint8_t mask = g_gesture_config[button_index].enabled_gestures;
-
-    switch (gesture) {
-        case GESTURE_SINGLE:
-            return (mask & 0x01) != 0;  // bit 0
-        case GESTURE_DOUBLE:
-            return (mask & 0x02) != 0;  // bit 1
-        case GESTURE_LONG:
-            return (mask & 0x04) != 0;  // bit 2
-        default:
-            return false;
-    }
-}
-
-// Load gesture configuration from NVS
-void gesture_config_load(void) {
-    nvs_handle_t nvs_handle;
-    esp_err_t err = nvs_open("domator", NVS_READONLY, &nvs_handle);
-
-    if (err == ESP_OK) {
-        for (int i = 0; i < NUM_BUTTONS; i++) {
-            char key[16];
-            snprintf(key, sizeof(key), "gesture_%d", i);
-
-            uint8_t value = 0x07;  // Default: all gestures enabled (bits 0,1,2)
-            err = nvs_get_u8(nvs_handle, key, &value);
-
-            if (err == ESP_OK) {
-                g_gesture_config[i].enabled_gestures = value;
-                ESP_LOGI(TAG, "Loaded gesture config for button %d: 0x%02X", i,
-                         value);
-            } else if (err == ESP_ERR_NVS_NOT_FOUND) {
-                // Not found - use default (all enabled)
-                g_gesture_config[i].enabled_gestures = 0x07;
-                ESP_LOGI(TAG,
-                         "No gesture config for button %d, using default (all "
-                         "enabled)",
-                         i);
-            } else {
-                ESP_LOGW(TAG, "Error loading gesture config for button %d: %s",
-                         i, esp_err_to_name(err));
-                g_gesture_config[i].enabled_gestures = 0x07;
-            }
-        }
-        nvs_close(nvs_handle);
-    } else {
-        // NVS not available or error - default to all gestures enabled
-        ESP_LOGW(TAG, "Failed to open NVS for gesture config: %s",
-                 esp_err_to_name(err));
-        for (int i = 0; i < NUM_BUTTONS; i++) {
-            g_gesture_config[i].enabled_gestures = 0x07;
-        }
-    }
-
-    ESP_LOGI(TAG, "Gesture configuration loaded");
-}
-
-// Save gesture configuration to NVS
-void gesture_config_save(void) {
-    nvs_handle_t nvs_handle;
-    esp_err_t err = nvs_open("domator", NVS_READWRITE, &nvs_handle);
-
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to open NVS for saving gesture config: %s",
-                 esp_err_to_name(err));
-        return;
-    }
-
-    for (int i = 0; i < NUM_BUTTONS; i++) {
-        char key[16];
-        snprintf(key, sizeof(key), "gesture_%d", i);
-
-        err = nvs_set_u8(nvs_handle, key, g_gesture_config[i].enabled_gestures);
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "Failed to save gesture config for button %d: %s", i,
-                     esp_err_to_name(err));
-        }
-    }
-
-    err = nvs_commit(nvs_handle);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to commit NVS: %s", esp_err_to_name(err));
-    }
-
-    nvs_close(nvs_handle);
-    ESP_LOGI(TAG, "Gesture configuration saved to NVS");
-}
-
-// ====================
-// Button Initialization
-// ====================
-
+// ==================== Button Initialization ====================
 static void IRAM_ATTR button_isr_handler(void* arg) {
     uint32_t button_index = (uint32_t)arg;
 
@@ -156,9 +44,6 @@ static void IRAM_ATTR button_isr_handler(void* arg) {
 void button_init(void) {
     ESP_LOGI(TAG, "Initializing buttons");
 
-    // Load gesture configuration from NVS
-    gesture_config_load();
-
     // Configure all button pins as input with pull-down
     for (int i = 0; i < NUM_BUTTONS; i++) {
         gpio_config_t io_conf = {
@@ -172,14 +57,11 @@ void button_init(void) {
 
         // Initialize button states
         g_button_states[i].last_state = gpio_get_level(g_button_pins[i]);
-        g_button_states[i].last_press_time = 0;
+        g_button_states[i].last_bounce_time = 0;
         g_button_states[i].press_start_time = 0;
         g_button_states[i].last_release_time = 0;
-        g_button_states[i].waiting_for_double = false;
-        g_button_states[i].pending_gesture = GESTURE_NONE;
 
-        ESP_LOGI(TAG, "Button %d initialized on GPIO %d, gestures: 0x%02X", i,
-                 g_button_pins[i], g_gesture_config[i].enabled_gestures);
+        ESP_LOGI(TAG, "Button %d initialized on GPIO %d", i, g_button_pins[i]);
     }
 
     ESP_ERROR_CHECK(gpio_install_isr_service(ESP_INTR_FLAG_IRAM));
@@ -205,38 +87,59 @@ void button_task(void* arg) {
             continue;
         }
 
-        uint32_t current_time = esp_timer_get_time() / 1000;  // Convert to ms
+        if (!xTaskNotifyWait(0, 0xFFFFFFFF, &notified_value, portMAX_DELAY)) {
+            continue;
+        }
 
-        if (xTaskNotifyWait(0, 0xFFFFFFFF, &notified_value, portMAX_DELAY)) {
-            for (int i = 0; i < NUM_BUTTONS; i++) {
-                if (notified_value & (1 << i)) {
-                    int gpio_num = g_button_pins[i];
-                    int current_state = gpio_get_level(gpio_num);
-
-                    if (current_state != g_button_states[i].last_state) {
-                        // Debounce check
-                        if ((current_time -
-                             g_button_states[i].last_press_time) >
-                            BUTTON_DEBOUNCE_MS) {
-                            g_button_states[i].last_press_time = current_time;
-
-                            ESP_LOGI(TAG, "Button %d pressed", i);
-
-                            // Send button press message to root
-                            char button_char = 'a' + i;  // 'a'-'g'
-                            mesh_app_msg_t msg = {0};
-                            msg.src_id = g_device_id;
-                            msg.msg_type = MSG_TYPE_BUTTON;
-                            msg.data[0] = button_char;
-                            msg.data[1] = current_state + '0';  // '0' or '1'
-                            msg.data_len = 2;
-                            mesh_queue_to_root(&msg);
-                        }
-                    }
-
-                    g_button_states[i].last_state = current_state;
-                }
+        for (int i = 0; i < NUM_BUTTONS; i++) {
+            if (!(notified_value & (1 << i))) {
+                continue;
             }
+
+            int gpio_num = g_button_pins[i];
+
+            int current_state = gpio_get_level(gpio_num);
+            uint32_t current_time =
+                esp_timer_get_time() / 1000;  // Convert to ms
+
+            if (current_state == g_button_states[i].last_state) {
+                continue;
+            }
+
+            g_button_states[i].last_state = current_state;
+
+            if (current_time - g_button_states[i].last_bounce_time >
+                BUTTON_DEBOUNCE_MS) {
+                ESP_LOGI(TAG, "Button %d state changed to %d", i,
+                         current_state);
+
+                if (current_state == 1) {
+                    g_button_states[i].press_start_time = current_time;
+                } else {
+                    g_button_states[i].last_release_time = current_time;
+                }
+
+                stats_increment_button_presses();
+
+                // Send button press message to root
+                char button_char = 'a' + i;  // 'a'-'g'
+                mesh_app_msg_t msg = {0};
+                msg.src_id = g_device_id;
+                msg.msg_type = MSG_TYPE_BUTTON;
+                msg.data[0] = button_char;
+                msg.data[1] = current_state + '0';  // '0' or '1'
+                msg.data_len = 2;
+                mesh_queue_to_root(&msg);
+
+                ESP_LOGI(TAG,
+                         "Sent button '%c' state %d to root. "
+                         "Pressed for %" PRIu32 " ms",
+                         button_char, current_state,
+                         (uint32_t)(current_time -
+                                    g_button_states[i].press_start_time));
+            }
+
+            g_button_states[i].last_bounce_time = current_time;
         }
     }
 }
@@ -286,8 +189,9 @@ void led_set_color(uint8_t r, uint8_t g, uint8_t b) {
         return;
     }
 
-    // Reduce brightness to ~2% (divide by 51 to achieve 1/51 = ~2% brightness)
-    // This is equivalent to Adafruit NeoPixel brightness setting of 5/255
+    // Reduce brightness to ~2% (divide by 51 to achieve 1/51 = ~2%
+    // brightness) This is equivalent to Adafruit NeoPixel brightness
+    // setting of 5/255
     r = r / 51;
     g = g / 51;
     b = b / 51;

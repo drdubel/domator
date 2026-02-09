@@ -17,31 +17,6 @@ static bool g_relay_initialized = false;
 // Helper Functions
 // ====================
 
-/**
- * Check if a GPIO pin is valid for the current chip
- * ESP32-C3 only has GPIOs 0-21, while ESP32 has more
- */
-static bool is_gpio_valid(int gpio_num) {
-    // Use SOC_GPIO_VALID_GPIO_MASK if available, otherwise manual check
-#ifdef SOC_GPIO_VALID_GPIO_MASK
-    return (gpio_num >= 0) && (gpio_num < SOC_GPIO_PIN_COUNT) &&
-           ((SOC_GPIO_VALID_GPIO_MASK & (1ULL << gpio_num)) != 0);
-#else
-    // Fallback for older IDF versions or platforms without
-    // SOC_GPIO_VALID_GPIO_MASK ESP32-C3: GPIOs 0-21, ESP32: 0-39, ESP32-S3:
-    // 0-48 Conservative fallback: assume older ESP32 with GPIOs 0-39
-    return (gpio_num >= 0) && (gpio_num <= 39);
-#endif
-}
-
-/**
- * Initialize button state to safe defaults
- */
-static void init_button_state(int index) {
-    g_relay_button_states[index].last_state = 0;
-    g_relay_button_states[index].last_press_time = 0;
-}
-
 static void stats_increment_button_presses(void) {
     if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         g_stats.button_presses++;
@@ -315,104 +290,117 @@ void relay_handle_command(const char* cmd_data) {
 // Physical Button Handling
 // ====================
 
+static void IRAM_ATTR relay_button_isr_handler(void* arg) {
+    uint32_t button_index = (uint32_t)arg;
+
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+    // Notify task, set bit corresponding to button index
+    xTaskNotifyFromISR(button_task_handle, (1 << button_index), eSetBits,
+                       &xHigherPriorityTaskWoken);
+
+    if (xHigherPriorityTaskWoken) {
+        portYIELD_FROM_ISR();
+    }
+}
+
 void relay_button_init(void) {
     ESP_LOGI(TAG, "Initializing relay board buttons");
 
-    gpio_config_t io_conf = {0};
-    io_conf.intr_type = GPIO_INTR_DISABLE;
-    io_conf.mode = GPIO_MODE_INPUT;
-    io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
-    io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
+    // Configure all button pins as input with pull-down
+    for (int i = 0; i < NUM_BUTTONS; i++) {
+        gpio_config_t io_conf = {
+            .pin_bit_mask = (1ULL << g_relay_button_pins[i]),
+            .mode = GPIO_MODE_INPUT,
+            .pull_up_en = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_ENABLE,
+            .intr_type = GPIO_INTR_ANYEDGE,
+        };
+        gpio_config(&io_conf);
 
-    int valid_buttons = 0;
-    for (int i = 0; i < NUM_RELAY_BUTTONS; i++) {
-        int gpio_num = g_relay_button_pins[i];
+        // Initialize button states
+        g_relay_button_states[i].last_state =
+            gpio_get_level(g_relay_button_pins[i]);
+        g_relay_button_states[i].last_bounce_time = 0;
+        g_relay_button_states[i].press_start_time = 0;
+        g_relay_button_states[i].last_release_time = 0;
 
-        // Check if GPIO is valid for this chip (ESP32-C3 only has GPIOs 0-21)
-        if (!is_gpio_valid(gpio_num)) {
-            ESP_LOGW(TAG,
-                     "Skipping button %d: GPIO %d not available on this chip",
-                     i, gpio_num);
-            init_button_state(i);
-            continue;
-        }
-
-        io_conf.pin_bit_mask = (1ULL << gpio_num);
-        esp_err_t ret = gpio_config(&io_conf);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to configure GPIO %d for button %d: %s",
-                     gpio_num, i, esp_err_to_name(ret));
-            init_button_state(i);
-            continue;
-        }
-
-        // Initialize button state
-        g_relay_button_states[i].last_state = gpio_get_level(gpio_num);
-        g_relay_button_states[i].last_press_time = 0;
-        valid_buttons++;
+        ESP_LOGI(TAG, "Relay button %d initialized on GPIO %d", i,
+                 g_relay_button_pins[i]);
     }
 
-    ESP_LOGI(TAG, "Relay buttons initialized: %d/%d valid", valid_buttons,
-             NUM_RELAY_BUTTONS);
-    if (valid_buttons == 0) {
-        ESP_LOGW(
-            TAG,
-            "No valid button pins available on this chip - buttons disabled");
+    ESP_ERROR_CHECK(gpio_install_isr_service(ESP_INTR_FLAG_IRAM));
+
+    for (int i = 0; i < NUM_BUTTONS; i++) {
+        ESP_ERROR_CHECK(gpio_isr_handler_add(
+            g_relay_button_pins[i], relay_button_isr_handler, (void*)i));
     }
 }
 
 void relay_button_task(void* arg) {
     ESP_LOGI(TAG, "Relay button task started");
 
-    int max_relays =
-        (g_board_type == BOARD_TYPE_16_RELAY) ? MAX_RELAYS_16 : MAX_RELAYS_8;
-    uint32_t now_ms;
+    uint32_t notified_value;
 
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(BUTTON_POLL_INTERVAL_MS));
-
         if (g_ota_in_progress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
 
-        now_ms = esp_timer_get_time() / 1000;
+        if (!xTaskNotifyWait(0, 0xFFFFFFFF, &notified_value, portMAX_DELAY)) {
+            continue;
+        }
 
-        // Only check buttons that correspond to actual relays
-        int buttons_to_check =
-            (max_relays < NUM_RELAY_BUTTONS) ? max_relays : NUM_RELAY_BUTTONS;
-
-        for (int i = 0; i < buttons_to_check; i++) {
-            int gpio_num = g_relay_button_pins[i];
-
-            // Skip invalid GPIOs (e.g., GPIO 34/35 on ESP32-C3)
-            if (!is_gpio_valid(gpio_num)) {
+        for (int i = 0; i < NUM_BUTTONS; i++) {
+            if (!(notified_value & (1 << i))) {
                 continue;
             }
 
+            int gpio_num = g_relay_button_pins[i];
+
             int current_state = gpio_get_level(gpio_num);
+            uint32_t current_time =
+                esp_timer_get_time() / 1000;  // Convert to ms
 
-            // Button pressed (goes HIGH when pressed due to pull-down)
-            if (current_state == 1 &&
-                g_relay_button_states[i].last_state == 0) {
-                // Debounce check
-                if ((now_ms - g_relay_button_states[i].last_press_time) >
-                    BUTTON_DEBOUNCE_MS) {
-                    g_relay_button_states[i].last_press_time = now_ms;
-
-                    ESP_LOGI(TAG, "Button %d pressed", i);
-
-                    // Toggle the corresponding relay
-                    relay_toggle(i);
-
-                    // Track button press
-                    stats_increment_button_presses();
-
-                    // Send state confirmation to root
-                    relay_send_state_confirmation(i);
-                }
+            if (current_state == g_relay_button_states[i].last_state) {
+                continue;
             }
 
             g_relay_button_states[i].last_state = current_state;
+
+            if (current_time - g_relay_button_states[i].last_bounce_time >
+                BUTTON_DEBOUNCE_MS) {
+                ESP_LOGI(TAG, "Relay button %d state changed to %d", i,
+                         current_state);
+
+                if (current_state == 1) {
+                    g_relay_button_states[i].press_start_time = current_time;
+                } else {
+                    g_relay_button_states[i].last_release_time = current_time;
+                }
+
+                stats_increment_button_presses();
+
+                // Send button press message to root
+                char button_char = 'a' + i;  // 'a'-'g'
+                mesh_app_msg_t msg = {0};
+                msg.src_id = g_device_id;
+                msg.msg_type = MSG_TYPE_BUTTON;
+                msg.data[0] = button_char;
+                msg.data[1] = current_state + '0';  // '0' or '1'
+                msg.data_len = 2;
+                mesh_queue_to_root(&msg);
+
+                ESP_LOGI(TAG,
+                         "Sent button '%c' state %d to root. "
+                         "Pressed for %" PRIu32 " ms",
+                         button_char, current_state,
+                         (uint32_t)(current_time -
+                                    g_relay_button_states[i].press_start_time));
+            }
+
+            g_relay_button_states[i].last_bounce_time = current_time;
         }
     }
 }

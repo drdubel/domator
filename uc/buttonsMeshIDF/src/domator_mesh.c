@@ -70,6 +70,7 @@ SemaphoreHandle_t g_stats_mutex = NULL;
 TaskHandle_t button_task_handle = NULL;
 
 bool g_ota_in_progress = false;
+bool g_ota_requested = false;
 
 // ====================
 // Device ID Generation
@@ -373,6 +374,8 @@ void app_main(void) {
     xTaskCreate(mesh_rx_task, "mesh_rx", 8192, NULL, 5, NULL);
     xTaskCreate(mesh_tx_task, "mesh_tx", 4096, NULL, 4, NULL);
     xTaskCreate(status_report_task, "status", 4096, NULL, 1, NULL);
+    xTaskCreate(ota_task, "ota", 8192, NULL, 10, NULL);
+    xTaskCreate(health_monitor_task, "health_monitor", 3072, NULL, 2, NULL);
 
     // Start node-specific tasks
     if (g_node_type == NODE_TYPE_SWITCH_C3) {

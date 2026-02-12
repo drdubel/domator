@@ -6,6 +6,7 @@ idf_component_register(
         "mesh_comm.c"
         "node_root.c"
         "node_relay.c"
+        "health_ota.c"
     INCLUDE_DIRS
         "."
     REQUIRES

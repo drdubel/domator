@@ -172,6 +172,21 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
             break;
         }
 
+        case MSG_TYPE_TYPE_INFO: {
+            char type_str[16] = {0};
+            memcpy(type_str, msg->data, msg->data_len);
+            ESP_LOGI(TAG, "Device type info from %" PRIu32 ": %s", msg->src_id,
+                     type_str);
+            registry_update(msg->src_id, from, type_str);
+            break;
+        }
+
+        case MSG_TYPE_OTA_TRIGGER: {
+            ESP_LOGI(TAG, "OTA update requested");
+            g_ota_requested = true;
+            break;
+        }
+
         case MSG_TYPE_PING: {
             ESP_LOGV(TAG, "Received ping from %" PRIu32, msg->src_id);
             int index = registry_find_index(msg->src_id);
@@ -629,7 +644,30 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
     strncpy(topic_str, topic, copy_len);
     topic_str[copy_len] = '\0';
 
+    char* first_slash = strchr(topic_str, '/');
+    char* second_slash = strchr(first_slash + 1, '/');
     char* last_slash = strrchr(topic_str, '/');
+
+    char* device_type;
+    if (first_slash && second_slash && first_slash != second_slash) {
+        device_type = strndup(first_slash + 1, second_slash - first_slash - 1);
+    } else {
+        ESP_LOGW(TAG,
+                 "MQTT topic format unexpected, cannot extract device type: %s",
+                 topic_str);
+        return;
+    }
+
+    if ((strcmp(device_type, "switch") == 0) ||
+        (strcmp(device_type, "relay") == 0)) {
+        ESP_LOGI(TAG, "Received non-JSON command for %s: %s", device_type,
+                 topic_str);
+    } else {
+        ESP_LOGW(TAG, "Unknown device type in MQTT topic: %s", device_type);
+        free(device_type);
+        return;
+    }
+
     if (last_slash && *(last_slash + 1) != '\0') {
         uint32_t target_id = (uint32_t)strtoul(last_slash + 1, NULL, 10);
         ESP_LOGI(TAG, "Non-JSON command for target device %" PRIu32, target_id);
@@ -638,7 +676,11 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
         if (dest) {
             mesh_app_msg_t cmd = {0};
             cmd.src_id = g_device_id;
-            cmd.msg_type = MSG_TYPE_COMMAND;
+            if (data_len == 1 && data[0] == MSG_TYPE_OTA_TRIGGER)
+                cmd.msg_type = MSG_TYPE_OTA_TRIGGER;
+            else
+                cmd.msg_type = MSG_TYPE_COMMAND;
+
             memcpy(cmd.data, data, data_len);
             cmd.data_len = data_len;
             mesh_queue_to_node(dest, &cmd);
@@ -647,9 +689,21 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
         } else {
             ESP_LOGW(TAG, "Could not find target device %" PRIu32, target_id);
         }
-    } else {
-        ESP_LOGW(TAG, "MQTT topic does not contain target ID: %.*s", topic_len,
-                 topic);
+    } else if (data_len == 1 && data[0] == MSG_TYPE_OTA_TRIGGER) {
+        ESP_LOGI(TAG, "Received OTA trigger command via MQTT");
+        // Send OTA trigger to all nodes in registry
+        for (int i = 0; i < node_count; i++) {
+            if (strcmp(node_registry[i].node_type, device_type) != 0) {
+                continue;
+            }
+            mesh_app_msg_t cmd = {0};
+            cmd.src_id = g_device_id;
+            cmd.msg_type = MSG_TYPE_OTA_TRIGGER;
+            cmd.data_len = 0;
+            mesh_queue_to_node(&node_registry[i].mesh_addr, &cmd);
+            ESP_LOGI(TAG, "Sent OTA trigger to device %" PRIu32,
+                     node_registry[i].device_id);
+        }
     }
 }
 

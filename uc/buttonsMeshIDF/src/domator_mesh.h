@@ -31,6 +31,7 @@
 #define LONG_PRESS_THRESHOLD_MS 800
 #define ROOT_LOSS_RESET_TIMEOUT_MS 300000    // 5 minutes
 #define PEER_HEALTH_CHECK_INTERVAL_MS 30000  // 30 seconds
+#define OTA_COUNTDOWN_MS 5000
 #define PING_PONG_NUMBER 50
 
 #define NUM_BUTTONS 7
@@ -95,8 +96,9 @@
 #define MSG_TYPE_ACK 'A'      // Acknowledgment for command receipt
 #define MSG_TYPE_RELAY_STATE 'R'   // Relay state confirmation
 #define MSG_TYPE_SYNC_REQUEST 'Y'  // Request state sync
-#define MSG_TYPE_CONFIG 'G'        // Configuration message (gesture config)
-#define MSG_TYPE_OTA_TRIGGER 'O'   // OTA update trigger
+#define MSG_TYPE_CONFIG 'G'        // Configuration message
+#define MSG_TYPE_TYPE_INFO 'T'     // Message to convey device type info
+#define MSG_TYPE_OTA_TRIGGER 'U'   // OTA update trigger
 #define MSG_TYPE_PING 'P'          // Ping message for health check
 
 // ============ NODE TYPES ============
@@ -237,6 +239,7 @@ extern TaskHandle_t button_task_handle;
 
 // OTA flag
 extern bool g_ota_in_progress;
+extern bool g_ota_requested;
 
 // ============ mesh_init.c ============
 void mesh_network_init(void);
@@ -275,3 +278,8 @@ void relay_send_state_confirmation(int index);
 void relay_button_init(void);
 void relay_button_task(void* arg);
 void relay_handle_command(const char* cmd_data);
+
+// ============ health_ota.c ============
+void ota_task(void* arg);
+void ota_start_update(const char* url);
+void health_monitor_task(void* arg);

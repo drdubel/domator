@@ -54,6 +54,18 @@ static void mesh_event_handler(void* arg, esp_event_base_t event_base,
             g_mesh_connected = true;
             g_mesh_layer = connected->self_layer;
 
+            mesh_app_msg_t msg = {0};
+            msg.src_id = g_device_id;
+            msg.msg_type = MSG_TYPE_TYPE_INFO;
+            const char* type_str = "switch";
+            if (g_node_type == NODE_TYPE_RELAY_8 ||
+                g_node_type == NODE_TYPE_RELAY_16) {
+                type_str = "relay";
+            }
+            msg.data_len = strlen(type_str);
+            memcpy(msg.data, type_str, msg.data_len);
+            mesh_queue_to_root(&msg);
+
             if (esp_mesh_is_root()) {
                 ESP_LOGI(TAG, "*** I AM ROOT ***");
                 g_is_root = true;

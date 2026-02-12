@@ -43,6 +43,11 @@ void mesh_rx_task(void* arg) {
     int flag;
 
     while (true) {
+        if (g_ota_in_progress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
         rx_data.data = rx_buf;
         rx_data.size = sizeof(rx_buf);
 
@@ -96,6 +101,7 @@ void mesh_rx_task(void* arg) {
 
             case MSG_TYPE_OTA_TRIGGER: {
                 ESP_LOGI(TAG, "OTA update requested");
+                g_ota_requested = true;
                 break;
             }
 
@@ -132,6 +138,11 @@ void mesh_tx_task(void* arg) {
 
     tx_item_t item;
     while (true) {
+        if (g_ota_in_progress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
         if (xQueueReceive(tx_queue, &item, portMAX_DELAY) == pdTRUE) {
             if (item.to_root) {
                 mesh_send_to_root(&item.msg);

@@ -267,9 +267,8 @@ void led_flash_cyan(void);
 // ============ mesh_comm.c ============
 void mesh_rx_task(void* arg);
 void mesh_tx_task(void* arg);
-void mesh_queue_to_root(mesh_app_msg_t* msg, tx_priority_t prio);
-void mesh_queue_to_node(mesh_addr_t* dest, mesh_app_msg_t* msg,
-                        tx_priority_t prio);
+void mesh_queue_to_node(mesh_app_msg_t* msg, tx_priority_t prio,
+                        mesh_addr_t* dest);
 void status_report_task(void* arg);
 
 // ============ node_root.c ============

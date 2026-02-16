@@ -198,7 +198,7 @@ void relay_send_state_confirmation(int index) {
     msg.data[2] = '\0';
     msg.data_len = 2;
 
-    mesh_queue_to_root(&msg, TX_PRIO_NORMAL);
+    mesh_queue_to_node(&msg, TX_PRIO_NORMAL, NULL);
     ESP_LOGD(TAG, "Sent relay state confirmation: %c%c", relay_char,
              state_char);
 }
@@ -390,7 +390,7 @@ void relay_button_task(void* arg) {
                 msg.data[0] = button_char;
                 msg.data[1] = current_state + '0';  // '0' or '1'
                 msg.data_len = 2;
-                mesh_queue_to_root(&msg, TX_PRIO_NORMAL);
+                mesh_queue_to_node(&msg, TX_PRIO_NORMAL, NULL);
 
                 ESP_LOGI(TAG,
                          "Sent button '%c' state %d to root. "

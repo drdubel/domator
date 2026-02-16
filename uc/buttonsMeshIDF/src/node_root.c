@@ -218,7 +218,7 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
             pong.msg_type = MSG_TYPE_PING;
             pong.data_len = sizeof(uint16_t);
             memcpy(pong.data, &pingNum, sizeof(uint16_t));
-            mesh_queue_to_node(from, &pong, TX_PRIO_HIGH);
+            mesh_queue_to_node(&pong, TX_PRIO_HIGH, from);
             ESP_LOGV(TAG, "Sent pong to %" PRIu32, msg->src_id);
             break;
         }
@@ -291,7 +291,7 @@ static void mesh_ota_root_task(void* arg) {
     pkt.data_seq = 0;
     pkt.data_len = 0;
     pkt.target_type = device_type;
-    mesh_queue_to_node(&target_addr, &pkt, TX_PRIO_HIGH);
+    mesh_queue_to_node(&pkt, TX_PRIO_HIGH, &target_addr);
 
     uint32_t seq = 1;
     int read_len;
@@ -301,7 +301,7 @@ static void mesh_ota_root_task(void* arg) {
         pkt.msg_type = MSG_TYPE_OTA_DATA;
         pkt.data_seq = seq++;
         pkt.data_len = read_len;
-        mesh_queue_to_node(&target_addr, &pkt, TX_PRIO_HIGH);
+        mesh_queue_to_node(&pkt, TX_PRIO_HIGH, &target_addr);
 
         vTaskDelay(pdMS_TO_TICKS(5));  // avoid flooding mesh
     }
@@ -310,7 +310,7 @@ static void mesh_ota_root_task(void* arg) {
     pkt.msg_type = MSG_TYPE_OTA_END;
     pkt.data_seq = seq;
     pkt.data_len = 0;
-    mesh_queue_to_node(&target_addr, &pkt, TX_PRIO_NORMAL);
+    mesh_queue_to_node(&pkt, TX_PRIO_NORMAL, &target_addr);
 
     esp_http_client_close(client);
     esp_http_client_cleanup(client);
@@ -361,7 +361,7 @@ static void route_button_to_relays(uint32_t from_id, char button, int state) {
             } else {
                 cmd.data_len = 1;
             }
-            mesh_queue_to_node(dest, &cmd, TX_PRIO_NORMAL);
+            mesh_queue_to_node(&cmd, TX_PRIO_NORMAL, dest);
             ESP_LOGI(TAG,
                      "Routed button '%c' of type %d from %" PRIu32
                      " to relay command '%c' on device %" PRIu32,
@@ -586,8 +586,8 @@ static void handle_nonJson_mqtt_root_command(const char* topic, int topic_len,
 
             int index = registry_find_index(node_registry[i].device_id);
             node_registry[index].last_ping = esp_timer_get_time() / 1000;
-            mesh_queue_to_node(&node_registry[i].mesh_addr, &ping,
-                               TX_PRIO_HIGH);
+            mesh_queue_to_node(&ping, TX_PRIO_HIGH,
+                               &node_registry[i].mesh_addr);
             ESP_LOGV(TAG, "Sent MQTT ping to device %" PRIu32,
                      node_registry[i].device_id);
         }
@@ -786,7 +786,7 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
 
             memcpy(cmd.data, data, data_len);
             cmd.data_len = data_len;
-            mesh_queue_to_node(dest, &cmd, TX_PRIO_NORMAL);
+            mesh_queue_to_node(&cmd, TX_PRIO_NORMAL, dest);
             ESP_LOGI(TAG, "Routed non-JSON MQTT command to device %" PRIu32,
                      target_id);
         } else {

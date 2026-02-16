@@ -129,7 +129,7 @@ void button_task(void* arg) {
                 msg.data[0] = button_char;
                 msg.data[1] = current_state + '0';  // '0' or '1'
                 msg.data_len = 2;
-                mesh_queue_to_root(&msg, TX_PRIO_NORMAL);
+                mesh_queue_to_node(&msg, TX_PRIO_NORMAL, NULL);
 
                 ESP_LOGI(TAG,
                          "Sent button '%c' state %d to root. "

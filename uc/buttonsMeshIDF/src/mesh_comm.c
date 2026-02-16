@@ -3,22 +3,6 @@
 
 static const char* TAG = "MESH_COMM";
 
-// ============ SEND TO ROOT ============
-esp_err_t mesh_send_to_root(mesh_app_msg_t* msg) {
-    mesh_data_t data = {
-        .data = (uint8_t*)msg,
-        .size = sizeof(mesh_app_msg_t),
-        .proto = MESH_PROTO_BIN,
-        .tos = MESH_TOS_P2P,
-    };
-
-    esp_err_t err = esp_mesh_send(NULL, &data, MESH_DATA_P2P, NULL, 0);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Send to root failed: %s", esp_err_to_name(err));
-    }
-    return err;
-}
-
 // ============ SEND TO SPECIFIC NODE ============
 esp_err_t mesh_send_to_node(mesh_addr_t* dest, mesh_app_msg_t* msg) {
     mesh_data_t data = {
@@ -121,7 +105,7 @@ void mesh_rx_task(void* arg) {
                 mesh_app_msg_t pong = *msg;
                 pong.src_id = g_device_id;
                 pong.msg_type = MSG_TYPE_PING;
-                mesh_queue_to_node(&from, &pong, TX_PRIO_HIGH);
+                mesh_queue_to_node(&pong, TX_PRIO_HIGH, &from);
                 ESP_LOGV(TAG, "Sent pong to %" PRIu32, msg->src_id);
                 break;
             }
@@ -145,8 +129,8 @@ static QueueHandle_t high_queue = NULL;
 static QueueHandle_t normal_queue = NULL;
 
 void mesh_tx_task(void* arg) {
-    high_queue = xQueueCreate(20, sizeof(tx_item_t));
-    normal_queue = xQueueCreate(20, sizeof(tx_item_t));
+    high_queue = xQueueCreate(20, sizeof(tx_item_t*));
+    normal_queue = xQueueCreate(20, sizeof(tx_item_t*));
 
     tx_item_t* item;
     while (true) {
@@ -156,7 +140,7 @@ void mesh_tx_task(void* arg) {
         if (!got) continue;
 
         if (item->to_root) {
-            mesh_send_to_root(item->msg);
+            mesh_send_to_node(NULL, item->msg);
         } else {
             mesh_send_to_node(&item->dest, item->msg);
         }
@@ -168,16 +152,21 @@ void mesh_tx_task(void* arg) {
     }
 }
 
-void mesh_queue_to_node(mesh_addr_t* dest, mesh_app_msg_t* msg,
-                        tx_priority_t prio) {
+void mesh_queue_to_node(mesh_app_msg_t* msg, tx_priority_t prio,
+                        mesh_addr_t* dest) {
     tx_item_t* item = malloc(sizeof(tx_item_t));
     if (!item) {
         ESP_LOGE(TAG, "OOM queuing message");
         return;
     }
 
-    item->to_root = false;
-    memcpy(&item->dest, dest, sizeof(mesh_addr_t));
+    if (dest != NULL) {
+        memcpy(&item->dest, dest, sizeof(mesh_addr_t));
+        item->to_root = false;
+    } else {
+        memset(&item->dest, 0, sizeof(mesh_addr_t));
+        item->to_root = true;
+    }
 
     item->msg = malloc(sizeof(mesh_app_msg_t));
     if (!item->msg) {
@@ -282,7 +271,7 @@ void node_publish_status(void) {
             memcpy(msg.data, json_str, msg.data_len);
             msg.data[msg.data_len] = '\0';
 
-            mesh_queue_to_root(&msg, TX_PRIO_NORMAL);
+            mesh_queue_to_node(&msg, TX_PRIO_NORMAL, NULL);
         } else {
             ESP_LOGW(TAG, "Status report too large (%d bytes), max is %d",
                      msg.data_len, MESH_MSG_DATA_SIZE - 1);

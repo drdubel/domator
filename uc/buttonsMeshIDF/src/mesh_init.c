@@ -74,7 +74,7 @@ static void mesh_event_handler(void* arg, esp_event_base_t event_base,
                 }
                 msg->data_len = strlen(type_str);
                 memcpy(msg->data, type_str, msg->data_len);
-                mesh_queue_to_root(msg, TX_PRIO_NORMAL);
+                mesh_queue_to_node(msg, TX_PRIO_NORMAL, NULL);
                 free(msg);
             } else {
                 ESP_LOGW(TAG,

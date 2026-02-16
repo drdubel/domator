@@ -43,11 +43,6 @@ void mesh_rx_task(void* arg) {
     int flag;
 
     while (true) {
-        if (g_ota_in_progress) {
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            continue;
-        }
-
         rx_data.data = rx_buf;
         rx_data.size = sizeof(rx_buf);
 
@@ -99,9 +94,24 @@ void mesh_rx_task(void* arg) {
                 break;
             }
 
-            case MSG_TYPE_OTA_TRIGGER: {
-                ESP_LOGI(TAG, "OTA update requested");
-                g_ota_requested = true;
+            case MSG_TYPE_OTA_START:
+            case MSG_TYPE_OTA_DATA:
+            case MSG_TYPE_OTA_END: {
+                if ((msg->target_type == 'R' &&
+                     g_node_type != NODE_TYPE_RELAY_8 &&
+                     g_node_type != NODE_TYPE_RELAY_16) ||
+                    (msg->target_type == 'S' &&
+                     g_node_type != NODE_TYPE_SWITCH_C3)) {
+                    ESP_LOGW(TAG,
+                             "Received OTA message for %c, but this node is "
+                             "not a %c",
+                             msg->target_type,
+                             g_node_type == NODE_TYPE_SWITCH_C3 ? 'S' : 'R');
+                    break;
+                }
+
+                ESP_LOGV(TAG, "OTA update packet received from root");
+                handle_ota_message(&from, msg);
                 break;
             }
 
@@ -111,7 +121,7 @@ void mesh_rx_task(void* arg) {
                 mesh_app_msg_t pong = *msg;
                 pong.src_id = g_device_id;
                 pong.msg_type = MSG_TYPE_PING;
-                mesh_queue_to_node(&from, &pong);
+                mesh_queue_to_node(&from, &pong, TX_PRIO_HIGH);
                 ESP_LOGV(TAG, "Sent pong to %" PRIu32, msg->src_id);
                 break;
             }
@@ -127,47 +137,65 @@ void mesh_rx_task(void* arg) {
 // ============ TX TASK ============
 typedef struct {
     mesh_addr_t dest;
-    mesh_app_msg_t msg;
+    mesh_app_msg_t* msg;
     bool to_root;
 } tx_item_t;
 
-static QueueHandle_t tx_queue = NULL;
+static QueueHandle_t high_queue = NULL;
+static QueueHandle_t normal_queue = NULL;
 
 void mesh_tx_task(void* arg) {
-    tx_queue = xQueueCreate(20, sizeof(tx_item_t));
+    high_queue = xQueueCreate(20, sizeof(tx_item_t));
+    normal_queue = xQueueCreate(20, sizeof(tx_item_t));
 
-    tx_item_t item;
+    tx_item_t* item;
     while (true) {
-        if (g_ota_in_progress) {
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            continue;
+        bool got =
+            (xQueueReceive(high_queue, &item, 0) == pdTRUE) ||
+            (xQueueReceive(normal_queue, &item, portMAX_DELAY) == pdTRUE);
+        if (!got) continue;
+
+        if (item->to_root) {
+            mesh_send_to_root(item->msg);
+        } else {
+            mesh_send_to_node(&item->dest, item->msg);
         }
 
-        if (xQueueReceive(tx_queue, &item, portMAX_DELAY) == pdTRUE) {
-            if (item.to_root) {
-                mesh_send_to_root(&item.msg);
-            } else {
-                mesh_send_to_node(&item.dest, &item.msg);
-            }
-            vTaskDelay(pdMS_TO_TICKS(2));
-        }
+        free(item->msg);  // must free both allocs
+        free(item);
+
+        vTaskDelay(pdMS_TO_TICKS(2));
     }
 }
 
-void mesh_queue_to_root(mesh_app_msg_t* msg) {
-    if (!tx_queue) return;
-    tx_item_t item = {.to_root = true};
-    memset(&item.dest, 0, sizeof(mesh_addr_t));
-    memcpy(&item.msg, msg, sizeof(mesh_app_msg_t));
-    xQueueSend(tx_queue, &item, pdMS_TO_TICKS(100));
-}
+void mesh_queue_to_node(mesh_addr_t* dest, mesh_app_msg_t* msg,
+                        tx_priority_t prio) {
+    tx_item_t* item = malloc(sizeof(tx_item_t));
+    if (!item) {
+        ESP_LOGE(TAG, "OOM queuing message");
+        return;
+    }
 
-void mesh_queue_to_node(mesh_addr_t* dest, mesh_app_msg_t* msg) {
-    if (!tx_queue) return;
-    tx_item_t item = {.to_root = false};
-    memcpy(&item.dest, dest, sizeof(mesh_addr_t));
-    memcpy(&item.msg, msg, sizeof(mesh_app_msg_t));
-    xQueueSend(tx_queue, &item, pdMS_TO_TICKS(100));
+    item->to_root = false;
+    memcpy(&item->dest, dest, sizeof(mesh_addr_t));
+
+    item->msg = malloc(sizeof(mesh_app_msg_t));
+    if (!item->msg) {
+        free(item);
+        return;
+    }
+    memcpy(item->msg, msg, sizeof(mesh_app_msg_t));
+
+    QueueHandle_t q = (prio == TX_PRIO_HIGH) ? high_queue : normal_queue;
+    BaseType_t sent = (prio == TX_PRIO_HIGH)
+                          ? xQueueSendToFront(q, &item, portMAX_DELAY)
+                          : xQueueSendToBack(q, &item, pdMS_TO_TICKS(100));
+
+    if (sent != pdTRUE) {
+        ESP_LOGW(TAG, "Queue full, dropping message");
+        free(item->msg);
+        free(item);
+    }
 }
 
 void node_publish_status(void) {
@@ -254,7 +282,7 @@ void node_publish_status(void) {
             memcpy(msg.data, json_str, msg.data_len);
             msg.data[msg.data_len] = '\0';
 
-            mesh_queue_to_root(&msg);
+            mesh_queue_to_root(&msg, TX_PRIO_NORMAL);
         } else {
             ESP_LOGW(TAG, "Status report too large (%d bytes), max is %d",
                      msg.data_len, MESH_MSG_DATA_SIZE - 1);
@@ -272,11 +300,6 @@ void status_report_task(void* arg) {
     vTaskDelay(pdMS_TO_TICKS(5000));
 
     while (true) {
-        if (g_ota_in_progress) {
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            continue;
-        }
-
         ESP_LOGI(TAG, "Status: root=%d, connected=%d, heap=%" PRIu32, g_is_root,
                  g_mesh_connected, (uint32_t)esp_get_free_heap_size());
 

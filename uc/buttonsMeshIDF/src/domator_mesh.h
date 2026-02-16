@@ -37,7 +37,7 @@
 #define NUM_BUTTONS 7
 #define MAX_QUEUE_SIZE 30
 #define MESH_TX_QUEUE_SIZE 20
-#define MESH_MSG_DATA_SIZE 500
+#define MESH_MSG_DATA_SIZE 1024
 #define LOW_HEAP_THRESHOLD 40000
 #define CRITICAL_HEAP_THRESHOLD 20000
 #define MAX_DEVICES 50
@@ -98,7 +98,11 @@
 #define MSG_TYPE_SYNC_REQUEST 'Y'  // Request state sync
 #define MSG_TYPE_CONFIG 'G'        // Configuration message
 #define MSG_TYPE_TYPE_INFO 'T'     // Message to convey device type info
-#define MSG_TYPE_OTA_TRIGGER 'U'   // OTA update trigger
+#define MSG_TYPE_OTA_START 'U'     // OTA update start packet
+#define MSG_TYPE_OTA_DATA 'V'      // OTA update data packet
+#define MSG_TYPE_OTA_END 'W'       // OTA update end packet
+#define MSG_TYPE_OTA_ACK 'X'       // Acknowledgment for OTA packets
+#define MSG_TYPE_OTA_ABORT 'Z'     // OTA abort message
 #define MSG_TYPE_PING 'P'          // Ping message for health check
 
 // ============ NODE TYPES ============
@@ -113,6 +117,9 @@ typedef enum {
 // Relay board types
 typedef enum { BOARD_TYPE_8_RELAY = 0, BOARD_TYPE_16_RELAY } board_type_t;
 
+// Transmission priority levels
+typedef enum { TX_PRIO_NORMAL = 0, TX_PRIO_HIGH } tx_priority_t;
+
 // ====================
 // Data Structures
 // ====================
@@ -121,7 +128,9 @@ typedef enum { BOARD_TYPE_8_RELAY = 0, BOARD_TYPE_16_RELAY } board_type_t;
 typedef struct {
     uint32_t src_id;
     uint8_t msg_type;
-    uint8_t data_len;
+    uint16_t data_len;
+    uint32_t data_seq;
+    uint8_t target_type;
     char data[MESH_MSG_DATA_SIZE];
 } __attribute__((packed)) mesh_app_msg_t;
 
@@ -193,7 +202,7 @@ typedef struct {
 // Device info
 extern uint32_t g_device_id;
 extern node_type_t g_node_type;
-extern char g_firmware_hash[33];
+extern char g_firmware_hash[65];
 extern device_stats_t g_stats;
 
 // Mesh state
@@ -243,6 +252,9 @@ extern bool g_ota_requested;
 
 // ============ mesh_init.c ============
 void mesh_network_init(void);
+// Returns true when the station network interface is up (we have IP
+// connectivity)
+bool domator_mesh_is_wifi_connected(void);
 
 // node_switch.c (switch node functions)
 void button_init(void);
@@ -255,8 +267,9 @@ void led_flash_cyan(void);
 // ============ mesh_comm.c ============
 void mesh_rx_task(void* arg);
 void mesh_tx_task(void* arg);
-void mesh_queue_to_root(mesh_app_msg_t* msg);
-void mesh_queue_to_node(mesh_addr_t* dest, mesh_app_msg_t* msg);
+void mesh_queue_to_root(mesh_app_msg_t* msg, tx_priority_t prio);
+void mesh_queue_to_node(mesh_addr_t* dest, mesh_app_msg_t* msg,
+                        tx_priority_t prio);
 void status_report_task(void* arg);
 
 // ============ node_root.c ============
@@ -280,6 +293,5 @@ void relay_button_task(void* arg);
 void relay_handle_command(const char* cmd_data);
 
 // ============ health_ota.c ============
-void ota_task(void* arg);
-void ota_start_update(const char* url);
+void handle_ota_message(mesh_addr_t* from, mesh_app_msg_t* msg);
 void health_monitor_task(void* arg);

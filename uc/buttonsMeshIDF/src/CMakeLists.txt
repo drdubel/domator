@@ -15,8 +15,12 @@ idf_component_register(
         esp_netif
         esp_event
         esp_timer
+        esp_https_ota
+        esp_http_client
         led_strip
         mqtt
+        app_update
+        freertos
         driver
         json
 )

@@ -1,6 +1,15 @@
+#include <stdlib.h>
+
 #include "domator_mesh.h"
 
 static const char* TAG = "MESH_INIT";
+
+// Check whether the station network interface is up (we have an IP)
+bool domator_mesh_is_wifi_connected(void) {
+    esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (netif == NULL) return false;
+    return esp_netif_is_netif_up(netif);
+}
 
 // ====================
 // IP Event Handler
@@ -54,17 +63,23 @@ static void mesh_event_handler(void* arg, esp_event_base_t event_base,
             g_mesh_connected = true;
             g_mesh_layer = connected->self_layer;
 
-            mesh_app_msg_t msg = {0};
-            msg.src_id = g_device_id;
-            msg.msg_type = MSG_TYPE_TYPE_INFO;
-            const char* type_str = "switch";
-            if (g_node_type == NODE_TYPE_RELAY_8 ||
-                g_node_type == NODE_TYPE_RELAY_16) {
-                type_str = "relay";
+            mesh_app_msg_t* msg = calloc(1, sizeof(mesh_app_msg_t));
+            if (msg) {
+                msg->src_id = g_device_id;
+                msg->msg_type = MSG_TYPE_TYPE_INFO;
+                const char* type_str = "switch";
+                if (g_node_type == NODE_TYPE_RELAY_8 ||
+                    g_node_type == NODE_TYPE_RELAY_16) {
+                    type_str = "relay";
+                }
+                msg->data_len = strlen(type_str);
+                memcpy(msg->data, type_str, msg->data_len);
+                mesh_queue_to_root(msg, TX_PRIO_NORMAL);
+                free(msg);
+            } else {
+                ESP_LOGW(TAG,
+                         "Failed to allocate msg for parent connected event");
             }
-            msg.data_len = strlen(type_str);
-            memcpy(msg.data, type_str, msg.data_len);
-            mesh_queue_to_root(&msg);
 
             if (esp_mesh_is_root()) {
                 ESP_LOGI(TAG, "*** I AM ROOT ***");

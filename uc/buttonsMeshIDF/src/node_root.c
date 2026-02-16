@@ -3,6 +3,8 @@
 
 #include "cJSON.h"
 #include "domator_mesh.h"
+#include "esp_crt_bundle.h"
+#include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_mesh.h"
 #include "mqtt_client.h"
@@ -24,6 +26,11 @@ typedef struct {
     int32_t avg_ping;
     int outputs;
 } node_registry_entry_t;
+
+struct ota_task_arg_t {
+    uint8_t device_type;
+    uint32_t device_id;
+};
 
 static node_registry_entry_t node_registry[MAX_NODES];
 static int node_count = 0;
@@ -181,12 +188,6 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
             break;
         }
 
-        case MSG_TYPE_OTA_TRIGGER: {
-            ESP_LOGI(TAG, "OTA update requested");
-            g_ota_requested = true;
-            break;
-        }
-
         case MSG_TYPE_PING: {
             ESP_LOGV(TAG, "Received ping from %" PRIu32, msg->src_id);
             int index = registry_find_index(msg->src_id);
@@ -217,7 +218,7 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
             pong.msg_type = MSG_TYPE_PING;
             pong.data_len = sizeof(uint16_t);
             memcpy(pong.data, &pingNum, sizeof(uint16_t));
-            mesh_queue_to_node(from, &pong);
+            mesh_queue_to_node(from, &pong, TX_PRIO_HIGH);
             ESP_LOGV(TAG, "Sent pong to %" PRIu32, msg->src_id);
             break;
         }
@@ -227,6 +228,94 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
                      msg->msg_type);
             break;
     }
+}
+
+// ============ ROOT OTA TASk ============
+static void mesh_ota_root_task(void* arg) {
+    if (!esp_mesh_is_root()) {
+        vTaskDelete(NULL);
+        return;
+    }
+
+    struct ota_task_arg_t* ota_arg = (struct ota_task_arg_t*)arg;
+    uint8_t device_type = ota_arg->device_type;
+    uint32_t target_id = ota_arg->device_id;
+    free(ota_arg);
+
+    esp_http_client_config_t config = {
+        .url = CONFIG_OTA_URL,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+        .timeout_ms = 10000,
+        .keep_alive_enable = true,
+    };
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    esp_err_t err = esp_http_client_open(client, 0);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG,
+                 "OTA HTTP open failed (strict TLS): %s, retrying with relaxed "
+                 "CN check",
+                 esp_err_to_name(err));
+        esp_http_client_cleanup(client);
+
+        // Retry with relaxed common name check (useful if CONFIG_OTA_URL is an
+        // IP)
+        esp_http_client_config_t config_relaxed = {
+            .url = CONFIG_OTA_URL,
+            .timeout_ms = 10000,
+            .crt_bundle_attach = esp_crt_bundle_attach,
+            .skip_cert_common_name_check = true,
+        };
+        client = esp_http_client_init(&config_relaxed);
+        err = esp_http_client_open(client, 0);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "OTA HTTP open failed (relaxed TLS): %s",
+                     esp_err_to_name(err));
+            esp_http_client_cleanup(client);
+            vTaskDelete(NULL);
+            return;
+        }
+    }
+
+    mesh_app_msg_t pkt = {0};
+
+    mesh_addr_t target_addr = {0};
+    memset(&target_addr, 0xFF, 6);  // broadcast to all nodes
+
+    if (target_id) {
+        memcpy(target_addr.addr, registry_find(target_id)->addr, 6);
+    }
+
+    // SEND START
+    pkt.msg_type = MSG_TYPE_OTA_START;
+    pkt.data_seq = 0;
+    pkt.data_len = 0;
+    pkt.target_type = device_type;
+    mesh_queue_to_node(&target_addr, &pkt, TX_PRIO_HIGH);
+
+    uint32_t seq = 1;
+    int read_len;
+
+    while ((read_len = esp_http_client_read(client, (char*)pkt.data,
+                                            MESH_MSG_DATA_SIZE)) > 0) {
+        pkt.msg_type = MSG_TYPE_OTA_DATA;
+        pkt.data_seq = seq++;
+        pkt.data_len = read_len;
+        mesh_queue_to_node(&target_addr, &pkt, TX_PRIO_HIGH);
+
+        vTaskDelay(pdMS_TO_TICKS(5));  // avoid flooding mesh
+    }
+
+    // SEND END
+    pkt.msg_type = MSG_TYPE_OTA_END;
+    pkt.data_seq = seq;
+    pkt.data_len = 0;
+    mesh_queue_to_node(&target_addr, &pkt, TX_PRIO_NORMAL);
+
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
+
+    vTaskDelete(NULL);
 }
 
 // ============ ROUTE BUTTON → RELAY (stub for now) ============
@@ -272,7 +361,7 @@ static void route_button_to_relays(uint32_t from_id, char button, int state) {
             } else {
                 cmd.data_len = 1;
             }
-            mesh_queue_to_node(dest, &cmd);
+            mesh_queue_to_node(dest, &cmd, TX_PRIO_NORMAL);
             ESP_LOGI(TAG,
                      "Routed button '%c' of type %d from %" PRIu32
                      " to relay command '%c' on device %" PRIu32,
@@ -497,7 +586,8 @@ static void handle_nonJson_mqtt_root_command(const char* topic, int topic_len,
 
             int index = registry_find_index(node_registry[i].device_id);
             node_registry[index].last_ping = esp_timer_get_time() / 1000;
-            mesh_queue_to_node(&node_registry[i].mesh_addr, &ping);
+            mesh_queue_to_node(&node_registry[i].mesh_addr, &ping,
+                               TX_PRIO_HIGH);
             ESP_LOGV(TAG, "Sent MQTT ping to device %" PRIu32,
                      node_registry[i].device_id);
         }
@@ -668,42 +758,48 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
         return;
     }
 
+    uint32_t target_id = 0;
+
     if (last_slash && *(last_slash + 1) != '\0') {
-        uint32_t target_id = (uint32_t)strtoul(last_slash + 1, NULL, 10);
+        target_id = (uint32_t)strtoul(last_slash + 1, NULL, 10);
+    }
+
+    if (data_len == 1 && data[0] == MSG_TYPE_COMMAND) {
+        if (target_id == 0) {
+            ESP_LOGW(TAG,
+                     "Non-JSON command missing target device ID in topic: %s",
+                     topic_str);
+            free(device_type);
+            return;
+        }
+
         ESP_LOGI(TAG, "Non-JSON command for target device %" PRIu32, target_id);
 
         mesh_addr_t* dest = registry_find(target_id);
         if (dest) {
             mesh_app_msg_t cmd = {0};
             cmd.src_id = g_device_id;
-            if (data_len == 1 && data[0] == MSG_TYPE_OTA_TRIGGER)
-                cmd.msg_type = MSG_TYPE_OTA_TRIGGER;
+            if (data_len == 1 && data[0] == MSG_TYPE_OTA_START)
+                cmd.msg_type = MSG_TYPE_OTA_START;
             else
                 cmd.msg_type = MSG_TYPE_COMMAND;
 
             memcpy(cmd.data, data, data_len);
             cmd.data_len = data_len;
-            mesh_queue_to_node(dest, &cmd);
+            mesh_queue_to_node(dest, &cmd, TX_PRIO_NORMAL);
             ESP_LOGI(TAG, "Routed non-JSON MQTT command to device %" PRIu32,
                      target_id);
         } else {
             ESP_LOGW(TAG, "Could not find target device %" PRIu32, target_id);
         }
-    } else if (data_len == 1 && data[0] == MSG_TYPE_OTA_TRIGGER) {
-        ESP_LOGI(TAG, "Received OTA trigger command via MQTT");
-        // Send OTA trigger to all nodes in registry
-        for (int i = 0; i < node_count; i++) {
-            if (strcmp(node_registry[i].node_type, device_type) != 0) {
-                continue;
-            }
-            mesh_app_msg_t cmd = {0};
-            cmd.src_id = g_device_id;
-            cmd.msg_type = MSG_TYPE_OTA_TRIGGER;
-            cmd.data_len = 0;
-            mesh_queue_to_node(&node_registry[i].mesh_addr, &cmd);
-            ESP_LOGI(TAG, "Sent OTA trigger to device %" PRIu32,
-                     node_registry[i].device_id);
-        }
+    } else if (data_len == 1 && data[0] == MSG_TYPE_OTA_START) {
+        ESP_LOGI(TAG, "Received OTA start command via MQTT");
+        struct ota_task_arg_t* ota_arg = malloc(sizeof(struct ota_task_arg_t));
+        ota_arg->device_type =
+            device_type[0] - 'a' + 'A';  // 'S' for switch, 'R' for relay
+        ota_arg->device_id = target_id;  // 0 for broadcast
+        xTaskCreate(mesh_ota_root_task, "mesh_ota_root_task", 8192, ota_arg, 6,
+                    NULL);
     }
 }
 

@@ -25,7 +25,7 @@ static const char* TAG = "DOMATOR";
 
 uint32_t g_device_id = 0;
 node_type_t g_node_type = NODE_TYPE_UNKNOWN;
-char g_firmware_hash[33] = {0};
+char g_firmware_hash[65] = {0};
 device_stats_t g_stats = {0};
 
 bool g_mesh_connected = false;
@@ -96,48 +96,16 @@ void generate_device_id(void) {
 // ====================
 
 void generate_firmware_hash() {
-    const esp_partition_t* running = esp_ota_get_running_partition();
-    if (!running) {
-        printf("Failed to get running partition\n");
+    const esp_app_desc_t* desc = esp_app_get_description();
+    if (!desc) {
+        printf("Failed to get app description\n");
         return;
     }
 
-    mbedtls_md5_context ctx;
-    mbedtls_md5_init(&ctx);
-    mbedtls_md5_starts(&ctx);  // use old function
-
-    uint8_t buf[CHUNK_SIZE];
-    size_t offset = 0;
-
-    while (offset < running->size) {
-        size_t to_read = CHUNK_SIZE;
-        if (offset + to_read > running->size) {
-            to_read = running->size - offset;
-        }
-
-        esp_err_t err = esp_partition_read(running, offset, buf, to_read);
-        if (err != ESP_OK) {
-            printf("Partition read failed at offset %zu: %d\n", offset, err);
-            mbedtls_md5_free(&ctx);
-            return;
-        }
-
-        mbedtls_md5_update(&ctx, buf, to_read);
-        offset += to_read;
+    for (int i = 0; i < 32; i++) {
+        sprintf(&g_firmware_hash[i * 2], "%02x", desc->app_elf_sha256[i]);
     }
-
-    // Get raw MD5 bytes
-    unsigned char md5_output[16];
-    mbedtls_md5_finish(&ctx, md5_output);
-    mbedtls_md5_free(&ctx);
-
-    // Convert to hex string
-    for (int i = 0; i < 16; i++) {
-        sprintf(&g_firmware_hash[i * 2], "%02x", md5_output[i]);
-    }
-    g_firmware_hash[32] = '\0';  // Ensure null termination
-
-    ESP_LOGI(TAG, "Firmware hash (MD5): %s", g_firmware_hash);
+    g_firmware_hash[64] = '\0';
 }
 
 // ====================
@@ -374,7 +342,6 @@ void app_main(void) {
     xTaskCreate(mesh_rx_task, "mesh_rx", 8192, NULL, 5, NULL);
     xTaskCreate(mesh_tx_task, "mesh_tx", 4096, NULL, 4, NULL);
     xTaskCreate(status_report_task, "status", 4096, NULL, 1, NULL);
-    xTaskCreate(ota_task, "ota", 8192, NULL, 10, NULL);
     xTaskCreate(health_monitor_task, "health_monitor", 3072, NULL, 2, NULL);
 
     // Start node-specific tasks

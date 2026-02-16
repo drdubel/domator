@@ -11,69 +11,37 @@
 
 static const char* TAG = "HEALTH_OTA";
 
+static esp_ota_handle_t ota_handle = 0;
+static const esp_partition_t* update_partition = NULL;
+
 // ====================
 // OTA Functions
 // ====================
 
-void ota_start_update(const char* url) {
-    if (url == NULL || strlen(url) == 0) {
-        ESP_LOGW(TAG, "Invalid OTA URL");
-        return;
-    }
+void handle_ota_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
+    switch (msg->msg_type) {
+        case MSG_TYPE_OTA_START:
+            g_ota_in_progress = true;
 
-    ESP_LOGI(TAG, "Starting OTA update from: %s", url);
-    g_ota_in_progress = true;
+            update_partition = esp_ota_get_next_update_partition(NULL);
+            ESP_ERROR_CHECK(
+                esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle));
 
-    // Configure HTTP client for OTA
-    esp_http_client_config_t config = {
-        .url = url,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-        .timeout_ms = 10000,
-        .keep_alive_enable = true,
-    };
+            ESP_LOGI(TAG, "OTA started");
+            break;
 
-    esp_https_ota_config_t ota_config = {
-        .http_config = &config,
-    };
+        case MSG_TYPE_OTA_DATA:
+            ESP_ERROR_CHECK(
+                esp_ota_write(ota_handle, msg->data, msg->data_len));
+            break;
 
-    ESP_LOGI(TAG, "Starting HTTPS OTA update...");
-    esp_err_t ret = esp_https_ota(&ota_config);
+        case MSG_TYPE_OTA_END:
+            ESP_ERROR_CHECK(esp_ota_end(ota_handle));
+            ESP_ERROR_CHECK(esp_ota_set_boot_partition(update_partition));
 
-    if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "OTA update successful, restarting...");
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        esp_restart();
-    } else {
-        ESP_LOGE(TAG, "OTA update failed: %s", esp_err_to_name(ret));
-        g_ota_in_progress = false;
-    }
-}
-
-void ota_task(void* arg) {
-    uint32_t ota_countdown = 0;
-    bool ota_countdown_active = false;
-
-    while (1) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-
-        if (g_ota_in_progress) {
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            continue;
-        }
-
-        if (g_ota_requested) {
-            g_ota_requested = false;
-            ota_countdown_active = true;
-        }
-
-        if (!ota_countdown_active) {
-            ota_countdown = esp_timer_get_time() / 1000;  // ms
-            continue;
-        } else if ((esp_timer_get_time() / 1000) - ota_countdown >=
-                   OTA_COUNTDOWN_MS) {
-            ota_countdown_active = false;
-            ota_start_update(CONFIG_OTA_URL);
-        }
+            ESP_LOGI(TAG, "OTA finished, rebooting...");
+            esp_restart();
+            break;
     }
 }
 
@@ -88,11 +56,6 @@ void health_monitor_task(void* arg) {
     uint32_t last_critical_heap_log = 0;
 
     while (1) {
-        if (g_ota_in_progress) {
-            vTaskDelay(pdMS_TO_TICKS(5000));  // Check every 5 seconds
-            continue;
-        }
-
         vTaskDelay(pdMS_TO_TICKS(5000));  // Check every 5 seconds
 
         uint32_t free_heap = esp_get_free_heap_size();

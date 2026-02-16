@@ -63,24 +63,6 @@ static void mesh_event_handler(void* arg, esp_event_base_t event_base,
             g_mesh_connected = true;
             g_mesh_layer = connected->self_layer;
 
-            mesh_app_msg_t* msg = calloc(1, sizeof(mesh_app_msg_t));
-            if (msg) {
-                msg->src_id = g_device_id;
-                msg->msg_type = MSG_TYPE_TYPE_INFO;
-                const char* type_str = "switch";
-                if (g_node_type == NODE_TYPE_RELAY_8 ||
-                    g_node_type == NODE_TYPE_RELAY_16) {
-                    type_str = "relay";
-                }
-                msg->data_len = strlen(type_str);
-                memcpy(msg->data, type_str, msg->data_len);
-                mesh_queue_to_node(msg, TX_PRIO_NORMAL, NULL);
-                free(msg);
-            } else {
-                ESP_LOGW(TAG,
-                         "Failed to allocate msg for parent connected event");
-            }
-
             if (esp_mesh_is_root()) {
                 ESP_LOGI(TAG, "*** I AM ROOT ***");
                 g_is_root = true;
@@ -92,6 +74,25 @@ static void mesh_event_handler(void* arg, esp_event_base_t event_base,
                          g_mesh_layer);
                 g_is_root = false;
                 node_root_stop();
+            }
+
+            mesh_app_msg_t* msg = calloc(1, sizeof(mesh_app_msg_t));
+            if (msg) {
+                msg->src_id = g_device_id;
+                msg->msg_type = MSG_TYPE_TYPE_INFO;
+                char type_str = DEVICE_TYPE_SWITCH;
+                if (g_node_type == NODE_TYPE_RELAY_8 ||
+                    g_node_type == NODE_TYPE_RELAY_16) {
+                    type_str = DEVICE_TYPE_RELAY;
+                }
+
+                msg->data_len = 1;
+                msg->data[0] = type_str;
+                mesh_queue_to_node(msg, TX_PRIO_NORMAL, NULL);
+                free(msg);
+            } else {
+                ESP_LOGW(TAG,
+                         "Failed to allocate msg for parent connected event");
             }
 
             ESP_LOGI(TAG,
@@ -158,16 +159,36 @@ static void mesh_event_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
-void mesh_network_init(void) {
-    // Initialize NVS
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
-        ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ret = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(ret);
+void mesh_stop_and_connect_sta(void) {
+    ESP_LOGI(TAG, "Stopping mesh...");
 
+    ESP_ERROR_CHECK(esp_mesh_stop());
+    ESP_ERROR_CHECK(esp_mesh_deinit());
+
+    ESP_ERROR_CHECK(esp_wifi_disconnect());
+
+    wifi_config_t sta_config = {0};
+
+    strcpy((char*)sta_config.sta.ssid, CONFIG_ROUTER_SSID);
+    strcpy((char*)sta_config.sta.password, CONFIG_ROUTER_PASSWD);
+
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_config));
+    ESP_ERROR_CHECK(esp_wifi_connect());
+
+    ESP_LOGI(TAG, "Connecting to router for OTA...");
+
+    while (1) {
+        wifi_ap_record_t ap_info;
+        if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+            ESP_LOGI(TAG, "Connected to router: %s", ap_info.ssid);
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
+void mesh_network_init(void) {
     // WiFi init
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());

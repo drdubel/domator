@@ -99,11 +99,11 @@
 #define MSG_TYPE_CONFIG 'G'        // Configuration message
 #define MSG_TYPE_TYPE_INFO 'T'     // Message to convey device type info
 #define MSG_TYPE_OTA_START 'U'     // OTA update start packet
-#define MSG_TYPE_OTA_DATA 'V'      // OTA update data packet
-#define MSG_TYPE_OTA_END 'W'       // OTA update end packet
-#define MSG_TYPE_OTA_ACK 'X'       // Acknowledgment for OTA packets
-#define MSG_TYPE_OTA_ABORT 'Z'     // OTA abort message
-#define MSG_TYPE_PING 'P'          // Ping message for health check
+#define MSG_TYPE_PING 'P'          // Ping message for health check'
+
+// Device types for type info messages
+#define DEVICE_TYPE_SWITCH 'S'
+#define DEVICE_TYPE_RELAY 'R'
 
 // ============ NODE TYPES ============
 typedef enum {
@@ -250,11 +250,15 @@ extern TaskHandle_t button_task_handle;
 extern bool g_ota_in_progress;
 extern bool g_ota_requested;
 
+// Broadcast address for mesh messages
+extern mesh_addr_t g_broadcast_addr;
+
 // ============ mesh_init.c ============
 void mesh_network_init(void);
 // Returns true when the station network interface is up (we have IP
 // connectivity)
 bool domator_mesh_is_wifi_connected(void);
+void mesh_stop_and_connect_sta(void);
 
 // node_switch.c (switch node functions)
 void button_init(void);
@@ -279,6 +283,7 @@ void node_root_stop(void);
 void root_publish_status(void);
 
 // ============ node_relay.c ============
+void relay_save_states_to_nvs(void);
 void relay_board_detect(void);
 void relay_init(void);
 void relay_set(int index, bool state);
@@ -292,5 +297,5 @@ void relay_button_task(void* arg);
 void relay_handle_command(const char* cmd_data);
 
 // ============ health_ota.c ============
-void handle_ota_message(mesh_addr_t* from, mesh_app_msg_t* msg);
+void ota_task(void* arg);
 void health_monitor_task(void* arg);

@@ -27,6 +27,11 @@ void mesh_rx_task(void* arg) {
     int flag;
 
     while (true) {
+        if (g_ota_in_progress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
         rx_data.data = rx_buf;
         rx_data.size = sizeof(rx_buf);
 
@@ -45,6 +50,18 @@ void mesh_rx_task(void* arg) {
 
         mesh_app_msg_t* msg = (mesh_app_msg_t*)rx_data.data;
 
+        if ((msg->target_type == DEVICE_TYPE_RELAY &&
+             g_node_type != NODE_TYPE_RELAY_8 &&
+             g_node_type != NODE_TYPE_RELAY_16) ||
+            (msg->target_type == DEVICE_TYPE_SWITCH &&
+             g_node_type != NODE_TYPE_SWITCH_C3)) {
+            ESP_LOGW(
+                TAG,
+                "Received message for device type %c, but I am not that type",
+                msg->target_type);
+            continue;
+        }
+
         // If we are root, handle as root
         if (g_is_root) {
             root_handle_mesh_message(&from, msg);
@@ -54,7 +71,6 @@ void mesh_rx_task(void* arg) {
         // Leaf node handling
         switch (msg->msg_type) {
             case MSG_TYPE_COMMAND: {
-                // TODO: relay_handle_command when relay code is ported
                 ESP_LOGI(TAG, "Command received: %.*s", msg->data_len,
                          msg->data);
 
@@ -78,24 +94,9 @@ void mesh_rx_task(void* arg) {
                 break;
             }
 
-            case MSG_TYPE_OTA_START:
-            case MSG_TYPE_OTA_DATA:
-            case MSG_TYPE_OTA_END: {
-                if ((msg->target_type == 'R' &&
-                     g_node_type != NODE_TYPE_RELAY_8 &&
-                     g_node_type != NODE_TYPE_RELAY_16) ||
-                    (msg->target_type == 'S' &&
-                     g_node_type != NODE_TYPE_SWITCH_C3)) {
-                    ESP_LOGW(TAG,
-                             "Received OTA message for %c, but this node is "
-                             "not a %c",
-                             msg->target_type,
-                             g_node_type == NODE_TYPE_SWITCH_C3 ? 'S' : 'R');
-                    break;
-                }
-
-                ESP_LOGV(TAG, "OTA update packet received from root");
-                handle_ota_message(&from, msg);
+            case MSG_TYPE_OTA_START: {
+                ESP_LOGI(TAG, "OTA update packet received from root");
+                g_ota_requested = true;
                 break;
             }
 
@@ -125,19 +126,21 @@ typedef struct {
     bool to_root;
 } tx_item_t;
 
-static QueueHandle_t high_queue = NULL;
-static QueueHandle_t normal_queue = NULL;
+static QueueHandle_t queue = NULL;
 
 void mesh_tx_task(void* arg) {
-    high_queue = xQueueCreate(20, sizeof(tx_item_t*));
-    normal_queue = xQueueCreate(20, sizeof(tx_item_t*));
+    queue = xQueueCreate(40, sizeof(tx_item_t*));
 
     tx_item_t* item;
     while (true) {
-        bool got =
-            (xQueueReceive(high_queue, &item, 0) == pdTRUE) ||
-            (xQueueReceive(normal_queue, &item, portMAX_DELAY) == pdTRUE);
-        if (!got) continue;
+        if (g_ota_in_progress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        if (xQueueReceive(queue, &item, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
 
         if (item->to_root) {
             mesh_send_to_node(NULL, item->msg);
@@ -175,10 +178,7 @@ void mesh_queue_to_node(mesh_app_msg_t* msg, tx_priority_t prio,
     }
     memcpy(item->msg, msg, sizeof(mesh_app_msg_t));
 
-    QueueHandle_t q = (prio == TX_PRIO_HIGH) ? high_queue : normal_queue;
-    BaseType_t sent = (prio == TX_PRIO_HIGH)
-                          ? xQueueSendToFront(q, &item, portMAX_DELAY)
-                          : xQueueSendToBack(q, &item, pdMS_TO_TICKS(100));
+    BaseType_t sent = xQueueSendToBack(queue, &item, pdMS_TO_TICKS(100));
 
     if (sent != pdTRUE) {
         ESP_LOGW(TAG, "Queue full, dropping message");

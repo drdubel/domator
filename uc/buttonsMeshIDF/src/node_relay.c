@@ -25,6 +25,64 @@ static void stats_increment_button_presses(void) {
 }
 
 // ====================
+// NVS Flash Storage for Relay States
+// ====================
+
+void relay_save_states_to_nvs(void) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open("relay_states", NVS_READWRITE, &nvs_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS for relay states: %s",
+                 esp_err_to_name(err));
+        return;
+    }
+
+    err = nvs_set_u16(nvs_handle, "outputs", g_relay_outputs);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to save relay states to NVS: %s",
+                 esp_err_to_name(err));
+    } else {
+        nvs_commit(nvs_handle);
+        ESP_LOGI(TAG, "Relay states saved to NVS");
+    }
+
+    nvs_close(nvs_handle);
+}
+
+void relay_load_states_from_nvs(void) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open("relay_states", NVS_READONLY, &nvs_handle);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "No saved relay states in NVS");
+        return;
+    }
+
+    uint16_t saved_outputs = 0;
+    err = nvs_get_u16(nvs_handle, "outputs", &saved_outputs);
+    if (err == ESP_OK) {
+        g_relay_outputs = saved_outputs;
+        ESP_LOGI(TAG, "Loaded relay states from NVS: 0x%04X", g_relay_outputs);
+        // Apply loaded states to hardware
+        if (g_board_type == BOARD_TYPE_8_RELAY) {
+            for (int i = 0; i < MAX_RELAYS_8; i++) {
+                bool state = (g_relay_outputs & (1 << i)) != 0;
+                relay_set(i, state);
+            }
+        } else {
+            for (int i = 0; i < MAX_RELAYS_16; i++) {
+                bool state = (g_relay_outputs & (1 << i)) != 0;
+                relay_set(i, state);
+            }
+        }
+    } else {
+        ESP_LOGW(TAG, "Failed to read relay states from NVS: %s",
+                 esp_err_to_name(err));
+    }
+
+    nvs_close(nvs_handle);
+}
+
+// ====================
 // Board Detection
 // ====================
 
@@ -461,5 +519,8 @@ void relay_init(void) {
 
     // Mark relay as initialized - safe to perform operations now
     g_relay_initialized = true;
+
     ESP_LOGI(TAG, "Relay initialization complete - ready for operations");
+
+    relay_load_states_from_nvs();
 }

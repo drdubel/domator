@@ -72,6 +72,8 @@ TaskHandle_t button_task_handle = NULL;
 bool g_ota_in_progress = false;
 bool g_ota_requested = false;
 
+mesh_addr_t g_broadcast_addr = {.addr = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}};
+
 // ====================
 // Device ID Generation
 // ====================
@@ -287,6 +289,7 @@ void detect_hardware_type(void) {
 void app_main(void) {
     ESP_LOGI(TAG, "Domator Mesh starting...");
 
+    // Initialize NVS
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
         ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -343,6 +346,7 @@ void app_main(void) {
     xTaskCreate(mesh_tx_task, "mesh_tx", 4096, NULL, 4, NULL);
     xTaskCreate(status_report_task, "status", 4096, NULL, 1, NULL);
     xTaskCreate(health_monitor_task, "health_monitor", 3072, NULL, 2, NULL);
+    xTaskCreate(ota_task, "ota", 8192, NULL, 10, NULL);
 
     // Start node-specific tasks
     if (g_node_type == NODE_TYPE_SWITCH_C3) {

@@ -16,9 +16,8 @@ static char g_mqtt_client_id[32] = {0};
 static char g_mqtt_lwt_message[256] = {0};
 
 // Node registry - maps device_id to mesh address
-#define MAX_NODES 64
 typedef struct {
-    uint32_t device_id;
+    uint64_t device_id;
     mesh_addr_t mesh_addr;
     char node_type[8];
     int64_t last_seen;
@@ -32,12 +31,12 @@ static int node_count = 0;
 static SemaphoreHandle_t registry_mutex = NULL;
 
 // Forward declarations
-static void route_button_to_relays(uint32_t from_id, char button, int state);
+static void route_button_to_relays(uint64_t from_id, char button, int state);
 static void handle_mqtt_command(const char* topic, int topic_len,
                                 const char* data, int data_len);
 
 // ============ NODE REGISTRY ============
-static void registry_update(uint32_t device_id, mesh_addr_t* addr,
+static void registry_update(uint64_t device_id, mesh_addr_t* addr,
                             const char* type) {
     xSemaphoreTake(registry_mutex, portMAX_DELAY);
     for (int i = 0; i < node_count; i++) {
@@ -59,9 +58,9 @@ static void registry_update(uint32_t device_id, mesh_addr_t* addr,
     xSemaphoreGive(registry_mutex);
 }
 
-static mesh_addr_t* registry_find(uint32_t device_id) {
+static mesh_addr_t* registry_find(uint64_t device_id) {
     xSemaphoreTake(registry_mutex, portMAX_DELAY);
-    for (int i = 0; i < MAX_DEVICES; i++) {
+    for (int i = 0; i < MAX_NODES; i++) {
         if (node_registry[i].device_id == device_id) {
             xSemaphoreGive(registry_mutex);
             return &node_registry[i].mesh_addr;
@@ -72,9 +71,9 @@ static mesh_addr_t* registry_find(uint32_t device_id) {
 }
 
 // Find device index by device ID
-static int registry_find_index(uint32_t device_id) {
+static int registry_find_index(uint64_t device_id) {
     xSemaphoreTake(registry_mutex, portMAX_DELAY);
-    for (int i = 0; i < MAX_DEVICES; i++) {
+    for (int i = 0; i < MAX_NODES; i++) {
         if (node_registry[i].device_id == device_id) {
             xSemaphoreGive(registry_mutex);
             return i;
@@ -84,9 +83,9 @@ static int registry_find_index(uint32_t device_id) {
     return -1;
 }
 
-static int get_button_type(uint32_t device_id, char button) {
+static int get_button_type(uint64_t device_id, char button) {
     xSemaphoreTake(g_button_types_mutex, portMAX_DELAY);
-    for (int i = 0; i < MAX_DEVICES; i++) {
+    for (int i = 0; i < MAX_NODES; i++) {
         if (g_connections[i].device_id == device_id) {
             int button_idx = button - 'a';
             if (button_idx >= 0 && button_idx < MAX_BUTTONS) {
@@ -103,7 +102,7 @@ static int get_button_type(uint32_t device_id, char button) {
 // ============ HANDLE MESH MESSAGES AS ROOT ============
 void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
     registry_update(msg->src_id, from, NULL);
-    ESP_LOGV(TAG, "Message from %" PRIu32 " (type=%c, len=%d)", msg->src_id,
+    ESP_LOGV(TAG, "Message from %" PRIu64 " (type=%c, len=%d)", msg->src_id,
              msg->msg_type, msg->data_len);
 
     switch (msg->msg_type) {
@@ -134,20 +133,20 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
             char button = msg->data[0];
             int state = (msg->data_len > 1) ? msg->data[1] - '0' : -1;
 
-            ESP_LOGI(TAG, "Button '%c' from switch %" PRIu32, button,
+            ESP_LOGI(TAG, "Button '%c' from switch %" PRIu64, button,
                      msg->src_id);
 
             int button_type = get_button_type(msg->src_id, button);
 
             if (button_type == 0 && state == 1) {
-                ESP_LOGI(TAG, "Toggle button '%c' pressed from device %" PRIu32,
+                ESP_LOGI(TAG, "Toggle button '%c' pressed from device %" PRIu64,
                          button, msg->src_id);
                 break;
             }
 
             if (g_mqtt_connected) {
                 char topic[64];
-                snprintf(topic, sizeof(topic), "/switch/state/%" PRIu32,
+                snprintf(topic, sizeof(topic), "/switch/state/%" PRIu64,
                          msg->src_id);
 
                 if (button_type == 0) {
@@ -172,12 +171,12 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
         case MSG_TYPE_RELAY_STATE: {
             char relay_char = msg->data[0];
             char state_char = msg->data[1];
-            ESP_LOGI(TAG, "Relay state '%c'='%c' from device %" PRIu32,
+            ESP_LOGI(TAG, "Relay state '%c'='%c' from device %" PRIu64,
                      relay_char, state_char, msg->src_id);
 
             if (g_mqtt_connected) {
                 char topic[64];
-                snprintf(topic, sizeof(topic), "/relay/state/%" PRIu32,
+                snprintf(topic, sizeof(topic), "/relay/state/%" PRIu64,
                          msg->src_id);
                 char payload[3] = {relay_char, state_char, '\0'};
                 ESP_LOGI(TAG, "Publishing relay state to MQTT: %s", payload);
@@ -187,7 +186,7 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
         }
 
         case MSG_TYPE_OTA_START: {
-            ESP_LOGI(TAG, "OTA update requested by device %" PRIu32,
+            ESP_LOGI(TAG, "OTA update requested by device %" PRIu64,
                      msg->src_id);
             g_ota_requested = true;
             break;
@@ -207,7 +206,7 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
         case MSG_TYPE_TYPE_INFO: {
             char type_str;
             memcpy(&type_str, msg->data, msg->data_len);
-            ESP_LOGI(TAG, "Device type info from %" PRIu32 ": %c", msg->src_id,
+            ESP_LOGI(TAG, "Device type info from %" PRIu64 ": %c", msg->src_id,
                      type_str);
             registry_update(msg->src_id, from, &type_str);
 
@@ -216,7 +215,7 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
                 sync_msg.src_id = g_device_id;
                 sync_msg.msg_type = MSG_TYPE_SYNC_REQUEST;
                 mesh_queue_to_node(&sync_msg, TX_PRIO_NORMAL, from);
-                ESP_LOGI(TAG, "Sent sync request to device %" PRIu32,
+                ESP_LOGI(TAG, "Sent sync request to device %" PRIu64,
                          msg->src_id);
             }
 
@@ -224,7 +223,7 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
         }
 
         case MSG_TYPE_PING: {
-            ESP_LOGV(TAG, "Received ping from %" PRIu32, msg->src_id);
+            ESP_LOGV(TAG, "Received ping from %" PRIu64, msg->src_id);
             int index = registry_find_index(msg->src_id);
 
             uint16_t pingNum;
@@ -241,10 +240,9 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
 
                 ESP_LOGW(TAG,
                          "Ping Pong communication test completed successfully "
-                         "with device %" PRIu32,
-                         msg->src_id);
-                ESP_LOGW(TAG, "Average ping time: %" PRId32 " ms",
-                         node_registry[index].avg_ping);
+                         "with device %" PRIu64 ". Average ping time: %" PRId32
+                         " ms",
+                         msg->src_id, node_registry[index].avg_ping);
                 break;
             }
 
@@ -254,20 +252,20 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
             pong.data_len = sizeof(uint16_t);
             memcpy(pong.data, &pingNum, sizeof(uint16_t));
             mesh_queue_to_node(&pong, TX_PRIO_HIGH, from);
-            ESP_LOGV(TAG, "Sent pong to %" PRIu32, msg->src_id);
+            ESP_LOGV(TAG, "Sent pong to %" PRIu64, msg->src_id);
             break;
         }
 
         default:
-            ESP_LOGW(TAG, "Unknown msg type from %" PRIu32 ": %c", msg->src_id,
+            ESP_LOGW(TAG, "Unknown msg type from %" PRIu64 ": %c", msg->src_id,
                      msg->msg_type);
             break;
     }
 }
 
 // ============ ROUTE BUTTON → RELAY (stub for now) ============
-static void route_button_to_relays(uint32_t from_id, char button, int state) {
-    ESP_LOGI(TAG, "Route button '%c' from %" PRIu32 " (state=%d)", button,
+static void route_button_to_relays(uint64_t from_id, char button, int state) {
+    ESP_LOGI(TAG, "Route button '%c' from %" PRIu64 " (state=%d)", button,
              from_id, state);
 
     int button_idx = button - 'a';
@@ -277,9 +275,9 @@ static void route_button_to_relays(uint32_t from_id, char button, int state) {
     }
     button_route_t* route = NULL;
     xSemaphoreTake(g_connections_mutex, portMAX_DELAY);
-    for (int i = 0; i < MAX_DEVICES; i++) {
+    for (int i = 0; i < MAX_NODES; i++) {
         if (g_connections[i].device_id == from_id) {
-            ESP_LOGI(TAG, "Found device index %d for device ID %" PRIu32, i,
+            ESP_LOGI(TAG, "Found device index %d for device ID %" PRIu64, i,
                      from_id);
             route = &g_connections[i].buttons[button_idx];
             break;
@@ -289,7 +287,7 @@ static void route_button_to_relays(uint32_t from_id, char button, int state) {
 
     if (route == NULL) {
         ESP_LOGI(TAG,
-                 "No routing configured for button '%c' from device %" PRIu32,
+                 "No routing configured for button '%c' from device %" PRIu64,
                  button, from_id);
         return;
     }
@@ -310,12 +308,12 @@ static void route_button_to_relays(uint32_t from_id, char button, int state) {
             }
             mesh_queue_to_node(&cmd, TX_PRIO_NORMAL, dest);
             ESP_LOGI(TAG,
-                     "Routed button '%c' of type %d from %" PRIu32
-                     " to relay command '%c' on device %" PRIu32,
+                     "Routed button '%c' of type %d from %" PRIu64
+                     " to relay command '%c' on device %" PRIu64,
                      button, get_button_type(from_id, button), from_id,
                      target->relay_command[0], target->target_node_id);
         } else {
-            ESP_LOGW(TAG, "No mesh address found for target device %" PRIu32,
+            ESP_LOGW(TAG, "No mesh address found for target device %" PRIu64,
                      target->target_node_id);
         }
     }
@@ -523,7 +521,7 @@ static void handle_nonJson_mqtt_root_command(const char* topic, int topic_len,
     if (data_len == 1 && data[0] == MSG_TYPE_PING) {
         // Send ping to all nodes in registry
 
-        for (int i = 0; i < MAX_DEVICES; i++) {
+        for (int i = 0; i < MAX_NODES; i++) {
             if (node_registry[i].device_id == 0 ||
                 node_registry[i].device_id == g_device_id)
                 continue;
@@ -538,7 +536,7 @@ static void handle_nonJson_mqtt_root_command(const char* topic, int topic_len,
             node_registry[index].last_ping = esp_timer_get_time() / 1000;
             mesh_queue_to_node(&ping, TX_PRIO_HIGH,
                                &node_registry[i].mesh_addr);
-            ESP_LOGV(TAG, "Sent MQTT ping to device %" PRIu32,
+            ESP_LOGV(TAG, "Sent MQTT ping to device %" PRIu64,
                      node_registry[i].device_id);
         }
     }
@@ -551,13 +549,13 @@ static void parse_json_connections(cJSON* data) {
     xSemaphoreTake(g_connections_mutex, pdMS_TO_TICKS(100));
 
     cJSON_ArrayForEach(device_item, data) {
-        if (device_index >= MAX_DEVICES) break;
+        if (device_index >= MAX_NODES) break;
 
         device_connections_t* device = &g_connections[device_index];
         memset(device, 0, sizeof(device_connections_t));
 
         // Set device_id from the JSON key
-        device->device_id = (uint32_t)strtoul(device_item->string, NULL, 10);
+        device->device_id = (uint64_t)strtoull(device_item->string, NULL, 10);
 
         cJSON* button_map = device_item;  // object with keys "a"-"x"
         cJSON* button_entry = NULL;
@@ -582,7 +580,7 @@ static void parse_json_connections(cJSON* data) {
                     if (cJSON_IsNumber(node_id_item) &&
                         cJSON_IsString(relay_item)) {
                         targets[t].target_node_id =
-                            (uint32_t)node_id_item->valuedouble;
+                            (uint64_t)node_id_item->valuedouble;
                         strncpy(targets[t].relay_command,
                                 relay_item->valuestring,
                                 sizeof(targets[t].relay_command) - 1);
@@ -608,13 +606,13 @@ static void parse_json_button_types(cJSON* data) {
     int device_index = 0;
     cJSON* device_item = NULL;
     cJSON_ArrayForEach(device_item, data) {
-        if (device_index >= MAX_DEVICES) break;
+        if (device_index >= MAX_NODES) break;
 
         button_types_t* device = &g_button_types[device_index];
         memset(device, 0, sizeof(button_types_t));
 
         // Set device_id from JSON key
-        device->device_id = (uint32_t)strtoul(device_item->string, NULL, 10);
+        device->device_id = (uint64_t)strtoull(device_item->string, NULL, 10);
 
         cJSON* button_map = device_item;  // object with keys "a"-"h"
         cJSON* button_entry = NULL;
@@ -708,10 +706,10 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
         return;
     }
 
-    uint32_t target_id = 0;
+    uint64_t target_id = 0;
 
     if (last_slash && *(last_slash + 1) != '\0') {
-        target_id = (uint32_t)strtoul(last_slash + 1, NULL, 10);
+        target_id = strtoull(last_slash + 1, NULL, 10);
     }
 
     if (data_len != 1 ||
@@ -724,7 +722,7 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
             return;
         }
 
-        ESP_LOGI(TAG, "Non-JSON command for target device %" PRIu32, target_id);
+        ESP_LOGI(TAG, "Non-JSON command for target device %" PRIu64, target_id);
 
         mesh_addr_t* dest = registry_find(target_id);
         if (dest) {
@@ -738,10 +736,10 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
             memcpy(cmd.data, data, data_len);
             cmd.data_len = data_len;
             mesh_queue_to_node(&cmd, TX_PRIO_NORMAL, dest);
-            ESP_LOGI(TAG, "Routed non-JSON MQTT command to device %" PRIu32,
+            ESP_LOGI(TAG, "Routed non-JSON MQTT command to device %" PRIu64,
                      target_id);
         } else {
-            ESP_LOGW(TAG, "Could not find target device %" PRIu32, target_id);
+            ESP_LOGW(TAG, "Could not find target device %" PRIu64, target_id);
         }
     } else if (data_len == 1 && data[0] == MSG_TYPE_OTA_START) {
         ESP_LOGI(TAG, "Received OTA start command via MQTT");
@@ -754,18 +752,18 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
             ota_cmd.src_id = g_device_id;
             ota_cmd.msg_type = MSG_TYPE_OTA_START;
             ota_cmd.target_type = device_type[0] - 'a' + 'A';
-            for (int i = 0; i < MAX_DEVICES; i++) {
+            for (int i = 0; i < MAX_NODES; i++) {
                 if (node_registry[i].device_id == 0) continue;
                 mesh_queue_to_node(&ota_cmd, TX_PRIO_HIGH,
                                    &node_registry[i].mesh_addr);
                 ESP_LOGI(TAG,
-                         "Broadcasted OTA start command to device %" PRIu32,
+                         "Broadcasted OTA start command to device %" PRIu64,
                          node_registry[i].device_id);
             }
             return;
         }
 
-        ESP_LOGI(TAG, "OTA start command for target device %" PRIu32,
+        ESP_LOGI(TAG, "OTA start command for target device %" PRIu64,
                  target_id);
         mesh_addr_t* dest = registry_find(target_id);
         if (dest) {
@@ -774,10 +772,10 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
             ota_cmd.msg_type = MSG_TYPE_OTA_START;
             ota_cmd.target_type = device_type[0] - 'a' + 'A';
             mesh_queue_to_node(&ota_cmd, TX_PRIO_HIGH, dest);
-            ESP_LOGI(TAG, "Routed OTA start command to device %" PRIu32,
+            ESP_LOGI(TAG, "Routed OTA start command to device %" PRIu64,
                      target_id);
         } else {
-            ESP_LOGW(TAG, "Could not find target device %" PRIu32, target_id);
+            ESP_LOGW(TAG, "Could not find target device %" PRIu64, target_id);
         }
     }
 }
@@ -831,7 +829,7 @@ void mqtt_init(void) {
     // Strong guard: Only root node should initialize MQTT
     if (!g_is_root) {
         ESP_LOGW(TAG,
-                 "❌ MQTT init called on NON-ROOT node (device_id: %" PRIu32
+                 "❌ MQTT init called on NON-ROOT node (device_id: %" PRIu64
                  ", layer: %d) - skipping",
                  g_device_id, g_mesh_layer);
         ESP_LOGW(TAG,
@@ -841,7 +839,7 @@ void mqtt_init(void) {
     }
 
     ESP_LOGI(TAG,
-             "✓ Initializing MQTT client (ROOT node, device_id: %" PRIu32 ")",
+             "✓ Initializing MQTT client (ROOT node, device_id: %" PRIu64 ")",
              g_device_id);
 
     // Build complete MQTT broker URI
@@ -860,7 +858,7 @@ void mqtt_init(void) {
 
     // Generate unique MQTT client ID based on device ID
     // Store in static buffer so it persists after function returns
-    snprintf(g_mqtt_client_id, sizeof(g_mqtt_client_id), "domator_%" PRIu32,
+    snprintf(g_mqtt_client_id, sizeof(g_mqtt_client_id), "domator_%" PRIu64,
              g_device_id);
     ESP_LOGI(TAG, "Using MQTT client ID: %s", g_mqtt_client_id);
 
@@ -868,7 +866,7 @@ void mqtt_init(void) {
     // disconnects Store in static buffer so it persists after function
     // returns
     snprintf(g_mqtt_lwt_message, sizeof(g_mqtt_lwt_message),
-             "{\"status\":\"disconnected\",\"device_id\":%" PRIu32
+             "{\"status\":\"disconnected\",\"device_id\":%" PRIu64
              ",\"timestamp\":%" PRId64 ",\"reason\":\"ungraceful\"}",
              g_device_id, esp_timer_get_time() / 1000000);
 

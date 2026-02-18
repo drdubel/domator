@@ -15,15 +15,13 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 
-#define CHUNK_SIZE 1024  // read 1 KB at a time
-
 static const char* TAG = "DOMATOR";
 
 // ====================
 // Global Variables
 // ====================
 
-uint32_t g_device_id = 0;
+uint64_t g_device_id = 0;
 node_type_t g_node_type = NODE_TYPE_UNKNOWN;
 char g_firmware_hash[65] = {0};
 device_stats_t g_stats = {0};
@@ -32,15 +30,15 @@ bool g_mesh_connected = false;
 bool g_mesh_started = false;
 bool g_is_root = false;
 int g_mesh_layer = 0;
-uint32_t g_parent_id = 0;
+uint64_t g_parent_id = 0;
 
 esp_mqtt_client_handle_t g_mqtt_client = NULL;
 bool g_mqtt_connected = false;
 
 // Routing configuration (root only)
-device_connections_t g_connections[MAX_DEVICES] = {0};
+device_connections_t g_connections[MAX_NODES] = {0};
 uint8_t g_num_devices = 0;
-button_types_t g_button_types[MAX_DEVICES] = {0};
+button_types_t g_button_types[MAX_NODES] = {0};
 SemaphoreHandle_t g_connections_mutex = NULL;
 SemaphoreHandle_t g_button_types_mutex = NULL;
 
@@ -61,7 +59,7 @@ const int g_relay_button_pins[NUM_RELAY_BUTTONS] = {
     RELAY_8_BUTTON_0, RELAY_8_BUTTON_1, RELAY_8_BUTTON_2, RELAY_8_BUTTON_3,
     RELAY_8_BUTTON_4, RELAY_8_BUTTON_5, RELAY_8_BUTTON_6, RELAY_8_BUTTON_7};
 SemaphoreHandle_t g_relay_mutex = NULL;
-peer_health_t g_peer_health[MAX_DEVICES] = {0};
+peer_health_t g_peer_health[MAX_NODES] = {0};
 uint8_t g_peer_count = 0;
 
 QueueHandle_t g_mesh_tx_queue = NULL;
@@ -87,9 +85,11 @@ void generate_device_id(void) {
     }
 
     // Generate device ID from last 4 bytes of MAC address
-    g_device_id = (mac[2] << 24) | (mac[3] << 16) | (mac[4] << 8) | mac[5];
+    g_device_id = (uint64_t)mac[0] << 40 | (uint64_t)mac[1] << 32 |
+                  (uint64_t)mac[2] << 24 | (uint64_t)mac[3] << 16 |
+                  (uint64_t)mac[4] << 8 | mac[5];
 
-    ESP_LOGI(TAG, "Device ID: %" PRIu32 " (MAC: %02X:%02X:%02X:%02X:%02X:%02X)",
+    ESP_LOGI(TAG, "Device ID: %" PRIu64 " (MAC: %02X:%02X:%02X:%02X:%02X:%02X)",
              g_device_id, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
 

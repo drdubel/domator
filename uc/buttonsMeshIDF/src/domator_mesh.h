@@ -37,10 +37,10 @@
 #define NUM_BUTTONS 7
 #define MAX_QUEUE_SIZE 30
 #define MESH_TX_QUEUE_SIZE 20
-#define MESH_MSG_DATA_SIZE 1024
+#define MESH_MSG_DATA_SIZE 512
 #define LOW_HEAP_THRESHOLD 40000
 #define CRITICAL_HEAP_THRESHOLD 20000
-#define MAX_DEVICES 50
+#define MAX_NODES 64
 #define MAX_ROUTES_PER_BUTTON 10
 #define MAX_BUTTONS_EXTENDED 24
 #define MAX_BUTTONS 8
@@ -126,7 +126,7 @@ typedef enum { TX_PRIO_NORMAL = 0, TX_PRIO_HIGH } tx_priority_t;
 
 // Mesh application message structure
 typedef struct {
-    uint32_t src_id;
+    uint64_t src_id;
     uint8_t msg_type;
     uint16_t data_len;
     uint32_t data_seq;
@@ -162,7 +162,7 @@ typedef struct {
 
 // Routing target for button → relay mapping
 typedef struct {
-    uint32_t target_node_id;
+    uint64_t target_node_id;
     char relay_command[2];
 } route_target_t;
 
@@ -176,20 +176,20 @@ typedef struct {
 typedef struct {
     button_route_t
         buttons[MAX_BUTTONS_EXTENDED];  // Support up to 24 buttons (a-x)
-    uint32_t device_id;
+    uint64_t device_id;
 } device_connections_t;
 
 typedef struct {
-    uint32_t device_id;
+    uint64_t device_id;
     uint8_t
         types[MAX_BUTTONS];  // Button type per button (0=toggle, 1=stateful)
 } button_types_t;
 
 // Peer health tracking
 typedef struct {
-    uint32_t device_id;
+    uint64_t device_id;
     mesh_addr_t mac_addr;  // MAC address for direct routing
-    uint32_t last_seen;
+    uint64_t last_seen;
     uint32_t disconnect_count;
     int8_t last_rssi;
     bool is_alive;
@@ -200,7 +200,7 @@ typedef struct {
 // ====================
 
 // Device info
-extern uint32_t g_device_id;
+extern uint64_t g_device_id;
 extern node_type_t g_node_type;
 extern char g_firmware_hash[65];
 extern device_stats_t g_stats;
@@ -210,17 +210,17 @@ extern bool g_mesh_connected;
 extern bool g_mesh_started;
 extern bool g_is_root;
 extern int g_mesh_layer;
-extern uint32_t g_parent_id;
+extern uint64_t g_parent_id;
 
 // MQTT (root only)
 extern esp_mqtt_client_handle_t g_mqtt_client;
 extern bool g_mqtt_connected;
 
 // Routing configuration (root only)
-extern device_connections_t g_connections[MAX_DEVICES];
+extern device_connections_t g_connections[MAX_NODES];
 extern uint8_t g_num_devices;
-extern button_types_t g_button_types[MAX_DEVICES];  // Button type per device
-                                                    // (0=toggle, 1=stateful)
+extern button_types_t g_button_types[MAX_NODES];  // Button type per device
+                                                  // (0=toggle, 1=stateful)
 extern SemaphoreHandle_t g_connections_mutex;
 extern SemaphoreHandle_t g_button_types_mutex;
 
@@ -236,7 +236,7 @@ extern button_state_t g_relay_button_states[NUM_RELAY_BUTTONS];
 extern const int g_relay_8_pins[MAX_RELAYS_8];
 extern const int g_relay_button_pins[NUM_RELAY_BUTTONS];
 extern SemaphoreHandle_t g_relay_mutex;
-extern peer_health_t g_peer_health[MAX_DEVICES];
+extern peer_health_t g_peer_health[MAX_NODES];
 extern uint8_t g_peer_count;
 
 // Queues and mutexes

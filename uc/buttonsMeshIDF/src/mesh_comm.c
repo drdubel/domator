@@ -101,13 +101,13 @@ void mesh_rx_task(void* arg) {
             }
 
             case MSG_TYPE_PING: {
-                ESP_LOGV(TAG, "Received ping from %" PRIu32, msg->src_id);
+                ESP_LOGV(TAG, "Received ping from %" PRIu64, msg->src_id);
 
                 mesh_app_msg_t pong = *msg;
                 pong.src_id = g_device_id;
                 pong.msg_type = MSG_TYPE_PING;
                 mesh_queue_to_node(&pong, TX_PRIO_HIGH, &from);
-                ESP_LOGV(TAG, "Sent pong to %" PRIu32, msg->src_id);
+                ESP_LOGV(TAG, "Sent pong to %" PRIu64, msg->src_id);
                 break;
             }
 
@@ -238,17 +238,12 @@ void node_publish_status(void) {
         ESP_LOGW(TAG, "Failed to get parent BSSID: %s", esp_err_to_name(err));
     }
 
-    uint32_t parent_id =
-        ((parent_addr.addr[2] << 24) | (parent_addr.addr[3] << 16) |
-         (parent_addr.addr[4] << 8) | parent_addr.addr[5]) -
-        1;
-
-    ESP_LOGI(TAG, "Parent ID: %" PRIu32, parent_id);
+    ESP_LOGI(TAG, "Parent ID: %" PRIu64, g_parent_id);
 
     // Build JSON status report
     cJSON_AddNumberToObject(json, "deviceId", g_device_id);
     cJSON_AddStringToObject(json, "type", type_str);
-    cJSON_AddNumberToObject(json, "parentId", parent_id);
+    cJSON_AddNumberToObject(json, "parentId", g_parent_id);
     cJSON_AddNumberToObject(json, "freeHeap", free_heap);
     cJSON_AddNumberToObject(json, "uptime", uptime);
     cJSON_AddStringToObject(json, "firmware", g_firmware_hash);

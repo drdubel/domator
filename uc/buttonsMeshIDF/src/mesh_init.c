@@ -74,6 +74,14 @@ static void mesh_event_handler(void* arg, esp_event_base_t event_base,
                          g_mesh_layer);
                 g_is_root = false;
                 node_root_stop();
+                uint8_t parent_mac[6];
+                memcpy(parent_mac, connected->connected.bssid, 6);
+                g_parent_id = ((uint64_t)parent_mac[0] << 40) |
+                              ((uint64_t)parent_mac[1] << 32) |
+                              ((uint64_t)parent_mac[2] << 24) |
+                              ((uint64_t)parent_mac[3] << 16) |
+                              ((uint64_t)parent_mac[4] << 8) | parent_mac[5];
+                ESP_LOGI(TAG, "Parent ID: %" PRIu64, g_parent_id);
             }
 
             mesh_app_msg_t* msg = calloc(1, sizeof(mesh_app_msg_t));
@@ -109,6 +117,8 @@ static void mesh_event_handler(void* arg, esp_event_base_t event_base,
 
             ESP_LOGW(TAG, "Parent disconnected - Reason: %d",
                      disconnected->reason);
+
+            g_parent_id = 0;
 
             if (g_stats_mutex &&
                 xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {

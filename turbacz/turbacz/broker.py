@@ -227,8 +227,6 @@ async def handle_root_state(payload_str):
         logger.warning(f"Unknown device type for ID {data['deviceId']}: {data['type']}")
 
     if data.get("isRoot") == 1:
-        data["name"] = "root"
-
         connection_manager.rootId = data["deviceId"]
 
     if "name" not in data:

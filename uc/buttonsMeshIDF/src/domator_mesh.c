@@ -78,7 +78,7 @@ mesh_addr_t g_broadcast_addr = {.addr = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}};
 
 void generate_device_id(void) {
     uint8_t mac[6];
-    esp_err_t ret = esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    esp_err_t ret = esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to read MAC address: %s", esp_err_to_name(ret));
         return;

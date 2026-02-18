@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import logging
@@ -21,8 +22,8 @@ from starlette.responses import HTMLResponse, RedirectResponse
 from starlette.types import ASGIApp
 
 import turbacz.auth as auth
-from turbacz.connection_manager import connection_manager, connection_router
 from turbacz.broker import mqtt
+from turbacz.connection_manager import connection_manager, connection_router
 from turbacz.settings import config
 from turbacz.state import state_manager
 from turbacz.websocket import ws_manager
@@ -378,12 +379,14 @@ async def websocket_rcm(websocket: WebSocket):
     for relay_id in connection_manager.get_relays():
         mqtt.client.publish(f"/relay/cmd/{relay_id}", "S")
 
+    await asyncio.sleep(0.1)
     await ws_manager.send_personal_message(
         {
             "type": "online_status",
             "online_relays": list(state_manager._online_relays.keys()),
             "online_switches": list(state_manager._online_switches.keys()),
             "up_to_date_devices": state_manager._up_to_date_devices,
+            "root_id": connection_manager.rootId,
         },
         websocket,
     )

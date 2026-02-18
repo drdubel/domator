@@ -43,6 +43,7 @@ async def periodic_check_devices(interval: int = 15):
                 "online_relays": list(state_manager._online_relays.keys()),
                 "online_switches": list(state_manager._online_switches.keys()),
                 "up_to_date_devices": state_manager._up_to_date_devices,
+                "root_id": connection_manager.rootId,
             },
             "/rcm/ws/",
         )
@@ -222,13 +223,13 @@ async def handle_root_state(payload_str):
 
             await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
 
-    elif data.get("is_root") == "root":
+    else:
+        logger.warning(f"Unknown device type for ID {data['deviceId']}: {data['type']}")
+
+    if data.get("isRoot") == 1:
         data["name"] = "root"
 
         connection_manager.rootId = data["deviceId"]
-
-    else:
-        logger.warning(f"Unknown device type for ID {data['deviceId']}: {data['type']}")
 
     if "name" not in data:
         return

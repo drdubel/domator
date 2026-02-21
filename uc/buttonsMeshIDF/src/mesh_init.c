@@ -294,7 +294,7 @@ void mesh_network_init(void) {
 
     ESP_ERROR_CHECK(esp_mesh_set_max_layer(CONFIG_MESH_MAX_LAYER));
 
-    ESP_ERROR_CHECK(esp_mesh_set_vote_percentage(0.9));
+    ESP_ERROR_CHECK(esp_mesh_set_vote_percentage(0.6));
 
     // Start mesh
     ESP_ERROR_CHECK(esp_mesh_start());

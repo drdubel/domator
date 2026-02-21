@@ -50,7 +50,7 @@ class ConnectionManager:
                     relay_id BIGINT REFERENCES relays(id),
                     output_id TEXT NOT NULL,
                     name TEXT NOT NULL,
-                    section_id INTEGER,
+                    section_id INTEGER REFERENCES sections(id) DEFAULT 1,
                     PRIMARY KEY (relay_id, output_id)
                 );
                 """
@@ -80,7 +80,8 @@ class ConnectionManager:
                 CREATE TABLE IF NOT EXISTS buttons (
                     switch_id BIGINT REFERENCES switches(id),
                     button_id TEXT,
-                    type INT
+                    type INT NOT NULL DEFAULT 0,
+                    PRIMARY KEY (switch_id, button_id)
                 );
                 """
             )
@@ -242,16 +243,27 @@ class ConnectionManager:
 
         self.conn.commit()
 
-    def add_output(self, relay_id: int, output_id: str, output_name: str, section_id: int = 0):
+    def add_output(self, relay_id: int, output_id: str, output_name: str, section_id: int = 1):
         with self.conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO outputs (relay_id, output_id, name, section_id)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (relay_id, output_id) DO NOTHING;
-                """,
-                (relay_id, output_id, output_name, section_id),
-            )
+            if section_id != 1:
+                cur.execute(
+                    """
+                    INSERT INTO outputs (relay_id, output_id, name, section_id)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (relay_id, output_id) DO NOTHING;
+                    """,
+                    (relay_id, output_id, output_name, section_id),
+                )
+
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO outputs (relay_id, output_id, name)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (relay_id, output_id) DO NOTHING;
+                    """,
+                    (relay_id, output_id, output_name),
+                )
 
         self.conn.commit()
 

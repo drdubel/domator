@@ -20,6 +20,7 @@ const State = {
     onlineSwitches: new Set(),
     upToDateDevices: {},
     hiddenDevices: new Set(),
+    root_id: null,
 
     // UI state
     pendingClicks: new Set(),
@@ -138,6 +139,7 @@ let zoomLevelElement = CanvasView.zoomLevelElement
 let lastDisplayedZoom = CanvasView.lastDisplayedZoom
 let rafId = CanvasView.rafId
 let isCardDragging = State.isCardDragging
+let root_id = State.root_id
 
 const API_BASE_URL = `https://${window.location.host}`
 const FIREFOX_THROTTLE_MS = 16
@@ -184,12 +186,17 @@ const wsManager = new WebSocketManager('/rcm/ws/', function (event) {
         online_relays = new Set(msg.online_relays)
         online_switches = new Set(msg.online_switches)
         up_to_date_devices = msg.up_to_date_devices || {}
+        root_id = msg.root_id || null
+        State.root_id = root_id
         State.onlineRelays = online_relays
         State.onlineSwitches = online_switches
         State.upToDateDevices = up_to_date_devices
+        clearRootHighlight()
+        highlightRoot()
         console.log('Online relays:', online_relays)
         console.log('Online switches:', online_switches)
         console.log('Up to date devices:', up_to_date_devices)
+        console.log('Root device ID:', root_id)
         updateOnlineStatus()
         return
     }
@@ -1190,6 +1197,10 @@ function highlightDevice(deviceId) {
     if (!element) return
 
     element.classList.add('highlighted')
+    // Reinforce root highlight if this is the root device
+    if (root_id && (deviceId === `switch-${root_id}` || deviceId === `relay-${root_id}`)) {
+        element.classList.add('root')
+    }
     highlightedDevice = deviceId
 
     // Dim all other devices
@@ -1332,6 +1343,22 @@ function highlightButton(switchId, buttonId) {
     })
 
     console.log('Highlighted button:', switchId, buttonId)
+}
+
+function highlightRoot() {
+    if (!root_id) return
+
+    const rootElement = document.getElementById(`relay-${root_id}`) || document.getElementById(`switch-${root_id}`)
+    if (rootElement) {
+        rootElement.classList.add('root')
+        console.log('Highlighted root device:', root_id)
+    }
+}
+
+function clearRootHighlight() {
+    document.querySelectorAll('.device-box.root').forEach(el => {
+        el.classList.remove('root')
+    })
 }
 
 function updateDevice(deviceId, deviceType) {
@@ -2200,7 +2227,7 @@ function updateOnlineStatus() {
 
     // Update all relays
     for (let relayId in relays) {
-        const element = document.getElementById(`relay - ${relayId} `)
+        const element = document.getElementById(`relay-${relayId}`)
         if (element) {
             const indicator = element.querySelector('.status-indicator')
             if (indicator) {
@@ -2320,31 +2347,32 @@ function changeSwitchState(relay_id, output_id) {
         return
     }
 
-    if (pendingClicks.has(`${relay_id} -${output_id} `)) {
+    if (pendingClicks.has(`${relay_id}-${output_id}`)) {
         return
     }
 
-    pendingClicks.add(`${relay_id} -${output_id} `)
-    var newState = lights[`${relay_id} -${output_id} `] === 1 ? 0 : 1
+    pendingClicks.add(`${relay_id}-${output_id}`)
+    var newState = lights[`${relay_id}-${output_id}`] === 1 ? 0 : 1
 
-    console.log('Changing state of', `${relay_id} -${output_id} `, 'to', newState)
+    console.log('Changing state of', `${relay_id}-${output_id}`, 'to', newState)
     var msg = JSON.stringify({ "relay_id": relay_id, "output_id": output_id, "state": newState })
     console.log(msg)
 
     if (!wsManager.send(msg)) {
-        pendingClicks.delete(`${relay_id} -${output_id} `)
+        pendingClicks.delete(`${relay_id}-${output_id}`)
+
     }
 
     setTimeout(function () {
-        pendingClicks.delete(`${relay_id} -${output_id} `)
+        pendingClicks.delete(`${relay_id}-${output_id}`)
     }, 2000)
 }
 
 function updateLightUI(relay_id, output_id, state) {
-    console.log('Updating UI for', `relay - ${relay_id} -output - ${output_id} `, 'to', state)
-    var outputElement = document.getElementById(`relay - ${relay_id} -output - ${output_id} `)
+    console.log('Updating UI for', `relay-${relay_id}-output-${output_id}`, 'to', state)
+    var outputElement = document.getElementById(`relay-${relay_id}-output-${output_id}`)
     if (!outputElement) {
-        console.warn('Output element not found:', `relay - ${relay_id} -output - ${output_id} `)
+        console.warn('Output element not found:', `relay-${relay_id}-output-${output_id}`)
         return
     }
 

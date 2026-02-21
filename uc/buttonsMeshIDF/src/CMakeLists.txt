@@ -1,0 +1,28 @@
+idf_component_register(
+    SRCS
+        "domator_mesh.c"
+        "mesh_init.c"
+        "node_switch.c"
+        "mesh_comm.c"
+        "node_root.c"
+        "node_relay.c"
+        "health_ota.c"
+        "telnet.c"
+    INCLUDE_DIRS
+        "."
+    REQUIRES
+        esp_wifi
+        nvs_flash
+        esp_netif
+        esp_event
+        esp_timer
+        esp_https_ota
+        esp_http_client
+        led_strip
+        mqtt
+        app_update
+        freertos
+        driver
+        json
+        mdns
+)

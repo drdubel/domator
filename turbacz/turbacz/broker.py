@@ -43,6 +43,7 @@ async def periodic_check_devices(interval: int = 15):
                 "online_relays": list(state_manager._online_relays.keys()),
                 "online_switches": list(state_manager._online_switches.keys()),
                 "up_to_date_devices": state_manager._up_to_date_devices,
+                "root_id": connection_manager.rootId,
             },
             "/rcm/ws/",
         )
@@ -169,7 +170,17 @@ async def handle_root_state(payload_str):
     relays = connection_manager.get_relays()
     switches = connection_manager.get_switches()
 
-    if payload_str == "connected":
+    try:
+        data = json.loads(payload_str)
+        logger.debug("Root State Data: %s", data)  # Debug log
+
+    except json.JSONDecodeError:
+        logger.error("Error processing root state JSON payload: %s", payload_str)
+        return
+
+    status = data.get("status", "")
+
+    if status == "connected":
         logger.debug("Connections: %s", connections)  # Debug log
 
         mqtt.client.publish("/switch/cmd/root", json.dumps({"type": "connections", "data": connections}))
@@ -179,12 +190,7 @@ async def handle_root_state(payload_str):
 
         return
 
-    try:
-        data = json.loads(payload_str)
-        logger.debug("Root State Data: %s", data)  # Debug log
-
-    except json.JSONDecodeError:
-        logger.error("Error processing root state JSON payload: %s", payload_str)
+    if status == "disconnected":
         return
 
     url = f"{config.monitoring.metrics}/api/v2/write"
@@ -202,22 +208,26 @@ async def handle_root_state(payload_str):
             connection_manager.add_switch(data["deviceId"], name, 3)
             await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
 
-    elif data["type"] == "relay":
+    elif data["type"] == "relay8" or data["type"] == "relay16":
         if data["deviceId"] in relays:
             data["name"] = relays[data["deviceId"]][0]  # Extract name from tuple
         else:
             name = namer.generate(category="animals")
             data["name"] = name
-            connection_manager.add_relay(data["deviceId"], name, data.get("outputs", 8))
+
+            if data["type"] == "relay8":
+                connection_manager.add_relay(data["deviceId"], name, 8)
+            else:
+                connection_manager.add_relay(data["deviceId"], name, 16)
+            connection_manager.add_switch(data["deviceId"], name, 8)
+
             await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
-
-    elif data["type"] == "root":
-        data["name"] = "root"
-
-        connection_manager.rootId = data["deviceId"]
 
     else:
         logger.warning(f"Unknown device type for ID {data['deviceId']}: {data['type']}")
+
+    if data.get("isRoot") == 1:
+        connection_manager.rootId = data["deviceId"]
 
     if "name" not in data:
         return
@@ -245,7 +255,7 @@ async def handle_root_state(payload_str):
     if not config.monitoring.send_metrics:
         return
 
-    metric_node = f"node_info,id={data['deviceId']},name={data['name']}{labels} uptime={data['uptime']},clicks={data['clicks']},free_heap={data['freeHeap']},disconnects={data['disconnects']}"
+    metric_node = f"node_info,id={data['deviceId']},name={data['name']}{labels} uptime={data['uptime']},clicks={data['clicks']},free_heap={data['freeHeap']}"
     metric_mesh = f"mesh_node,id={data['deviceId']},name={data['name']},parent={data['parentId']},parent_name={data['parent_name']},firmware={data['firmware']},type={data['type']}{labels} rssi={data['rssi']}"
 
     logger.debug(metric_node)  # Debug log

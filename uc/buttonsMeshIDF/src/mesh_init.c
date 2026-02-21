@@ -172,17 +172,45 @@ static void mesh_event_handler(void* arg, esp_event_base_t event_base,
 bool mesh_stop_and_connect_sta(uint32_t timeout_ms) {
     ESP_LOGI(TAG, "Stopping mesh...");
 
-    ESP_ERROR_CHECK(esp_mesh_stop());
-    ESP_ERROR_CHECK(esp_mesh_deinit());
+    esp_err_t err = esp_mesh_stop();
+    if (err == ESP_ERR_MESH_NOT_INIT) {
+        ESP_LOGW(TAG, "mesh is not inited");
+    } else {
+        ESP_ERROR_CHECK(err);
+    }
+
+    err = esp_mesh_deinit();
+    if (err == ESP_ERR_MESH_NOT_INIT) {
+        ESP_LOGW(TAG, "mesh deinit called but mesh not inited");
+    } else {
+        ESP_ERROR_CHECK(err);
+    }
+
+    // Unregister mesh and IP event handlers to avoid duplicate handlers
+    // when re-initializing the network later.
+    err = esp_event_handler_unregister(MESH_EVENT, ESP_EVENT_ANY_ID,
+                                       &mesh_event_handler);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_ARG &&
+        err != ESP_ERR_NOT_FOUND) {
+        ESP_ERROR_CHECK(err);
+    }
+
+    err = esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP,
+                                       &ip_event_handler);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_ARG &&
+        err != ESP_ERR_NOT_FOUND) {
+        ESP_ERROR_CHECK(err);
+    }
 
     ESP_ERROR_CHECK(esp_wifi_disconnect());
 
     wifi_config_t sta_config = {0};
 
-    strncpy((char*)sta_config.sta.ssid, CONFIG_ROUTER_SSID,
-            sizeof(sta_config.sta.ssid) - 1);
-    strncpy((char*)sta_config.sta.password, CONFIG_ROUTER_PASSWD,
-            sizeof(sta_config.sta.password) - 1);
+    sta_config.sta.channel = 0;  // auto-detect
+    strcpy((char*)sta_config.sta.ssid, CONFIG_ROUTER_SSID);
+    strcpy((char*)sta_config.sta.password, CONFIG_ROUTER_PASSWD);
+    ESP_LOGI(TAG, "STA SSID: %s", sta_config.sta.ssid);
+    ESP_LOGI(TAG, "STA PASSWORD: %s", sta_config.sta.password);
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_config));

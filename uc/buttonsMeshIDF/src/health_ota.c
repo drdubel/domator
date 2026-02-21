@@ -29,9 +29,7 @@ void ota_start_update(const char* url) {
         if (!connected) {
             ESP_LOGW(TAG, "Failed to connect to router for OTA (attempt %d)",
                      attempt);
-            mesh_network_init();
             if (attempt < max_attempts) {
-                vTaskDelay(pdMS_TO_TICKS(2000));
                 continue;
             } else {
                 ESP_LOGE(TAG,
@@ -41,8 +39,9 @@ void ota_start_update(const char* url) {
             }
         }
 
-        if (g_board_type == BOARD_TYPE_8_RELAY ||
-            g_board_type == BOARD_TYPE_16_RELAY) {
+        if ((g_board_type == BOARD_TYPE_8_RELAY ||
+             g_board_type == BOARD_TYPE_16_RELAY) &&
+            attempt == 1) {
             relay_save_states_to_nvs();
         }
 
@@ -68,9 +67,7 @@ void ota_start_update(const char* url) {
         } else {
             ESP_LOGE(TAG, "OTA update failed (attempt %d/%d): %s", attempt,
                      max_attempts, esp_err_to_name(ret));
-            mesh_network_init();
             if (attempt < max_attempts) {
-                vTaskDelay(pdMS_TO_TICKS(2000));
                 continue;
             } else {
                 ESP_LOGE(TAG, "OTA failed after %d attempts, rebooting",

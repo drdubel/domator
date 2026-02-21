@@ -66,6 +66,7 @@ QueueHandle_t g_mesh_tx_queue = NULL;
 SemaphoreHandle_t g_stats_mutex = NULL;
 
 TaskHandle_t button_task_handle = NULL;
+TaskHandle_t telnet_task_handle = NULL;
 
 bool g_ota_in_progress = false;
 bool g_ota_requested = false;
@@ -159,8 +160,6 @@ void detect_hardware_type(void) {
 #ifdef CONFIG_IDF_TARGET_ESP32C3
     ESP_LOGI(TAG, "ESP32-C3 detected - skipping hardware auto-detection");
     ESP_LOGI(TAG, "Defaulting to SWITCH_C3 mode (ESP32-C3 primary use case)");
-    ESP_LOGI(TAG,
-             "To use relay board on ESP32-C3, configure node type via NVS");
     g_node_type = NODE_TYPE_SWITCH_C3;
     return;
 #endif

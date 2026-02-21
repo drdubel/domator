@@ -7,6 +7,7 @@ idf_component_register(
         "node_root.c"
         "node_relay.c"
         "health_ota.c"
+        "telnet.c"
     INCLUDE_DIRS
         "."
     REQUIRES
@@ -23,4 +24,5 @@ idf_component_register(
         freertos
         driver
         json
+        mdns
 )

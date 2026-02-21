@@ -245,6 +245,7 @@ extern SemaphoreHandle_t g_stats_mutex;
 
 // Task handles
 extern TaskHandle_t button_task_handle;
+extern TaskHandle_t telnet_task_handle;
 
 // OTA flag
 extern bool g_ota_in_progress;
@@ -301,3 +302,9 @@ void relay_handle_command(const char* cmd_data);
 // ============ health_ota.c ============
 void ota_task(void* arg);
 void health_monitor_task(void* arg);
+
+// ============ telnet.c ============
+void telnet_task(void* arg);
+int dual_log_vprintf(const char* fmt, va_list args);
+void telnet_start(void);
+void telnet_stop(void);

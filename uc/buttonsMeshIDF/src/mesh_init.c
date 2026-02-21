@@ -1,6 +1,7 @@
 #include <stdlib.h>
 
 #include "domator_mesh.h"
+#include "mdns.h"
 
 static const char* TAG = "MESH_INIT";
 
@@ -35,6 +36,9 @@ static void ip_event_handler(void* arg, esp_event_base_t event_base,
             } else {
                 ESP_LOGI(TAG, "MQTT client already initialized, skipping");
             }
+
+            // Start mDNS for local network discovery
+            telnet_start();
         } else {
             ESP_LOGI(TAG, "Got IP but not root (layer %d), skipping MQTT init",
                      g_mesh_layer);

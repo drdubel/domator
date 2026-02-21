@@ -927,6 +927,8 @@ void node_root_stop(void) {
         ESP_LOGI(TAG, "MQTT client cleaned up");
     }
 
+    telnet_stop();  // Stop telnet server if running
+
     g_is_root = false;  // Ensure we update root status
     ESP_LOGI(TAG, "Root services stopped");
 }

@@ -196,7 +196,8 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
             if (g_mqtt_connected) {
                 char topic[64];
                 snprintf(topic, sizeof(topic), "/switch/state/root");
-                ESP_LOGI(TAG, "Publishing relay status to MQTT: %s", msg->data);
+                ESP_LOGI(TAG, "Publishing device status to MQTT: %s",
+                         msg->data);
                 esp_mqtt_client_publish(g_mqtt_client, topic, msg->data,
                                         msg->data_len, 0, 0);
             }

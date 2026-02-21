@@ -283,7 +283,7 @@ void mesh_network_init(void) {
            strlen(CONFIG_ROUTER_PASSWD));
 
     // Mesh softAP
-    cfg.mesh_ap.max_connection = CONFIG_MESH_AP_CONNECTIONS;
+    cfg.mesh_ap.max_connection = 6;
     memcpy(cfg.mesh_ap.password, CONFIG_MESH_AP_PASSWD,
            strlen(CONFIG_MESH_AP_PASSWD));
 
@@ -292,9 +292,11 @@ void mesh_network_init(void) {
     // Self-organized root election based on RSSI
     ESP_ERROR_CHECK(esp_mesh_set_self_organized(true, true));
 
-    ESP_ERROR_CHECK(esp_mesh_set_max_layer(CONFIG_MESH_MAX_LAYER));
+    ESP_ERROR_CHECK(esp_mesh_set_max_layer(4));
 
     ESP_ERROR_CHECK(esp_mesh_set_vote_percentage(0.6));
+    ESP_ERROR_CHECK(esp_mesh_set_topology(MESH_TOPO_TREE));
+    ESP_ERROR_CHECK(esp_mesh_set_root_healing_delay(10000));
 
     // Start mesh
     ESP_ERROR_CHECK(esp_mesh_start());

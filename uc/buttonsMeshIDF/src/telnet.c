@@ -38,19 +38,19 @@ void telnet_start(void) {
 }
 
 void telnet_stop(void) {
-    close(telnet_sock);
-    telnet_sock = -1;
-
-    // Restore previous log vprintf if we replaced it
-    if (prev_log_vprintf != NULL) {
-        esp_log_set_vprintf(prev_log_vprintf);
-        prev_log_vprintf = NULL;
-    }
-
-    // Disable dual logging (restore default logger)
-    esp_log_set_vprintf(NULL);
-
     if (telnet_task_handle != NULL) {
+        close(telnet_sock);
+        telnet_sock = -1;
+
+        // Restore previous log vprintf if we replaced it
+        if (prev_log_vprintf != NULL) {
+            esp_log_set_vprintf(prev_log_vprintf);
+            prev_log_vprintf = NULL;
+        }
+
+        // Disable dual logging (restore default logger)
+        esp_log_set_vprintf(NULL);
+
         vTaskDelete(telnet_task_handle);
         telnet_task_handle = NULL;
     }

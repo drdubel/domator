@@ -876,6 +876,8 @@ void mqtt_init(void) {
         .credentials.client_id = g_mqtt_client_id,
         .credentials.username = CONFIG_MQTT_USER,
         .credentials.authentication.password = CONFIG_MQTT_PASSWORD,
+        .buffer.size = 4096,
+        .buffer.out_size = 4096,
         .session.last_will =
             {
                 .topic = "/switch/state/root",

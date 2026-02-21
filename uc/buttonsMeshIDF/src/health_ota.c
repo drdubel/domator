@@ -21,35 +21,66 @@ void ota_start_update(const char* url) {
     ESP_LOGI(TAG, "Starting OTA update from: %s", url);
     g_ota_in_progress = true;
 
-    mesh_stop_and_connect_sta();
-    if (g_board_type == BOARD_TYPE_8_RELAY ||
-        g_board_type == BOARD_TYPE_16_RELAY) {
-        relay_save_states_to_nvs();
+    const int max_attempts = 3;
+    for (int attempt = 1; attempt <= max_attempts; ++attempt) {
+        ESP_LOGI(TAG, "OTA attempt %d/%d", attempt, max_attempts);
+
+        bool connected = mesh_stop_and_connect_sta(30000);
+        if (!connected) {
+            ESP_LOGW(TAG, "Failed to connect to router for OTA (attempt %d)",
+                     attempt);
+            mesh_network_init();
+            if (attempt < max_attempts) {
+                vTaskDelay(pdMS_TO_TICKS(2000));
+                continue;
+            } else {
+                ESP_LOGE(TAG,
+                         "OTA failed to connect after %d attempts, rebooting",
+                         max_attempts);
+                esp_restart();
+            }
+        }
+
+        if (g_board_type == BOARD_TYPE_8_RELAY ||
+            g_board_type == BOARD_TYPE_16_RELAY) {
+            relay_save_states_to_nvs();
+        }
+
+        // Configure HTTP client for OTA
+        esp_http_client_config_t config = {
+            .url = url,
+            .crt_bundle_attach = esp_crt_bundle_attach,
+            .timeout_ms = 10000,
+            .keep_alive_enable = true,
+        };
+
+        esp_https_ota_config_t ota_config = {
+            .http_config = &config,
+        };
+
+        ESP_LOGI(TAG, "Starting HTTPS OTA update...");
+        esp_err_t ret = esp_https_ota(&ota_config);
+
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "OTA update successful, restarting...");
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            esp_restart();
+        } else {
+            ESP_LOGE(TAG, "OTA update failed (attempt %d/%d): %s", attempt,
+                     max_attempts, esp_err_to_name(ret));
+            mesh_network_init();
+            if (attempt < max_attempts) {
+                vTaskDelay(pdMS_TO_TICKS(2000));
+                continue;
+            } else {
+                ESP_LOGE(TAG, "OTA failed after %d attempts, rebooting",
+                         max_attempts);
+                esp_restart();
+            }
+        }
     }
 
-    // Configure HTTP client for OTA
-    esp_http_client_config_t config = {
-        .url = url,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-        .timeout_ms = 10000,
-        .keep_alive_enable = true,
-    };
-
-    esp_https_ota_config_t ota_config = {
-        .http_config = &config,
-    };
-
-    ESP_LOGI(TAG, "Starting HTTPS OTA update...");
-    esp_err_t ret = esp_https_ota(&ota_config);
-
-    if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "OTA update successful, restarting...");
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        esp_restart();
-    } else {
-        ESP_LOGE(TAG, "OTA update failed: %s", esp_err_to_name(ret));
-        g_ota_in_progress = false;
-    }
+    g_ota_in_progress = false;
 }
 
 void ota_task(void* arg) {

@@ -24,7 +24,7 @@
 
 #define STATUS_REPORT_INTERVAL_MS 15000
 #define BUTTON_POLL_INTERVAL_MS 20
-#define BUTTON_DEBOUNCE_MS 5
+#define BUTTON_DEBOUNCE_MS 15
 #define BUTTON_PRESS_TIME_MS 250
 #define LED_UPDATE_INTERVAL_MS 100
 #define LED_FLASH_DURATION_MS 50
@@ -258,7 +258,9 @@ void mesh_network_init(void);
 // Returns true when the station network interface is up (we have IP
 // connectivity)
 bool domator_mesh_is_wifi_connected(void);
-void mesh_stop_and_connect_sta(void);
+// Stop mesh and switch to STA mode, try to connect to router for up to
+// `timeout_ms` milliseconds. Returns true if connected, false on timeout.
+bool mesh_stop_and_connect_sta(uint32_t timeout_ms);
 
 // node_switch.c (switch node functions)
 void button_init(void);

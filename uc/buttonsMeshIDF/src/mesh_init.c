@@ -169,7 +169,7 @@ static void mesh_event_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
-void mesh_stop_and_connect_sta(void) {
+bool mesh_stop_and_connect_sta(uint32_t timeout_ms) {
     ESP_LOGI(TAG, "Stopping mesh...");
 
     ESP_ERROR_CHECK(esp_mesh_stop());
@@ -179,8 +179,10 @@ void mesh_stop_and_connect_sta(void) {
 
     wifi_config_t sta_config = {0};
 
-    strcpy((char*)sta_config.sta.ssid, CONFIG_ROUTER_SSID);
-    strcpy((char*)sta_config.sta.password, CONFIG_ROUTER_PASSWD);
+    strncpy((char*)sta_config.sta.ssid, CONFIG_ROUTER_SSID,
+            sizeof(sta_config.sta.ssid) - 1);
+    strncpy((char*)sta_config.sta.password, CONFIG_ROUTER_PASSWD,
+            sizeof(sta_config.sta.password) - 1);
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_config));
@@ -188,12 +190,22 @@ void mesh_stop_and_connect_sta(void) {
 
     ESP_LOGI(TAG, "Connecting to router for OTA...");
 
+    uint64_t start_ms = esp_timer_get_time() / 1000;  // ms
+
     while (1) {
         wifi_ap_record_t ap_info;
         if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
             ESP_LOGI(TAG, "Connected to router: %s", ap_info.ssid);
-            break;
+            return true;
         }
+
+        if (timeout_ms > 0 &&
+            (esp_timer_get_time() / 1000) - start_ms >= timeout_ms) {
+            ESP_LOGW(TAG, "Timeout connecting to AP after %u ms",
+                     (unsigned)timeout_ms);
+            return false;
+        }
+
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }

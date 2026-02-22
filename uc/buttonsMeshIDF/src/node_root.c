@@ -23,8 +23,6 @@ typedef struct {
     int64_t last_seen;
     int64_t last_ping;
     int32_t avg_ping;
-    int64_t last_ping;
-    int32_t avg_ping;
     int outputs;
 } node_registry_entry_t;
 
@@ -164,21 +162,6 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
                     esp_mqtt_client_publish(g_mqtt_client, topic, payload, 3, 0,
                                             0);
                 }
-
-    switch (msg->msg_type) {
-        case 'B': {
-            char button = msg->data[0];
-            int state = (msg->data_len > 1) ? msg->data[1] - '0' : -1;
-
-            ESP_LOGI(TAG, "Button '%c' from switch %" PRIu32, button,
-                     msg->src_id);
-
-            if (mqtt_connected) {
-                char topic[64];
-                snprintf(topic, sizeof(topic), "/switch/state/%" PRIu32,
-                         msg->src_id);
-                char payload[2] = {button, '\0'};
-                esp_mqtt_client_publish(mqtt_client, topic, payload, 0, 0, 0);
             }
 
             route_button_to_relays(msg->src_id, button, state);
@@ -271,9 +254,6 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
             memcpy(pong.data, &pingNum, sizeof(uint16_t));
             mesh_queue_to_node(&pong, TX_PRIO_HIGH, from);
             ESP_LOGV(TAG, "Sent pong to %" PRIu64, msg->src_id);
-          
-            mesh_queue_to_node(from, &pong);
-            ESP_LOGV(TAG, "Sent pong to %" PRIu32, msg->src_id);
             break;
         }
 
@@ -483,30 +463,6 @@ static void publish_connection_status(bool connected) {
     }
 
     cJSON_Delete(json);
-  
-static void route_button_to_relays(uint32_t from_id, char button, int state) {
-    // TODO: Port your connections map routing logic here
-    // For now, just log
-    ESP_LOGI(TAG, "Route button '%c' from %" PRIu32 " (state=%d)", button,
-             from_id, state);
-
-    // Example of how it will work:
-    // mesh_addr_t *dest = registry_find(target_relay_id);
-    // if (dest) {
-    //     mesh_app_msg_t cmd = { .src_id = g_device_id, .msg_type = 'C' };
-    //     cmd.data[0] = output_letter;
-    //     cmd.data[1] = state + '0';
-    //     cmd.data_len = 2;
-    //     mesh_queue_to_node(dest, &cmd);
-    // }
-}
-
-void root_publish_status(const char* payload) {
-    if (mqtt_client && mqtt_connected) {
-        esp_mqtt_client_publish(mqtt_client, "/switch/state/root", payload, 0,
-                                0, 0);
-        ESP_LOGI(TAG, "MQTT published: %s", payload);
-    }
 }
 
 // ============ MQTT EVENT HANDLER ============
@@ -863,32 +819,6 @@ static void handle_mqtt_command(const char* topic, int topic_len,
     } else {
         handle_nonJson_mqtt_command(topic, topic_len, data, data_len);
         return;
-    }
-        ESP_LOGI(TAG, "Received root config command");
-        // Handle root-specific config commands here
-
-        if (data[0] != '{') {
-            // Not JSON - treat as simple button command for testing
-            if (data_len == 1 && data[0] == MSG_TYPE_PING) {
-                // Send ping to all nodes in registry
-
-                for (int i = 0; i < node_count; i++) {
-                    mesh_app_msg_t ping = {0};
-                    ping.src_id = g_device_id;
-                    ping.msg_type = MSG_TYPE_PING;
-                    uint16_t pingNum = 1;
-                    memcpy(ping.data, &pingNum, sizeof(uint16_t));
-                    ping.data_len = sizeof(uint16_t);
-
-                    int index = registry_find_index(node_registry[i].device_id);
-                    node_registry[index].last_ping =
-                        esp_timer_get_time() / 1000;
-                    mesh_queue_to_node(&node_registry[i].mesh_addr, &ping);
-                    ESP_LOGV(TAG, "Sent MQTT ping to device %" PRIu32,
-                             node_registry[i].device_id);
-                }
-            }
-        }
     }
 }
 

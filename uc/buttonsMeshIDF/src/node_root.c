@@ -86,7 +86,7 @@ static int registry_find_index(uint64_t device_id) {
 static int get_button_type(uint64_t device_id, char button) {
     xSemaphoreTake(g_button_types_mutex, portMAX_DELAY);
     for (int i = 0; i < MAX_NODES; i++) {
-        if (g_connections[i].device_id == device_id) {
+        if (g_button_types[i].device_id == device_id) {
             int button_idx = button - 'a';
             if (button_idx >= 0 && button_idx < MAX_BUTTONS) {
                 int type = g_button_types[i].types[button_idx];

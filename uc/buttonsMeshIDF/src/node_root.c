@@ -1,20 +1,15 @@
 #include <inttypes.h>
 #include <string.h>
 
-<<<<<<< HEAD
 #include "cJSON.h"
 #include "domator_mesh.h"
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
-=======
-#include "domator_mesh.h"
->>>>>>> 75e1902 (changed to my version)
 #include "esp_log.h"
 #include "esp_mesh.h"
 #include "mqtt_client.h"
 
 static const char* TAG = "ROOT";
-<<<<<<< HEAD
 
 // Static buffers for MQTT configuration (must persist after mqtt_init returns)
 static char g_mqtt_client_id[32] = {0};
@@ -28,23 +23,8 @@ typedef struct {
     int64_t last_seen;
     int64_t last_ping;
     int32_t avg_ping;
-=======
-static esp_mqtt_client_handle_t mqtt_client = NULL;
-static bool mqtt_connected = false;
-
-// Node registry - maps device_id to mesh address
-#define MAX_NODES 64
-typedef struct {
-    uint32_t device_id;
-    mesh_addr_t mesh_addr;
-    char node_type[8];
-    int64_t last_seen;
-<<<<<<< HEAD
->>>>>>> 75e1902 (changed to my version)
-=======
     int64_t last_ping;
     int32_t avg_ping;
->>>>>>> 0b92131 (Add ping-pong message handling and average ping calculation for mesh nodes)
     int outputs;
 } node_registry_entry_t;
 
@@ -53,20 +33,12 @@ static int node_count = 0;
 static SemaphoreHandle_t registry_mutex = NULL;
 
 // Forward declarations
-<<<<<<< HEAD
 static void route_button_to_relays(uint64_t from_id, char button, int state);
-=======
-static void route_button_to_relays(uint32_t from_id, char button, int state);
->>>>>>> 75e1902 (changed to my version)
 static void handle_mqtt_command(const char* topic, int topic_len,
                                 const char* data, int data_len);
 
 // ============ NODE REGISTRY ============
-<<<<<<< HEAD
 static void registry_update(uint64_t device_id, mesh_addr_t* addr,
-=======
-static void registry_update(uint32_t device_id, mesh_addr_t* addr,
->>>>>>> 75e1902 (changed to my version)
                             const char* type) {
     xSemaphoreTake(registry_mutex, portMAX_DELAY);
     for (int i = 0; i < node_count; i++) {
@@ -88,7 +60,6 @@ static void registry_update(uint32_t device_id, mesh_addr_t* addr,
     xSemaphoreGive(registry_mutex);
 }
 
-<<<<<<< HEAD
 static mesh_addr_t* registry_find(uint64_t device_id) {
     xSemaphoreTake(registry_mutex, portMAX_DELAY);
     for (int i = 0; i < MAX_NODES; i++) {
@@ -117,7 +88,7 @@ static int registry_find_index(uint64_t device_id) {
 static int get_button_type(uint64_t device_id, char button) {
     xSemaphoreTake(g_button_types_mutex, portMAX_DELAY);
     for (int i = 0; i < MAX_NODES; i++) {
-        if (g_connections[i].device_id == device_id) {
+        if (g_button_types[i].device_id == device_id) {
             int button_idx = button - 'a';
             if (button_idx >= 0 && button_idx < MAX_BUTTONS) {
                 int type = g_button_types[i].types[button_idx];
@@ -193,33 +164,6 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
                     esp_mqtt_client_publish(g_mqtt_client, topic, payload, 3, 0,
                                             0);
                 }
-=======
-static mesh_addr_t* registry_find(uint32_t device_id) {
-    for (int i = 0; i < node_count; i++) {
-        if (node_registry[i].device_id == device_id) {
-            return &node_registry[i].mesh_addr;
-        }
-    }
-    return NULL;
-}
-
-static int registry_find_index(uint32_t device_id) {
-    for (int i = 0; i < node_count; i++) {
-        if (node_registry[i].device_id == device_id) {
-            return i;
-        }
-    }
-    return -1;
-}
-
-// ============ HANDLE MESH MESSAGES AS ROOT ============
-void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
-    registry_update(msg->src_id, from, NULL);
-<<<<<<< HEAD
-=======
-    ESP_LOGV(TAG, "Message from %" PRIu32 " (type=%c, len=%d)", msg->src_id,
-             msg->msg_type, msg->data_len);
->>>>>>> 0b92131 (Add ping-pong message handling and average ping calculation for mesh nodes)
 
     switch (msg->msg_type) {
         case 'B': {
@@ -235,14 +179,12 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
                          msg->src_id);
                 char payload[2] = {button, '\0'};
                 esp_mqtt_client_publish(mqtt_client, topic, payload, 0, 0, 0);
->>>>>>> 75e1902 (changed to my version)
             }
 
             route_button_to_relays(msg->src_id, button, state);
             break;
         }
 
-<<<<<<< HEAD
         case MSG_TYPE_RELAY_STATE: {
             char relay_char = msg->data[0];
             char state_char = msg->data[1];
@@ -271,24 +213,14 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
             if (g_mqtt_connected) {
                 char topic[64];
                 snprintf(topic, sizeof(topic), "/switch/state/root");
-                ESP_LOGI(TAG, "Publishing device status to MQTT: %s",
+                ESP_LOGV(TAG, "Publishing device status to MQTT: %s",
                          msg->data);
                 esp_mqtt_client_publish(g_mqtt_client, topic, msg->data,
-=======
-        case 'R': {
-            if (mqtt_connected) {
-                char topic[64];
-                snprintf(topic, sizeof(topic), "/relay/state/%" PRIu32,
-                         msg->src_id);
-                esp_mqtt_client_publish(mqtt_client, topic, msg->data,
->>>>>>> 75e1902 (changed to my version)
                                         msg->data_len, 0, 0);
             }
             break;
         }
 
-<<<<<<< HEAD
-<<<<<<< HEAD
         case MSG_TYPE_TYPE_INFO: {
             char type_str;
             memcpy(&type_str, msg->data, msg->data_len);
@@ -310,10 +242,6 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
 
         case MSG_TYPE_PING: {
             ESP_LOGV(TAG, "Received ping from %" PRIu64, msg->src_id);
-=======
-        case MSG_TYPE_PING: {
-            ESP_LOGV(TAG, "Received ping from %" PRIu32, msg->src_id);
->>>>>>> 0b92131 (Add ping-pong message handling and average ping calculation for mesh nodes)
             int index = registry_find_index(msg->src_id);
 
             uint16_t pingNum;
@@ -330,16 +258,9 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
 
                 ESP_LOGW(TAG,
                          "Ping Pong communication test completed successfully "
-<<<<<<< HEAD
                          "with device %" PRIu64 ". Average ping time: %" PRId32
                          " ms",
                          msg->src_id, node_registry[index].avg_ping);
-=======
-                         "with device %" PRIu32,
-                         msg->src_id);
-                ESP_LOGW(TAG, "Average ping time: %" PRId32 " ms",
-                         node_registry[index].avg_ping);
->>>>>>> 0b92131 (Add ping-pong message handling and average ping calculation for mesh nodes)
                 break;
             }
 
@@ -348,36 +269,22 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
             pong.msg_type = MSG_TYPE_PING;
             pong.data_len = sizeof(uint16_t);
             memcpy(pong.data, &pingNum, sizeof(uint16_t));
-<<<<<<< HEAD
             mesh_queue_to_node(&pong, TX_PRIO_HIGH, from);
             ESP_LOGV(TAG, "Sent pong to %" PRIu64, msg->src_id);
-=======
-        case 'S': {
-            if (mqtt_connected) {
-                esp_mqtt_client_publish(mqtt_client, "/switch/state/root",
-                                        msg->data, msg->data_len, 0, 0);
-            }
->>>>>>> 75e1902 (changed to my version)
-=======
+          
             mesh_queue_to_node(from, &pong);
             ESP_LOGV(TAG, "Sent pong to %" PRIu32, msg->src_id);
->>>>>>> 0b92131 (Add ping-pong message handling and average ping calculation for mesh nodes)
             break;
         }
 
         default:
-<<<<<<< HEAD
             ESP_LOGW(TAG, "Unknown msg type from %" PRIu64 ": %c", msg->src_id,
-=======
-            ESP_LOGW(TAG, "Unknown msg type from %" PRIu32 ": %c", msg->src_id,
->>>>>>> 75e1902 (changed to my version)
                      msg->msg_type);
             break;
     }
 }
 
-// ============ ROUTE BUTTON → RELAY (stub for now) ============
-<<<<<<< HEAD
+// ============ ROUTE BUTTON → RELAY ============
 static void route_button_to_relays(uint64_t from_id, char button, int state) {
     ESP_LOGI(TAG, "Route button '%c' from %" PRIu64 " (state=%d)", button,
              from_id, state);
@@ -506,7 +413,7 @@ void root_publish_status(void) {
         int msg_id =
             esp_mqtt_client_publish(g_mqtt_client, topic, json_str, 0, 0, 0);
         if (msg_id >= 0) {
-            ESP_LOGI(TAG, "Published root status to %s: %s", topic, json_str);
+            ESP_LOGV(TAG, "Published root status to %s: %s", topic, json_str);
         } else {
             ESP_LOGW(TAG, "Failed to publish root status to %s", topic);
 
@@ -576,7 +483,7 @@ static void publish_connection_status(bool connected) {
     }
 
     cJSON_Delete(json);
-=======
+  
 static void route_button_to_relays(uint32_t from_id, char button, int state) {
     // TODO: Port your connections map routing logic here
     // For now, just log
@@ -600,14 +507,12 @@ void root_publish_status(const char* payload) {
                                 0, 0);
         ESP_LOGI(TAG, "MQTT published: %s", payload);
     }
->>>>>>> 75e1902 (changed to my version)
 }
 
 // ============ MQTT EVENT HANDLER ============
 static void mqtt_event_handler(void* handler_args, esp_event_base_t base,
                                int32_t event_id, void* event_data) {
     esp_mqtt_event_handle_t event = event_data;
-<<<<<<< HEAD
     static bool connection_status_published = false;
 
     switch (event_id) {
@@ -625,21 +530,10 @@ static void mqtt_event_handler(void* handler_args, esp_event_base_t base,
                 publish_connection_status(true);
                 connection_status_published = true;
             }
-=======
-    switch (event_id) {
-        case MQTT_EVENT_CONNECTED:
-            ESP_LOGI(TAG, "MQTT connected");
-            mqtt_connected = true;
-            esp_mqtt_client_subscribe(mqtt_client, "/switch/cmd/+", 0);
-            esp_mqtt_client_subscribe(mqtt_client, "/switch/cmd", 0);
-            esp_mqtt_client_subscribe(mqtt_client, "/relay/cmd/+", 0);
-            esp_mqtt_client_subscribe(mqtt_client, "/relay/cmd", 0);
->>>>>>> 75e1902 (changed to my version)
             break;
 
         case MQTT_EVENT_DISCONNECTED:
             ESP_LOGW(TAG, "MQTT disconnected");
-<<<<<<< HEAD
             g_mqtt_connected = false;
             connection_status_published = false;  // Reset for next connection
             break;
@@ -652,31 +546,20 @@ static void mqtt_event_handler(void* handler_args, esp_event_base_t base,
             ESP_LOGI(TAG, "MQTT data received: topic=%.*s, data=%.*s",
                      event->topic_len, event->topic, event->data_len,
                      event->data);
-=======
-            mqtt_connected = false;
-            break;
-
-        case MQTT_EVENT_DATA:
->>>>>>> 75e1902 (changed to my version)
             handle_mqtt_command(event->topic, event->topic_len, event->data,
                                 event->data_len);
             break;
 
-<<<<<<< HEAD
         case MQTT_EVENT_ERROR:
             ESP_LOGE(TAG, "MQTT error");
             break;
 
         default:
             ESP_LOGD(TAG, "MQTT event: %" PRId32, event_id);
-=======
-        default:
->>>>>>> 75e1902 (changed to my version)
             break;
     }
 }
 
-<<<<<<< HEAD
 // ============ HANDLE NON-JSON MQTT COMMANDS ============
 static void handle_nonJson_mqtt_root_command(const char* topic, int topic_len,
                                              const char* data, int data_len) {
@@ -762,6 +645,20 @@ static void parse_json_connections(cJSON* data) {
     xSemaphoreGive(g_connections_mutex);
 }
 
+static void print_all_button_types(void) {
+    xSemaphoreTake(g_button_types_mutex, portMAX_DELAY);
+    ESP_LOGI(TAG, "Button types for all devices:");
+    for (int i = 0; i < MAX_NODES; i++) {
+        if (g_button_types[i].device_id == 0) continue;
+        ESP_LOGI(TAG, "Device %" PRIu64 ":", g_button_types[i].device_id);
+        for (int j = 0; j < MAX_BUTTONS; j++) {
+            ESP_LOGI(TAG, "  Button %c: %d", 'a' + j,
+                     g_button_types[i].types[j]);
+        }
+    }
+    xSemaphoreGive(g_button_types_mutex);
+}
+
 static void parse_json_button_types(cJSON* data) {
     if (!data || !cJSON_IsObject(data)) return;
 
@@ -790,6 +687,8 @@ static void parse_json_button_types(cJSON* data) {
 
         device_index++;
     }
+
+    print_all_button_types();
 }
 
 static void handle_json_mqtt_root_command(const char* topic, int topic_len,
@@ -834,8 +733,7 @@ static void handle_json_mqtt_root_command(const char* topic, int topic_len,
 static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
                                         const char* data, int data_len) {
     // For now, just log unrecognized non-JSON commands
-    ESP_LOGW(TAG, "Received non-JSON MQTT command: %.*s -> %.*s", topic_len,
-             topic, data_len, data);
+    ESP_LOGW(TAG, "Received non-JSON MQTT command");
 
     // Create null-terminated copy of topic for string operations
     char topic_str[128];
@@ -943,19 +841,8 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
 }
 
 // ============ HANDLE MQTT COMMANDS ============
-=======
-// ============ HANDLE MQTT COMMANDS (stub for now) ============
->>>>>>> 75e1902 (changed to my version)
 static void handle_mqtt_command(const char* topic, int topic_len,
                                 const char* data, int data_len) {
-    // TODO: Port your mqttCallbackTask logic here
-    // Parse topic, extract node ID, route command via mesh
-    ESP_LOGI(TAG, "MQTT cmd: %.*s -> %.*s", topic_len, topic, data_len, data);
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 0b92131 (Add ping-pong message handling and average ping calculation for mesh nodes)
-
     char topic_str[128];
     int copy_len =
         (topic_len < sizeof(topic_str) - 1) ? topic_len : sizeof(topic_str) - 1;
@@ -963,7 +850,6 @@ static void handle_mqtt_command(const char* topic, int topic_len,
     topic_str[copy_len] = '\0';
 
     if (strstr(topic_str, "/switch/cmd/root") != NULL) {
-<<<<<<< HEAD
         ESP_LOGI(TAG, "Received root command");
         // Handle root-specific config commands here
 
@@ -978,9 +864,6 @@ static void handle_mqtt_command(const char* topic, int topic_len,
         handle_nonJson_mqtt_command(topic, topic_len, data, data_len);
         return;
     }
-=======
->>>>>>> 75e1902 (changed to my version)
-=======
         ESP_LOGI(TAG, "Received root config command");
         // Handle root-specific config commands here
 
@@ -1007,16 +890,11 @@ static void handle_mqtt_command(const char* topic, int topic_len,
             }
         }
     }
->>>>>>> 0b92131 (Add ping-pong message handling and average ping calculation for mesh nodes)
 }
 
 // ============ ROOT START/STOP ============
 void node_root_start(void) {
-<<<<<<< HEAD
     if (g_mqtt_client) return;
-=======
-    if (mqtt_client) return;
->>>>>>> 75e1902 (changed to my version)
 
     if (!registry_mutex) {
         registry_mutex = xSemaphoreCreateMutex();
@@ -1025,7 +903,6 @@ void node_root_start(void) {
     ESP_LOGI(TAG, "Starting root services...");
 }
 
-<<<<<<< HEAD
 // ====================
 // MQTT Initialization
 // ====================
@@ -1134,31 +1011,5 @@ void node_root_stop(void) {
     telnet_stop();  // Stop telnet server if running
 
     g_is_root = false;  // Ensure we update root status
-=======
-void node_root_mqtt_connect(void) {
-    if (mqtt_client) return;
-
-    esp_mqtt_client_config_t mqtt_cfg = {
-        .broker.address.uri = CONFIG_MQTT_BROKER_URI,
-        .credentials.username = CONFIG_MQTT_USER,
-        .credentials.authentication.password = CONFIG_MQTT_PASSWORD,
-    };
-
-    mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
-    esp_mqtt_client_register_event(mqtt_client, ESP_EVENT_ANY_ID,
-                                   mqtt_event_handler, NULL);
-    esp_mqtt_client_start(mqtt_client);
-
-    ESP_LOGI(TAG, "MQTT client started");
-}
-
-void node_root_stop(void) {
-    if (mqtt_client) {
-        esp_mqtt_client_stop(mqtt_client);
-        esp_mqtt_client_destroy(mqtt_client);
-        mqtt_client = NULL;
-        mqtt_connected = false;
-    }
->>>>>>> 75e1902 (changed to my version)
     ESP_LOGI(TAG, "Root services stopped");
 }

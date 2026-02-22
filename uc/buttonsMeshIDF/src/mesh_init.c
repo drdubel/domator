@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 #include <stdlib.h>
 
 #include "domator_mesh.h"
@@ -43,20 +42,6 @@ static void ip_event_handler(void* arg, esp_event_base_t event_base,
         } else {
             ESP_LOGI(TAG, "Got IP but not root (layer %d), skipping MQTT init",
                      g_mesh_layer);
-=======
-#include "domator_mesh.h"
-
-static const char* TAG = "MESH_INIT";
-
-static void ip_event_handler(void* arg, esp_event_base_t event_base,
-                             int32_t event_id, void* event_data) {
-    if (event_id == IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t* event = (ip_event_got_ip_t*)event_data;
-        ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
-
-        if (esp_mesh_is_root()) {
-            node_root_mqtt_connect();
->>>>>>> 75e1902 (changed to my version)
         }
     }
 }
@@ -66,7 +51,6 @@ static void mesh_event_handler(void* arg, esp_event_base_t event_base,
     switch (event_id) {
         case MESH_EVENT_STARTED:
             ESP_LOGI(TAG, "Mesh started");
-<<<<<<< HEAD
             g_mesh_started = true;
             break;
 
@@ -74,8 +58,6 @@ static void mesh_event_handler(void* arg, esp_event_base_t event_base,
             ESP_LOGI(TAG, "Mesh stopped");
             g_mesh_started = false;
             g_mesh_connected = false;
-=======
->>>>>>> 75e1902 (changed to my version)
             break;
 
         case MESH_EVENT_PARENT_CONNECTED: {
@@ -83,10 +65,7 @@ static void mesh_event_handler(void* arg, esp_event_base_t event_base,
                 (mesh_event_connected_t*)event_data;
             ESP_LOGI(TAG, "Parent connected, layer:%d", connected->self_layer);
             g_mesh_connected = true;
-<<<<<<< HEAD
             g_mesh_layer = connected->self_layer;
-=======
->>>>>>> 75e1902 (changed to my version)
 
             if (esp_mesh_is_root()) {
                 ESP_LOGI(TAG, "*** I AM ROOT ***");
@@ -94,7 +73,6 @@ static void mesh_event_handler(void* arg, esp_event_base_t event_base,
                 esp_netif_dhcpc_start(
                     esp_netif_get_handle_from_ifkey("WIFI_STA_DEF"));
                 node_root_start();
-<<<<<<< HEAD
             } else {
                 ESP_LOGI(TAG, "Not root (layer %d), ensuring MQTT is stopped",
                          g_mesh_layer);
@@ -133,14 +111,10 @@ static void mesh_event_handler(void* arg, esp_event_base_t event_base,
                      "✓ Parent connected - Layer: %d, Mesh connected, status "
                      "reports will be sent to root",
                      g_mesh_layer);
-=======
-            }
->>>>>>> 75e1902 (changed to my version)
             break;
         }
 
         case MESH_EVENT_PARENT_DISCONNECTED:
-<<<<<<< HEAD
             mesh_event_disconnected_t* disconnected =
                 (mesh_event_disconnected_t*)event_data;
             g_mesh_connected = false;
@@ -155,10 +129,6 @@ static void mesh_event_handler(void* arg, esp_event_base_t event_base,
                 g_stats.mesh_disconnects++;
                 xSemaphoreGive(g_stats_mutex);
             }
-=======
-            ESP_LOGW(TAG, "Parent disconnected");
-            g_mesh_connected = false;
->>>>>>> 75e1902 (changed to my version)
             break;
 
         case MESH_EVENT_TODS_STATE: {
@@ -203,7 +173,6 @@ static void mesh_event_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
-<<<<<<< HEAD
 bool mesh_stop_and_connect_sta(uint32_t timeout_ms) {
     ESP_LOGI(TAG, "Stopping mesh...");
 
@@ -273,8 +242,6 @@ bool mesh_stop_and_connect_sta(uint32_t timeout_ms) {
     }
 }
 
-=======
->>>>>>> 75e1902 (changed to my version)
 void mesh_network_init(void) {
     // WiFi init
     ESP_ERROR_CHECK(esp_netif_init());
@@ -289,12 +256,9 @@ void mesh_network_init(void) {
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-<<<<<<< HEAD
     // Disable WiFi power save to improve mesh performance
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
 
-=======
->>>>>>> 75e1902 (changed to my version)
     // Mesh init
     ESP_ERROR_CHECK(esp_mesh_init());
 
@@ -308,11 +272,7 @@ void mesh_network_init(void) {
     mesh_cfg_t cfg = MESH_INIT_CONFIG_DEFAULT();
 
     // Mesh ID
-<<<<<<< HEAD
     uint8_t mesh_id[6] = CONFIG_MESH_ID;
-=======
-    uint8_t mesh_id[6] = {0x77, 0x77, 0x77, 0x77, 0x77, 0x01};
->>>>>>> 75e1902 (changed to my version)
     memcpy(&cfg.mesh_id, mesh_id, 6);
 
     // Router (your WiFi AP)
@@ -323,7 +283,7 @@ void mesh_network_init(void) {
            strlen(CONFIG_ROUTER_PASSWD));
 
     // Mesh softAP
-    cfg.mesh_ap.max_connection = CONFIG_MESH_AP_CONNECTIONS;
+    cfg.mesh_ap.max_connection = 6;
     memcpy(cfg.mesh_ap.password, CONFIG_MESH_AP_PASSWD,
            strlen(CONFIG_MESH_AP_PASSWD));
 
@@ -332,13 +292,11 @@ void mesh_network_init(void) {
     // Self-organized root election based on RSSI
     ESP_ERROR_CHECK(esp_mesh_set_self_organized(true, true));
 
-    ESP_ERROR_CHECK(esp_mesh_set_max_layer(CONFIG_MESH_MAX_LAYER));
+    ESP_ERROR_CHECK(esp_mesh_set_max_layer(4));
 
-<<<<<<< HEAD
     ESP_ERROR_CHECK(esp_mesh_set_vote_percentage(0.6));
-=======
-    ESP_ERROR_CHECK(esp_mesh_set_vote_percentage(0.9));
->>>>>>> 75e1902 (changed to my version)
+    ESP_ERROR_CHECK(esp_mesh_set_topology(MESH_TOPO_TREE));
+    ESP_ERROR_CHECK(esp_mesh_set_root_healing_delay(10000));
 
     // Start mesh
     ESP_ERROR_CHECK(esp_mesh_start());

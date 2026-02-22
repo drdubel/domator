@@ -196,7 +196,7 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
             if (g_mqtt_connected) {
                 char topic[64];
                 snprintf(topic, sizeof(topic), "/switch/state/root");
-                ESP_LOGI(TAG, "Publishing device status to MQTT: %s",
+                ESP_LOGV(TAG, "Publishing device status to MQTT: %s",
                          msg->data);
                 esp_mqtt_client_publish(g_mqtt_client, topic, msg->data,
                                         msg->data_len, 0, 0);
@@ -264,7 +264,7 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
     }
 }
 
-// ============ ROUTE BUTTON → RELAY (stub for now) ============
+// ============ ROUTE BUTTON → RELAY ============
 static void route_button_to_relays(uint64_t from_id, char button, int state) {
     ESP_LOGI(TAG, "Route button '%c' from %" PRIu64 " (state=%d)", button,
              from_id, state);
@@ -393,7 +393,7 @@ void root_publish_status(void) {
         int msg_id =
             esp_mqtt_client_publish(g_mqtt_client, topic, json_str, 0, 0, 0);
         if (msg_id >= 0) {
-            ESP_LOGI(TAG, "Published root status to %s: %s", topic, json_str);
+            ESP_LOGV(TAG, "Published root status to %s: %s", topic, json_str);
         } else {
             ESP_LOGW(TAG, "Failed to publish root status to %s", topic);
 
@@ -601,6 +601,20 @@ static void parse_json_connections(cJSON* data) {
     xSemaphoreGive(g_connections_mutex);
 }
 
+static void print_all_button_types(void) {
+    xSemaphoreTake(g_button_types_mutex, portMAX_DELAY);
+    ESP_LOGI(TAG, "Button types for all devices:");
+    for (int i = 0; i < MAX_NODES; i++) {
+        if (g_button_types[i].device_id == 0) continue;
+        ESP_LOGI(TAG, "Device %" PRIu64 ":", g_button_types[i].device_id);
+        for (int j = 0; j < MAX_BUTTONS; j++) {
+            ESP_LOGI(TAG, "  Button %c: %d", 'a' + j,
+                     g_button_types[i].types[j]);
+        }
+    }
+    xSemaphoreGive(g_button_types_mutex);
+}
+
 static void parse_json_button_types(cJSON* data) {
     if (!data || !cJSON_IsObject(data)) return;
 
@@ -629,6 +643,8 @@ static void parse_json_button_types(cJSON* data) {
 
         device_index++;
     }
+
+    print_all_button_types();
 }
 
 static void handle_json_mqtt_root_command(const char* topic, int topic_len,
@@ -673,8 +689,7 @@ static void handle_json_mqtt_root_command(const char* topic, int topic_len,
 static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
                                         const char* data, int data_len) {
     // For now, just log unrecognized non-JSON commands
-    ESP_LOGW(TAG, "Received non-JSON MQTT command: %.*s -> %.*s", topic_len,
-             topic, data_len, data);
+    ESP_LOGW(TAG, "Received non-JSON MQTT command");
 
     // Create null-terminated copy of topic for string operations
     char topic_str[128];
@@ -784,10 +799,6 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
 // ============ HANDLE MQTT COMMANDS ============
 static void handle_mqtt_command(const char* topic, int topic_len,
                                 const char* data, int data_len) {
-    // TODO: Port your mqttCallbackTask logic here
-    // Parse topic, extract node ID, route command via mesh
-    ESP_LOGI(TAG, "MQTT cmd: %.*s -> %.*s", topic_len, topic, data_len, data);
-
     char topic_str[128];
     int copy_len =
         (topic_len < sizeof(topic_str) - 1) ? topic_len : sizeof(topic_str) - 1;

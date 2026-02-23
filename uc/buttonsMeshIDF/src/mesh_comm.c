@@ -284,6 +284,11 @@ void status_report_task(void* arg) {
     vTaskDelay(pdMS_TO_TICKS(5000));
 
     while (true) {
+        if (g_ota_in_progress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
         ESP_LOGI(TAG, "Status: root=%d, connected=%d, heap=%" PRIu32, g_is_root,
                  g_mesh_connected, (uint32_t)esp_get_free_heap_size());
 

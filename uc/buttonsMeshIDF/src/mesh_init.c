@@ -173,75 +173,6 @@ static void mesh_event_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
-bool mesh_stop_and_connect_sta(uint32_t timeout_ms) {
-    ESP_LOGI(TAG, "Stopping mesh...");
-
-    esp_err_t err = esp_mesh_stop();
-    if (err == ESP_ERR_MESH_NOT_INIT) {
-        ESP_LOGW(TAG, "mesh is not inited");
-    } else {
-        ESP_ERROR_CHECK(err);
-    }
-
-    err = esp_mesh_deinit();
-    if (err == ESP_ERR_MESH_NOT_INIT) {
-        ESP_LOGW(TAG, "mesh deinit called but mesh not inited");
-    } else {
-        ESP_ERROR_CHECK(err);
-    }
-
-    // Unregister mesh and IP event handlers to avoid duplicate handlers
-    // when re-initializing the network later.
-    err = esp_event_handler_unregister(MESH_EVENT, ESP_EVENT_ANY_ID,
-                                       &mesh_event_handler);
-    if (err != ESP_OK && err != ESP_ERR_INVALID_ARG &&
-        err != ESP_ERR_NOT_FOUND) {
-        ESP_ERROR_CHECK(err);
-    }
-
-    err = esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP,
-                                       &ip_event_handler);
-    if (err != ESP_OK && err != ESP_ERR_INVALID_ARG &&
-        err != ESP_ERR_NOT_FOUND) {
-        ESP_ERROR_CHECK(err);
-    }
-
-    ESP_ERROR_CHECK(esp_wifi_disconnect());
-
-    wifi_config_t sta_config = {0};
-
-    sta_config.sta.channel = 0;  // auto-detect
-    strcpy((char*)sta_config.sta.ssid, CONFIG_ROUTER_SSID);
-    strcpy((char*)sta_config.sta.password, CONFIG_ROUTER_PASSWD);
-    ESP_LOGI(TAG, "STA SSID: %s", sta_config.sta.ssid);
-    ESP_LOGI(TAG, "STA PASSWORD: %s", sta_config.sta.password);
-
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_config));
-    ESP_ERROR_CHECK(esp_wifi_connect());
-
-    ESP_LOGI(TAG, "Connecting to router for OTA...");
-
-    uint64_t start_ms = esp_timer_get_time() / 1000;  // ms
-
-    while (1) {
-        wifi_ap_record_t ap_info;
-        if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
-            ESP_LOGI(TAG, "Connected to router: %s", ap_info.ssid);
-            return true;
-        }
-
-        if (timeout_ms > 0 &&
-            (esp_timer_get_time() / 1000) - start_ms >= timeout_ms) {
-            ESP_LOGW(TAG, "Timeout connecting to AP after %u ms",
-                     (unsigned)timeout_ms);
-            return false;
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-}
-
 void mesh_network_init(void) {
     // WiFi init
     ESP_ERROR_CHECK(esp_netif_init());
@@ -291,6 +222,15 @@ void mesh_network_init(void) {
 
     // Self-organized root election based on RSSI
     ESP_ERROR_CHECK(esp_mesh_set_self_organized(true, true));
+
+    mesh_switch_parent_t switch_parent_paras = {0};
+    esp_mesh_get_switch_parent_paras(&switch_parent_paras);
+    switch_parent_paras.duration_ms = 10000;
+    switch_parent_paras.cnx_rssi = -55;
+    switch_parent_paras.select_rssi = -50;
+    switch_parent_paras.switch_rssi = -55;
+    switch_parent_paras.backoff_rssi = -70;
+    ESP_ERROR_CHECK(esp_mesh_set_switch_parent_paras(&switch_parent_paras));
 
     ESP_ERROR_CHECK(esp_mesh_set_max_layer(4));
 

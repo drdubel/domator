@@ -11,73 +11,188 @@
 
 static const char* TAG = "HEALTH_OTA";
 
-// ==================== OTA Functions ====================
-void ota_start_update(const char* url) {
-    if (url == NULL || strlen(url) == 0) {
-        ESP_LOGW(TAG, "Invalid OTA URL");
-        return;
-    }
+#define WIFI_CONNECTED_BIT BIT0
+#define WIFI_FAIL_BIT BIT1
+#define WIFI_MAX_RETRIES 5
 
-    ESP_LOGI(TAG, "Starting OTA update from: %s", url);
-    g_ota_in_progress = true;
+static EventGroupHandle_t s_wifi_event_group = NULL;
+static int s_retry_count = 0;
 
-    const int max_attempts = 3;
-    for (int attempt = 1; attempt <= max_attempts; ++attempt) {
-        ESP_LOGI(TAG, "OTA attempt %d/%d", attempt, max_attempts);
+static void wifi_event_handler(void* arg, esp_event_base_t event_base,
+                               int32_t event_id, void* event_data) {
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        ESP_LOGI(TAG, "STA started, connecting...");
+        esp_wifi_connect();
 
-        bool connected = mesh_stop_and_connect_sta(30000);
-        if (!connected) {
-            ESP_LOGW(TAG, "Failed to connect to router for OTA (attempt %d)",
-                     attempt);
-            if (attempt < max_attempts) {
-                continue;
-            } else {
-                ESP_LOGE(TAG,
-                         "OTA failed to connect after %d attempts, rebooting",
-                         max_attempts);
-                esp_restart();
-            }
-        }
-
-        if ((g_board_type == BOARD_TYPE_8_RELAY ||
-             g_board_type == BOARD_TYPE_16_RELAY) &&
-            attempt == 1) {
-            relay_save_states_to_nvs();
-        }
-
-        // Configure HTTP client for OTA
-        esp_http_client_config_t config = {
-            .url = url,
-            .crt_bundle_attach = esp_crt_bundle_attach,
-            .timeout_ms = 10000,
-            .keep_alive_enable = true,
-        };
-
-        esp_https_ota_config_t ota_config = {
-            .http_config = &config,
-        };
-
-        ESP_LOGI(TAG, "Starting HTTPS OTA update...");
-        esp_err_t ret = esp_https_ota(&ota_config);
-
-        if (ret == ESP_OK) {
-            ESP_LOGI(TAG, "OTA update successful, restarting...");
+    } else if (event_base == WIFI_EVENT &&
+               event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        wifi_event_sta_disconnected_t* disc =
+            (wifi_event_sta_disconnected_t*)event_data;
+        ESP_LOGW(TAG, "Disconnected, reason: %d", disc->reason);
+        if (s_retry_count < WIFI_MAX_RETRIES) {
             vTaskDelay(pdMS_TO_TICKS(1000));
-            esp_restart();
+            esp_wifi_connect();
+            s_retry_count++;
+            ESP_LOGI(TAG, "Retrying WiFi (%d/%d)...", s_retry_count,
+                     WIFI_MAX_RETRIES);
         } else {
-            ESP_LOGE(TAG, "OTA update failed (attempt %d/%d): %s", attempt,
-                     max_attempts, esp_err_to_name(ret));
-            if (attempt < max_attempts) {
-                continue;
-            } else {
-                ESP_LOGE(TAG, "OTA failed after %d attempts, rebooting",
-                         max_attempts);
-                esp_restart();
-            }
+            xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
         }
+
+    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t* event = (ip_event_got_ip_t*)event_data;
+        ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
+        s_retry_count = 0;
+        xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+    }
+}
+
+esp_err_t mesh_disconnect_and_ota(const char* ssid, const char* password,
+                                  const char* ota_url) {
+    esp_err_t ret;
+
+    // ── 1. Stop mesh
+    // ──────────────────────────────────────────────────────────
+    ESP_LOGI(TAG, "Stopping mesh...");
+    g_ota_in_progress =
+        true;  // Signal all tasks to pause mesh activity during OTA
+
+    // Ignore disconnect error — mesh may already be disconnected
+    esp_mesh_disconnect();
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    ret = esp_mesh_stop();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "esp_mesh_stop failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    ESP_LOGI(TAG, "Mesh stopped.");
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    // ── 2. Fully stop WiFi and destroy mesh netifs
+    // ──────────────────────────── The mesh stack leaves WiFi in AP+STA mode
+    // with mesh-owned netifs. We must stop WiFi, destroy those netifs, then
+    // rebuild cleanly.
+    ESP_LOGI(TAG, "Tearing down WiFi and mesh netifs...");
+
+    ret = esp_wifi_stop();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "esp_wifi_stop: %s", esp_err_to_name(ret));
+    }
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    ret = esp_wifi_deinit();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "esp_wifi_deinit: %s", esp_err_to_name(ret));
     }
 
-    g_ota_in_progress = false;
+    // Destroy ALL existing netifs so mesh-owned ones are gone
+    // Iterate and destroy every netif except the loopback
+    esp_netif_t* netif = esp_netif_next_unsafe(NULL);
+    while (netif != NULL) {
+        esp_netif_t* next = esp_netif_next_unsafe(netif);
+        const char* key = esp_netif_get_ifkey(netif);
+        // Skip loopback; destroy everything else (WIFI_STA_DEF, WIFI_AP_DEF,
+        // mesh netifs)
+        if (strcmp(key, "lo") != 0) {
+            ESP_LOGI(TAG, "Destroying netif: %s", key);
+            esp_netif_destroy(netif);
+        }
+        netif = next;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    // ── 3. Re-init WiFi as plain STA
+    // ──────────────────────────────────────────
+    ESP_LOGI(TAG, "Re-initialising WiFi as plain STA...");
+
+    // Create a fresh default STA netif
+    esp_netif_t* sta_netif = esp_netif_create_default_wifi_sta();
+    if (sta_netif == NULL) {
+        ESP_LOGE(TAG, "Failed to create default WiFi STA netif");
+        return ESP_FAIL;
+    }
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ret = esp_wifi_init(&cfg);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_init: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    // ── 4. Register event handlers
+    // ────────────────────────────────────────────
+    s_wifi_event_group = xEventGroupCreate();
+    s_retry_count = 0;
+
+    esp_event_handler_instance_t instance_any_id;
+    esp_event_handler_instance_t instance_got_ip;
+
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(
+        WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL,
+        &instance_any_id));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(
+        IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL,
+        &instance_got_ip));
+
+    // ── 5. Configure and start STA
+    // ────────────────────────────────────────────
+    wifi_config_t wifi_cfg = {
+        .sta =
+            {
+                .threshold.authmode = WIFI_AUTH_WPA2_PSK,
+                .pmf_cfg =
+                    {
+                        .capable = true,
+                        .required = false,
+                    },
+            },
+    };
+    strlcpy((char*)wifi_cfg.sta.ssid, ssid, sizeof(wifi_cfg.sta.ssid));
+    strlcpy((char*)wifi_cfg.sta.password, password,
+            sizeof(wifi_cfg.sta.password));
+
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg));
+    ESP_ERROR_CHECK(esp_wifi_start());  // → triggers STA_START → connect
+
+    // ── 6. Wait for IP
+    // ────────────────────────────────────────────────────────
+    ESP_LOGI(TAG, "Waiting for WiFi connection to '%s'...", ssid);
+    EventBits_t bits = xEventGroupWaitBits(
+        s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT, pdFALSE,
+        pdFALSE, pdMS_TO_TICKS(30000));
+
+    if (!(bits & WIFI_CONNECTED_BIT)) {
+        ESP_LOGE(TAG, "Failed to connect to SSID: %s", ssid);
+        ret = ESP_FAIL;
+        esp_restart();
+    }
+
+    // ── 7. HTTPS OTA
+    // ──────────────────────────────────────────────────────────
+    ESP_LOGI(TAG, "Starting OTA from: %s", ota_url);
+
+    esp_http_client_config_t http_cfg = {
+        .url = ota_url,
+        .timeout_ms = 30000,
+        .keep_alive_enable = true,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+    };
+
+    esp_https_ota_config_t ota_cfg = {
+        .http_config = &http_cfg,
+    };
+
+    ret = esp_https_ota(&ota_cfg);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "OTA complete! Rebooting...");
+        esp_restart();
+    } else {
+        ESP_LOGE(TAG, "OTA failed: %s", esp_err_to_name(ret));
+        esp_restart();
+    }
 }
 
 void ota_task(void* arg) {
@@ -103,7 +218,9 @@ void ota_task(void* arg) {
         } else if ((esp_timer_get_time() / 1000) - ota_countdown >=
                    OTA_COUNTDOWN_MS) {
             ota_countdown_active = false;
-            ota_start_update(CONFIG_OTA_URL);
+            ESP_LOGI(TAG, "OTA countdown complete, starting OTA...");
+            mesh_disconnect_and_ota(CONFIG_ROUTER_SSID, CONFIG_ROUTER_PASSWD,
+                                    CONFIG_OTA_URL);
         }
     }
 }

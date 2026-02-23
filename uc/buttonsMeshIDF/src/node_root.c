@@ -302,7 +302,7 @@ static void route_button_to_relays(uint64_t from_id, char button, int state) {
             cmd.msg_type = MSG_TYPE_COMMAND;
             cmd.data[0] = target->relay_command[0];
             if (get_button_type(from_id, button) == 1) {  // Stateful button
-                cmd.data[1] = state + '0';
+                cmd.data[1] = state ? '0' : '1';          // '0' or '1'
                 cmd.data_len = 2;
             } else {
                 cmd.data_len = 1;

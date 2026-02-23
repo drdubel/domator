@@ -793,6 +793,35 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
         } else {
             ESP_LOGW(TAG, "Could not find target device %" PRIu64, target_id);
         }
+    } else if (data_len == 1 && data[0] == MSG_TYPE_PING) {
+        ESP_LOGI(TAG, "Received MQTT ping command");
+
+        if (target_id == 0) {
+            ESP_LOGW(TAG, "Ping command missing target device ID in topic.");
+            return;
+        }
+
+        ESP_LOGI(TAG, "Ping command for target device %" PRIu64, target_id);
+        mesh_addr_t* dest = registry_find(target_id);
+        if (dest) {
+            mesh_app_msg_t ping = {0};
+            ping.src_id = g_device_id;
+            ping.msg_type = MSG_TYPE_PING;
+            uint16_t pingNum = 1;
+            memcpy(ping.data, &pingNum, sizeof(uint16_t));
+            ping.data_len = sizeof(uint16_t);
+            int index = registry_find_index(target_id);
+            node_registry[index].last_ping = esp_timer_get_time() / 1000;
+            mesh_queue_to_node(&ping, TX_PRIO_HIGH, dest);
+            ESP_LOGV(TAG, "Sent MQTT ping to device %" PRIu64, target_id);
+        } else {
+            ESP_LOGW(TAG, "Could not find target device %" PRIu64, target_id);
+        }
+    } else {
+        ESP_LOGW(TAG,
+                 "Received unrecognized non-JSON MQTT command: topic=%s, "
+                 "data=%.*s",
+                 topic_str, data_len, data);
     }
 }
 

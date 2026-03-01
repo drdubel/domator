@@ -1704,7 +1704,7 @@ function getDemoRelays() {
 
 function getDemoOutputs() {
     return {
-        1: { "1": "Warsztat 1", "2": "Warsztat 2", "3": "Kinkiet 1", "4": "Kinkiet 2", "5": "Przedpokój", "6": "Pokój Zo", "7": "Pokój Bobusi", "8": "Output 8" },
+        1: { "1": "Warsztat 1", "2": "Warsztat 2", "3": "Kinkiet 1", "4": "Kinkiet 2", "5": "Przedpokój", "6": "Pokój f", "7": "Output 7", "8": "Output 8" },
         2: { "1": "Output 1", "2": "Output 2", "3": "Output 3", "4": "Output 4", "5": "Output 5", "6": "Output 6", "7": "Output 7", "8": "Output 8" },
         3: { "1": "Spiżarnia", "2": "Output 2", "3": "Output 3", "4": "Output 4", "5": "Downlight 1", "6": "Downlight 2", "7": "Downlight 3", "8": "Downlight 4" }
     }
@@ -1713,8 +1713,8 @@ function getDemoOutputs() {
 function getDemoSwitches() {
     return {
         1: ["Wejście Do Domu", 3],
-        2: ["Pokój Bobusi", 3],
-        3: ["Pokój Zo", 3],
+        2: ["Pokój a", 3],
+        3: ["Pokój f", 3],
         4: ["Salon Wejście", 4],
         5: ["Schody Dół", 3],
         6: ["Spiżarnia Drzwi", 1]

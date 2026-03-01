@@ -255,12 +255,23 @@ body {
     justify-content: center;
 }
 
-.btn-update-root {
+.btn-upload-switch {
     background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);
     color: white;
 }
 
-.btn-update-root span {
+.btn-upload-switch span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.btn-upload-relay {
+    background: linear-gradient(135deg, #a855f7 0%, #9333ea 100%);
+    color: white;
+}
+
+.btn-upload-relay span {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -997,4 +1008,42 @@ body {
     .device-box {
         min-width: 200px;
     }
+}
+
+/* Toast notification */
+.rcm-toast {
+    position: fixed;
+    bottom: 1.5rem;
+    left: 50%;
+    transform: translateX(-50%) translateY(60px);
+    padding: 0.65rem 1.25rem;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: white;
+    background: rgba(30, 41, 59, 0.95);
+    border: 1px solid var(--border-color);
+    box-shadow: var(--shadow-xl);
+    z-index: 9999;
+    opacity: 0;
+    transition: opacity 0.25s, transform 0.25s;
+    pointer-events: none;
+    white-space: nowrap;
+}
+
+.rcm-toast.rcm-toast-visible {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+
+.rcm-toast.rcm-toast-success {
+    border-color: var(--success-color);
+    background: rgba(16, 185, 129, 0.15);
+    color: #6ee7b7;
+}
+
+.rcm-toast.rcm-toast-error {
+    border-color: var(--danger-color);
+    background: rgba(239, 68, 68, 0.15);
+    color: #fca5a5;
 }

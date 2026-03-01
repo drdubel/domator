@@ -183,19 +183,6 @@ async def rcm_page(request: Request, access_token: Optional[str] = Cookie(None))
     return Response(content=data, media_type="text/html")
 
 
-@app.get("/upload")
-async def upload_page(request: Request, access_token: Optional[str] = Cookie(None)):
-    user = auth.get_current_user(access_token)
-
-    if not user:
-        return RedirectResponse(url="/")
-
-    with open(os.path.join("static", "upload.html")) as fh:
-        data = fh.read()
-
-    return Response(content=data, media_type="text/html")
-
-
 @app.post("/upload/{device}")
 async def upload_firmware(
     request: Request,

@@ -1396,17 +1396,6 @@ function updateAllSwitches() {
     wsManager.send(msg)
 }
 
-function updateRoot() {
-    if (!wsManager.isConnected()) {
-        alert('Not connected to server')
-        return
-    }
-
-    const msg = JSON.stringify({ type: 'update_root' })
-    console.log('Updating root')
-    wsManager.send(msg)
-}
-
 function clearButtonHighlight(switchId, buttonId) {
     const buttonElement = document.getElementById(`switch-${switchId}-btn-${buttonId}`)
     if (!buttonElement) {
@@ -2712,38 +2701,47 @@ async function saveNameEdit() {
     closeModal('editNameModal')
 }
 
-async function clearAllConnections() {
-    if (!confirm('Are you sure you want to clear all connections?')) return
+function showToast(message, isError = false) {
+    const toast = document.getElementById('rcm-toast')
+    if (!toast) return
+    toast.textContent = message
+    toast.className = 'rcm-toast' + (isError ? ' rcm-toast-error' : ' rcm-toast-success')
+    toast.classList.add('rcm-toast-visible')
+    clearTimeout(toast._hideTimer)
+    toast._hideTimer = setTimeout(() => {
+        toast.classList.remove('rcm-toast-visible')
+    }, 3500)
+}
 
-    showLoading()
-
-    const removePromises = []
-
-    for (let [switchId, buttons] of Object.entries(connections)) {
-        for (let [buttonId, connList] of Object.entries(buttons)) {
-            for (let conn of connList) {
-                removePromises.push(
-                    postForm('/lights/remove_connection', {
-                        switch_id: switchId,
-                        button_id: buttonId,
-                        relay_id: conn.relayId,
-                        output_id: conn.outputId
-                    })
-                )
+function uploadFirmware(deviceType) {
+    const input = document.getElementById('firmwareFileInput')
+    input.value = ''
+    const handler = async () => {
+        input.removeEventListener('change', handler)
+        const file = input.files[0]
+        if (!file) return
+        showLoading()
+        const formData = new FormData()
+        formData.append('file', file)
+        try {
+            const res = await fetch(`/upload/${deviceType}`, {
+                method: 'POST',
+                body: formData,
+                credentials: 'include'
+            })
+            if (res.ok) {
+                showToast(`✅ ${deviceType} firmware uploaded successfully`)
+            } else {
+                showToast(`❌ Upload failed (status ${res.status})`, true)
             }
+        } catch (err) {
+            showToast(`⚠️ Error uploading: ${err.message}`, true)
+        } finally {
+            hideLoading()
         }
     }
-
-    await Promise.all(removePromises)
-
-    jsPlumbInstance.batch(() => {
-        jsPlumbInstance.deleteEveryConnection()
-    })
-    connections = {}
-    connectionLookupMap = {}
-
-    hideLoading()
-    console.log('All connections cleared')
+    input.addEventListener('change', handler)
+    input.click()
 }
 
 window.addEventListener('load', initJsPlumb)

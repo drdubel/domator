@@ -380,16 +380,7 @@ async def websocket_rcm(websocket: WebSocket):
         mqtt.client.publish(f"/relay/cmd/{relay_id}", "S")
 
     await asyncio.sleep(0.1)
-    await ws_manager.send_personal_message(
-        {
-            "type": "online_status",
-            "online_relays": list(state_manager._online_relays.keys()),
-            "online_switches": list(state_manager._online_switches.keys()),
-            "up_to_date_devices": state_manager._up_to_date_devices,
-            "root_id": connection_manager.rootId,
-        },
-        websocket,
-    )
+    await state_manager.send_online_status(websocket)
 
     async def receive_command(websocket: WebSocket):
         async for cmd in websocket.iter_json():

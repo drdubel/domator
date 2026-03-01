@@ -365,7 +365,7 @@ body {
         0 0 24px 4px rgba(2, 196, 131, 0.5),
         0 0 0 4px rgba(2, 196, 131, 0.15) inset,
         0 8px 32px -8px rgba(2, 196, 131, 0.25);
-    background: linear-gradient(135deg, rgba(2, 196, 131, 0.15) 20%, rgba(0, 0, 0, 0.95) 100%);
+    background: linear-gradient(135deg, rgba(2, 196, 131, 0.15) 20%, rgba(0, 0, 0, 1) 100%);
     overflow: visible;
     box-sizing: border-box;
     word-break: break-word;

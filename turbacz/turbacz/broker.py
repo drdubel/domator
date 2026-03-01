@@ -37,18 +37,7 @@ async def periodic_check_devices(interval: int = 15):
         except Exception as e:
             print(f"Error checking relays/switches: {e}")
 
-        await ws_manager.broadcast(
-            {
-                "type": "online_status",
-                "online_relays": list(state_manager._online_relays.keys()),
-                "online_switches": list(state_manager._online_switches.keys()),
-                "up_to_date_devices": state_manager._up_to_date_devices,
-                "devices_rssi": state_manager.get_devices_rssi(),
-                "root_id": connection_manager.rootId,
-            },
-            "/rcm/ws/",
-        )
-
+        await state_manager.send_online_status()
         await asyncio.sleep(interval)
 
 

@@ -1420,7 +1420,19 @@ function clearButtonHighlight(switchId, buttonId) {
         return
     }
 
-    buttonElement.style.background = ''
+    // Get the custom color if set, otherwise use default blue
+    let targetColor = '#6366f1' // default blue
+    if (switches[switchId] && switches[switchId].color) {
+        targetColor = switches[switchId].color
+    }
+
+    // Convert hex color to rgba for gradient
+    const r = parseInt(targetColor.slice(1, 3), 16)
+    const g = parseInt(targetColor.slice(3, 5), 16)
+    const b = parseInt(targetColor.slice(5, 7), 16)
+
+    // Restore to switch's color gradient
+    buttonElement.style.background = `linear-gradient(135deg, ${targetColor}33 0%, ${targetColor}55 100%)`
     buttonElement.style.transition = ''
     console.log('Cleared button highlight:', switchId, buttonId)
 }

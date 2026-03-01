@@ -1,6 +1,7 @@
 import hashlib
 from time import time
 
+from turbacz.connection_manager import connection_manager
 from turbacz.websocket import ws_manager
 
 
@@ -40,14 +41,38 @@ class StateManager:
             "/lights/ws/",
         )
 
+    async def send_online_status(self, websocket=None):
+        if websocket:
+            await ws_manager.send_personal_message(
+                {
+                    "type": "online_status",
+                    "online_relays": list(self._online_relays.keys()),
+                    "online_switches": list(self._online_switches.keys()),
+                    "up_to_date_devices": self._up_to_date_devices,
+                    "devices_rssi": self._devices_rssi,
+                    "root_id": connection_manager.rootId,
+                },
+                websocket,
+            )
+
+        else:
+            await ws_manager.broadcast(
+                {
+                    "type": "online_status",
+                    "online_relays": list(self._online_relays.keys()),
+                    "online_switches": list(self._online_switches.keys()),
+                    "up_to_date_devices": self._up_to_date_devices,
+                    "devices_rssi": self._devices_rssi,
+                    "root_id": connection_manager.rootId,
+                },
+                "/rcm/ws/",
+            )
+
     def set_device_rssi(self, device_id: int, rssi: int):
         self._devices_rssi[device_id] = rssi
 
     def get_device_rssi(self, device_id: int) -> int | None:
         return self._devices_rssi.get(device_id)
-
-    def get_devices_rssi(self) -> dict[int, int]:
-        return self._devices_rssi.copy()
 
     def set_up_to_date_firmware_version(self, device_type: str, version: str):
         self._up_to_date_firmware_versions[device_type] = version

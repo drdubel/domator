@@ -1,3 +1,21 @@
+/**
+ * @file health_ota.c
+ * @brief Device health monitoring and Over-The-Air (OTA) firmware update.
+ *
+ * Health monitoring:
+ *  - health_monitor_task() runs every 5 seconds, logs warnings when free heap
+ *    falls below LOW_HEAP_THRESHOLD or CRITICAL_HEAP_THRESHOLD, and increments
+ *    the corresponding statistics counters.
+ *
+ * OTA update flow:
+ *  1. Any node can request an OTA by setting g_ota_requested (via mesh message
+ *     or MQTT command).  ota_task() monitors this flag.
+ *  2. After a short countdown (OTA_COUNTDOWN_MS) to drain in-flight messages,
+ *     mesh_disconnect_and_ota() is called.
+ *  3. The mesh and WiFi stacks are torn down cleanly, the device reconnects as
+ *     a plain STA, downloads the firmware via HTTPS OTA, and reboots.
+ */
+
 #include <inttypes.h>
 #include <string.h>
 
@@ -18,6 +36,15 @@ static const char* TAG = "HEALTH_OTA";
 static EventGroupHandle_t s_wifi_event_group = NULL;
 static int s_retry_count = 0;
 
+// ====================
+// WiFi Event Handler (OTA)
+// ====================
+
+/**
+ * @brief Handle WiFi and IP events used exclusively during OTA Wi-Fi setup.
+ *        Retries connection up to WIFI_MAX_RETRIES times, then signals failure
+ *        via the s_wifi_event_group event bits.
+ */
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                int32_t event_id, void* event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
@@ -47,17 +74,30 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
+// ====================
+// Mesh Teardown and OTA
+// ====================
+
+/**
+ * @brief Stop the mesh stack, switch to plain STA mode, and perform HTTPS OTA.
+ *
+ * This function does not return on success (esp_restart() is called after a
+ * successful flash).  On WiFi connection failure or OTA error, the device also
+ * restarts to recover gracefully.
+ *
+ * @param ssid     SSID of the router to connect to for the OTA download.
+ * @param password Router WiFi password.
+ * @param ota_url  HTTPS URL of the firmware binary.
+ * @return Never returns on success.  Returns ESP_FAIL if WiFi setup fails
+ *         before the restart call is reached.
+ */
 esp_err_t mesh_disconnect_and_ota(const char* ssid, const char* password,
                                   const char* ota_url) {
     esp_err_t ret;
 
-    // ── 1. Stop mesh
-    // ──────────────────────────────────────────────────────────
     ESP_LOGI(TAG, "Stopping mesh...");
-    g_ota_in_progress =
-        true;  // Signal all tasks to pause mesh activity during OTA
+    g_ota_in_progress = true;
 
-    // Ignore disconnect error — mesh may already be disconnected
     esp_mesh_disconnect();
     vTaskDelay(pdMS_TO_TICKS(200));
 
@@ -69,10 +109,6 @@ esp_err_t mesh_disconnect_and_ota(const char* ssid, const char* password,
     ESP_LOGI(TAG, "Mesh stopped.");
     vTaskDelay(pdMS_TO_TICKS(500));
 
-    // ── 2. Fully stop WiFi and destroy mesh netifs
-    // ──────────────────────────── The mesh stack leaves WiFi in AP+STA mode
-    // with mesh-owned netifs. We must stop WiFi, destroy those netifs, then
-    // rebuild cleanly.
     ESP_LOGI(TAG, "Tearing down WiFi and mesh netifs...");
 
     ret = esp_wifi_stop();
@@ -86,14 +122,10 @@ esp_err_t mesh_disconnect_and_ota(const char* ssid, const char* password,
         ESP_LOGW(TAG, "esp_wifi_deinit: %s", esp_err_to_name(ret));
     }
 
-    // Destroy ALL existing netifs so mesh-owned ones are gone
-    // Iterate and destroy every netif except the loopback
     esp_netif_t* netif = esp_netif_next_unsafe(NULL);
     while (netif != NULL) {
         esp_netif_t* next = esp_netif_next_unsafe(netif);
         const char* key = esp_netif_get_ifkey(netif);
-        // Skip loopback; destroy everything else (WIFI_STA_DEF, WIFI_AP_DEF,
-        // mesh netifs)
         if (strcmp(key, "lo") != 0) {
             ESP_LOGI(TAG, "Destroying netif: %s", key);
             esp_netif_destroy(netif);
@@ -103,11 +135,8 @@ esp_err_t mesh_disconnect_and_ota(const char* ssid, const char* password,
 
     vTaskDelay(pdMS_TO_TICKS(200));
 
-    // ── 3. Re-init WiFi as plain STA
-    // ──────────────────────────────────────────
     ESP_LOGI(TAG, "Re-initialising WiFi as plain STA...");
 
-    // Create a fresh default STA netif
     esp_netif_t* sta_netif = esp_netif_create_default_wifi_sta();
     if (sta_netif == NULL) {
         ESP_LOGE(TAG, "Failed to create default WiFi STA netif");
@@ -121,8 +150,6 @@ esp_err_t mesh_disconnect_and_ota(const char* ssid, const char* password,
         return ret;
     }
 
-    // ── 4. Register event handlers
-    // ────────────────────────────────────────────
     s_wifi_event_group = xEventGroupCreate();
     s_retry_count = 0;
 
@@ -136,8 +163,6 @@ esp_err_t mesh_disconnect_and_ota(const char* ssid, const char* password,
         IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL,
         &instance_got_ip));
 
-    // ── 5. Configure and start STA
-    // ────────────────────────────────────────────
     wifi_config_t wifi_cfg = {
         .sta =
             {
@@ -155,10 +180,8 @@ esp_err_t mesh_disconnect_and_ota(const char* ssid, const char* password,
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg));
-    ESP_ERROR_CHECK(esp_wifi_start());  // → triggers STA_START → connect
+    ESP_ERROR_CHECK(esp_wifi_start());
 
-    // ── 6. Wait for IP
-    // ────────────────────────────────────────────────────────
     ESP_LOGI(TAG, "Waiting for WiFi connection to '%s'...", ssid);
     EventBits_t bits = xEventGroupWaitBits(
         s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT, pdFALSE,
@@ -170,8 +193,6 @@ esp_err_t mesh_disconnect_and_ota(const char* ssid, const char* password,
         esp_restart();
     }
 
-    // ── 7. HTTPS OTA
-    // ──────────────────────────────────────────────────────────
     ESP_LOGI(TAG, "Starting OTA from: %s", ota_url);
 
     esp_http_client_config_t http_cfg = {
@@ -195,6 +216,10 @@ esp_err_t mesh_disconnect_and_ota(const char* ssid, const char* password,
     }
 }
 
+/**
+ * @brief FreeRTOS task: watch for g_ota_requested and trigger OTA after
+ *        a countdown.
+ */
 void ota_task(void* arg) {
     uint32_t ota_countdown = 0;
     bool ota_countdown_active = false;
@@ -213,7 +238,7 @@ void ota_task(void* arg) {
         }
 
         if (!ota_countdown_active) {
-            ota_countdown = esp_timer_get_time() / 1000;  // ms
+            ota_countdown = esp_timer_get_time() / 1000;
             continue;
         } else if ((esp_timer_get_time() / 1000) - ota_countdown >=
                    OTA_COUNTDOWN_MS) {
@@ -225,7 +250,14 @@ void ota_task(void* arg) {
     }
 }
 
-// ==================== Health Monitoring ====================
+// ====================
+// Health Monitoring
+// ====================
+
+/**
+ * @brief FreeRTOS task: monitor free heap every 5 seconds and update
+ *        low/critical heap statistics.
+ */
 void health_monitor_task(void* arg) {
     ESP_LOGI(TAG, "Health monitor task started");
 
@@ -234,18 +266,16 @@ void health_monitor_task(void* arg) {
 
     while (1) {
         if (g_ota_in_progress) {
-            vTaskDelay(pdMS_TO_TICKS(5000));  // Check every 5 seconds
+            vTaskDelay(pdMS_TO_TICKS(5000));
             continue;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(5000));  // Check every 5 seconds
+        vTaskDelay(pdMS_TO_TICKS(5000));
 
         uint32_t free_heap = esp_get_free_heap_size();
-        uint32_t current_time = esp_timer_get_time() / 1000;  // ms
+        uint32_t current_time = esp_timer_get_time() / 1000;
 
-        // Check for low heap
         if (free_heap < LOW_HEAP_THRESHOLD) {
-            // Log at most once per minute
             if (current_time - last_low_heap_log > 60000) {
                 ESP_LOGW(TAG, "Low heap detected: %lu bytes free", free_heap);
                 last_low_heap_log = current_time;
@@ -258,9 +288,7 @@ void health_monitor_task(void* arg) {
             }
         }
 
-        // Check for critical heap
         if (free_heap < CRITICAL_HEAP_THRESHOLD) {
-            // Log at most once per minute
             if (current_time - last_critical_heap_log > 60000) {
                 ESP_LOGE(TAG, "CRITICAL heap level: %lu bytes free", free_heap);
                 last_critical_heap_log = current_time;

@@ -1246,25 +1246,19 @@ function highlightDevice(deviceId) {
             })
         }
 
-        if (sourceId.startsWith(deviceId)) {
-            const targetMatch = targetId.match(/^(relay-\d+|switch-\d+)/)
-            if (targetMatch) {
-                const targetElement = document.getElementById(targetMatch[1])
-                if (targetElement) {
-                    targetElement.classList.add('highlighted')
-                    targetElement.style.opacity = '1'
+        // Highlight the other end of the connection (whichever side is not the current device)
+        const sourceDeviceMatch = sourceId.match(/^(relay-\d+|switch-\d+)/)
+        const targetDeviceMatch = targetId.match(/^(relay-\d+|switch-\d+)/)
+
+        [sourceDeviceMatch, targetDeviceMatch].forEach(match => {
+            if (match && match[1] !== deviceId) {
+                const el = document.getElementById(match[1])
+                if (el) {
+                    el.classList.add('highlighted')
+                    el.style.opacity = '1'
                 }
             }
-        } else {
-            const sourceMatch = sourceId.match(/^(relay-\d+|switch-\d+)/)
-            if (sourceMatch) {
-                const sourceElement = document.getElementById(sourceMatch[1])
-                if (sourceElement) {
-                    sourceElement.classList.add('highlighted')
-                    sourceElement.style.opacity = '1'
-                }
-            }
-        }
+        })
     })
 
     console.log('Highlighted device:', deviceId)
@@ -1425,11 +1419,6 @@ function clearButtonHighlight(switchId, buttonId) {
     if (switches[switchId] && switches[switchId].color) {
         targetColor = switches[switchId].color
     }
-
-    // Convert hex color to rgba for gradient
-    const r = parseInt(targetColor.slice(1, 3), 16)
-    const g = parseInt(targetColor.slice(3, 5), 16)
-    const b = parseInt(targetColor.slice(5, 7), 16)
 
     // Restore to switch's color gradient
     buttonElement.style.background = `linear-gradient(135deg, ${targetColor}33 0%, ${targetColor}55 100%)`
@@ -2348,7 +2337,7 @@ function createConnection(switchId, buttonId, relayId, outputId) {
 
         // Update lookup map for fast highlighting
         const switchDeviceId = `switch-${switchId}`
-        const relayDeviceId = `relay - ${relayId} `
+        const relayDeviceId = `relay-${relayId}`
 
         if (!connectionLookupMap[switchDeviceId]) connectionLookupMap[switchDeviceId] = []
         if (!connectionLookupMap[relayDeviceId]) connectionLookupMap[relayDeviceId] = []

@@ -17,6 +17,7 @@ const State = {
 
     // Status tracking
     devicesRssi: {},
+    pingTimes: {},
     onlineRelays: new Set(),
     onlineSwitches: new Set(),
     upToDateDevices: {},
@@ -116,6 +117,7 @@ let relays = State.relays
 let connections = State.connections
 let lights = State.lights
 let devices_rssi = State.devicesRssi
+let devices_ping_times = State.pingTimes
 let online_relays = State.onlineRelays
 let online_switches = State.onlineSwitches
 let up_to_date_devices = State.upToDateDevices
@@ -190,16 +192,19 @@ const wsManager = new WebSocketManager('/rcm/ws/', function (event) {
         up_to_date_devices = msg.up_to_date_devices || {}
         root_id = msg.root_id || null
         devices_rssi = msg.devices_rssi || {}
+        devices_ping_times = msg.ping_times || {}
         State.root_id = root_id
         State.onlineRelays = online_relays
         State.onlineSwitches = online_switches
         State.upToDateDevices = up_to_date_devices
         State.devicesRssi = devices_rssi
+        State.pingTimes = devices_ping_times
         console.log('Online relays:', online_relays)
         console.log('Online switches:', online_switches)
         console.log('Up to date devices:', up_to_date_devices)
         console.log('Root device ID:', root_id)
         console.log('Devices RSSI:', devices_rssi)
+        console.log('Ping times:', devices_ping_times)
         clearRootHighlight()
         highlightRoot()
         updateOnlineStatus()
@@ -1848,6 +1853,9 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
 
     const rssiSwitch = devices_rssi[switchId]
     const rssiTitleSwitch = rssiSwitch !== undefined ? `RSSI: ${rssiSwitch} dBm` : 'RSSI: N/A'
+    const pingSwitch = devices_ping_times[switchId]
+    const pingTextSwitch = pingSwitch !== undefined ? `${pingSwitch} ms` : '-'
+    const pingTitleSwitch = pingSwitch !== undefined ? `Ping: ${pingSwitch} ms` : 'Ping: N/A'
 
     switchDiv.innerHTML = `
                 <div class="device-header">
@@ -1863,6 +1871,7 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
                 </div>
                 <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
                     <div class="device-name device-name-switch-${switchId}" style="flex: 1; margin-bottom: 0; cursor: pointer;">${switchName}</div>
+                    <span class="ping-time ping-time-switch-${switchId}" title="${pingTitleSwitch}" style="font-size: 0.7rem; color: #94a3b8; white-space: nowrap;">${pingTextSwitch}</span>
                     <span class="signal-icon signal-icon-switch-${switchId}" title="${rssiTitleSwitch}">${getRssiIcon(rssiSwitch)}</span>
                     <button class="color-btn" onclick="event.stopPropagation(); showColorPicker(${switchId})" title="Change Color">🎨</button>
                 </div>
@@ -2257,6 +2266,12 @@ function updateOnlineStatus() {
                 const rssi = devices_rssi[parseInt(switchId)]
                 rssiIcon.innerHTML = getRssiIcon(rssi)
                 rssiIcon.title = rssi !== undefined ? `RSSI: ${rssi} dBm` : 'RSSI: N/A'
+            }
+            const pingSpan = element.querySelector(`.ping-time-switch-${switchId}`)
+            if (pingSpan) {
+                const ping = devices_ping_times[parseInt(switchId)]
+                pingSpan.textContent = ping !== undefined ? `${ping} ms` : '-'
+                pingSpan.title = ping !== undefined ? `Ping: ${ping} ms` : 'Ping: N/A'
             }
         }
     }

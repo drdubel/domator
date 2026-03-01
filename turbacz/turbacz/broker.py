@@ -135,18 +135,27 @@ async def handle_switch_state(payload_str, topic):
     """
     try:
         switch_id = topic.split("/")[-1]
-        button_id = payload_str[0]
 
-        logger.debug("Switch ID: %s, Button ID: %s", switch_id, button_id)  # Debug log
+        if payload_str[0].isalpha():
+            button_id = payload_str[0]
 
-        await ws_manager.broadcast(
-            {
-                "type": "switch_state",
-                "switch_id": switch_id,
-                "button_id": button_id,
-            },
-            "/rcm/ws/",
-        )
+            logger.debug("Switch ID: %s, Button ID: %s", switch_id, button_id)  # Debug log
+
+            await ws_manager.broadcast(
+                {
+                    "type": "switch_state",
+                    "switch_id": switch_id,
+                    "button_id": button_id,
+                },
+                "/rcm/ws/",
+            )
+
+        else:
+            ping_time = int(payload_str)
+
+            logger.debug("Switch ID: %s, Ping Time: %d ms", switch_id, ping_time)  # Debug log
+
+            state_manager.update_device_ping(switch_id, ping_time)
 
     except ValueError as e:
         logger.error("Error processing switch state: %s", e)

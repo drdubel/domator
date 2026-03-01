@@ -1,9 +1,33 @@
+/**
+ * @file mesh_comm.c
+ * @brief Mesh communication layer: RX/TX tasks, message queuing, and periodic
+ *        status reporting.
+ *
+ * Provides:
+ *  - mesh_send_to_node()   – thin wrapper around esp_mesh_send().
+ *  - mesh_rx_task()        – receives packets and dispatches to root or leaf
+ *                            handler.
+ *  - mesh_tx_task()        – drains a queue of outbound packets.
+ *  - mesh_queue_to_node()  – thread-safe enqueue for any task.
+ *  - node_publish_status() – build and send a JSON status report.
+ *  - status_report_task()  – periodic wrapper that calls the above.
+ */
+
 #include "cJSON.h"
 #include "domator_mesh.h"
 
 static const char* TAG = "MESH_COMM";
 
-// ============ SEND TO SPECIFIC NODE ============
+// ====================
+// Send to Specific Node
+// ====================
+
+/**
+ * @brief Send a mesh application message to a specific node or to the root.
+ * @param dest Destination mesh address.  Pass NULL to route to root.
+ * @param msg  Pointer to the message structure to send.
+ * @return ESP_OK on success, or an esp_err_t error code.
+ */
 esp_err_t mesh_send_to_node(mesh_addr_t* dest, mesh_app_msg_t* msg) {
     mesh_data_t data = {
         .data = (uint8_t*)msg,
@@ -19,7 +43,20 @@ esp_err_t mesh_send_to_node(mesh_addr_t* dest, mesh_app_msg_t* msg) {
     return err;
 }
 
-// ============ RX TASK ============
+// ====================
+// RX Task
+// ====================
+
+/**
+ * @brief Receive incoming mesh packets and dispatch them to the appropriate
+ *        handler.
+ *
+ * When this node is root, all messages are forwarded to
+ * root_handle_mesh_message().  Leaf nodes handle MSG_TYPE_COMMAND,
+ * MSG_TYPE_SYNC_REQUEST, MSG_TYPE_OTA_START, and MSG_TYPE_PING directly.
+ * Messages targeted at a device type that does not match this node are
+ * silently discarded.
+ */
 void mesh_rx_task(void* arg) {
     mesh_addr_t from;
     mesh_data_t rx_data;
@@ -62,13 +99,10 @@ void mesh_rx_task(void* arg) {
             continue;
         }
 
-        // If we are root, handle as root
         if (g_is_root) {
             root_handle_mesh_message(&from, msg);
             continue;
         }
-
-        // Leaf node handling
         switch (msg->msg_type) {
             case MSG_TYPE_COMMAND: {
                 ESP_LOGI(TAG, "Command received: %.*s", msg->data_len,
@@ -85,7 +119,6 @@ void mesh_rx_task(void* arg) {
             case MSG_TYPE_SYNC_REQUEST: {
                 ESP_LOGI(TAG, "Received sync request from root");
 
-                // Handle sync request for relay nodes
                 if (g_node_type == NODE_TYPE_RELAY_8 ||
                     g_node_type == NODE_TYPE_RELAY_16) {
                     relay_sync_all_states();
@@ -119,7 +152,11 @@ void mesh_rx_task(void* arg) {
     }
 }
 
-// ============ TX TASK ============
+// ====================
+// TX Task
+// ====================
+
+/** Internal item stored in the per-task TX queue. */
 typedef struct {
     mesh_addr_t dest;
     mesh_app_msg_t* msg;
@@ -128,6 +165,11 @@ typedef struct {
 
 static QueueHandle_t queue = NULL;
 
+/**
+ * @brief Drain the internal TX queue and forward each message via the mesh
+ *        stack.  Pauses during OTA to avoid interfering with firmware writes.
+ *        Allocates the internal queue on first invocation.
+ */
 void mesh_tx_task(void* arg) {
     queue = xQueueCreate(40, sizeof(tx_item_t*));
 
@@ -148,13 +190,23 @@ void mesh_tx_task(void* arg) {
             mesh_send_to_node(&item->dest, item->msg);
         }
 
-        free(item->msg);  // must free both allocs
+        free(item->msg);
         free(item);
 
         vTaskDelay(pdMS_TO_TICKS(2));
     }
 }
 
+/**
+ * @brief Enqueue a message for asynchronous transmission.
+ *
+ * Both the tx_item_t wrapper and the message payload are heap-allocated and
+ * freed by mesh_tx_task() after delivery.
+ *
+ * @param msg  Source message (copied; the caller may reuse or free its copy).
+ * @param prio Unused priority hint (reserved for future QoS differentiation).
+ * @param dest Destination address, or NULL to send to the root node.
+ */
 void mesh_queue_to_node(mesh_app_msg_t* msg, tx_priority_t prio,
                         mesh_addr_t* dest) {
     tx_item_t* item = malloc(sizeof(tx_item_t));
@@ -187,6 +239,18 @@ void mesh_queue_to_node(mesh_app_msg_t* msg, tx_priority_t prio,
     }
 }
 
+// ====================
+// Node Status Report
+// ====================
+
+/**
+ * @brief Build a JSON status payload and enqueue it toward the root node.
+ *
+ * Collects uptime, free heap, RSSI, mesh layer, firmware hash, and statistics
+ * counters, serialises them as a compact JSON object, and places the result
+ * into a MSG_TYPE_STATUS message.  Skipped when this node is root (the root
+ * publishes its own status directly to MQTT via root_publish_status()).
+ */
 void node_publish_status(void) {
     if (g_is_root) {
         return;
@@ -199,17 +263,13 @@ void node_publish_status(void) {
         return;
     }
 
-    // Get uptime in seconds
     uint32_t uptime = esp_timer_get_time() / 1000000;
 
-    // Get free heap
     uint32_t free_heap = esp_get_free_heap_size();
 
-    // Get RSSI from parent connection
     int rssi = 0;
     esp_wifi_sta_get_rssi(&rssi);
 
-    // Check for low heap
     if (free_heap < LOW_HEAP_THRESHOLD) {
         if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
             g_stats.low_heap_events++;
@@ -217,7 +277,6 @@ void node_publish_status(void) {
         }
     }
 
-    // Add type based on node type
     const char* type_str = "unknown";
     if (g_node_type == NODE_TYPE_SWITCH_C3) {
         type_str = "switch";
@@ -240,7 +299,6 @@ void node_publish_status(void) {
 
     ESP_LOGI(TAG, "Parent ID: %" PRIu64, g_parent_id);
 
-    // Build JSON status report
     cJSON_AddNumberToObject(json, "deviceId", g_device_id);
     cJSON_AddStringToObject(json, "type", type_str);
     cJSON_AddNumberToObject(json, "parentId", g_parent_id);
@@ -259,7 +317,7 @@ void node_publish_status(void) {
     if (json_str != NULL) {
         mesh_app_msg_t msg = {0};
         msg.src_id = g_device_id;
-        msg.msg_type = MSG_TYPE_STATUS;  // Status message
+        msg.msg_type = MSG_TYPE_STATUS;
         msg.data_len = strlen(json_str);
 
         if (strlen(json_str) <= MESH_MSG_DATA_SIZE - 1) {
@@ -276,23 +334,36 @@ void node_publish_status(void) {
     }
 }
 
-// ============ STATUS REPORT TASK ============
+// ====================
+// Status Report Task
+// ====================
+
+/**
+ * @brief Periodically publish a status report.
+ *
+ * Waits 5 seconds after start-up to let the mesh stabilise, then loops
+ * every STATUS_REPORT_INTERVAL_MS.  Root nodes call root_publish_status();
+ * leaf nodes call node_publish_status() to send a mesh message to the root.
+ * Pauses during OTA.
+ */
 void status_report_task(void* arg) {
     ESP_LOGI(TAG, "Status report task started");
 
-    // Wait for mesh to stabilize
     vTaskDelay(pdMS_TO_TICKS(5000));
 
     while (true) {
+        if (g_ota_in_progress) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
         ESP_LOGI(TAG, "Status: root=%d, connected=%d, heap=%" PRIu32, g_is_root,
                  g_mesh_connected, (uint32_t)esp_get_free_heap_size());
 
-        // If we are root, publish status to MQTT
         if (g_is_root) {
             root_publish_status();
         }
 
-        // If we are a leaf, send status over mesh to root
         if (!g_is_root && g_mesh_connected) {
             node_publish_status();
         }

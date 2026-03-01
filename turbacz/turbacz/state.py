@@ -1,6 +1,7 @@
 import hashlib
 from time import time
 
+from turbacz.connection_manager import connection_manager
 from turbacz.websocket import ws_manager
 
 
@@ -9,9 +10,11 @@ class StateManager:
         self._states: dict[int, dict[str, int]] = {}
         self._online_relays: dict[int, int] = {}
         self._online_switches: dict[int, int] = {}
+        self._devices_rssi: dict[int, int] = {}
         self._firmware_versions: dict[int, str] = {}
         self._up_to_date_devices: dict[int, bool] = {}
         self._up_to_date_firmware_versions: dict[str, str] = {}
+        self._ping_times: dict[int, int] = {}
 
         self.update_up_to_date_firmware_versions()
 
@@ -38,6 +41,35 @@ class StateManager:
             },
             "/lights/ws/",
         )
+
+    async def send_online_status(self, websocket=None):
+        message = {
+            "type": "online_status",
+            "online_relays": list(self._online_relays.keys()),
+            "online_switches": list(self._online_switches.keys()),
+            "up_to_date_devices": self._up_to_date_devices,
+            "devices_rssi": self._devices_rssi,
+            "root_id": connection_manager.rootId,
+            "ping_times": self._ping_times,
+        }
+
+        if websocket:
+            await ws_manager.send_personal_message(message, websocket)
+
+        else:
+            await ws_manager.broadcast(message, "/rcm/ws/")
+
+    def set_device_rssi(self, device_id: int, rssi: int):
+        self._devices_rssi[device_id] = rssi
+
+    def update_device_ping(self, device_id: int, ping_time: int):
+        self._ping_times[device_id] = ping_time
+
+    def get_device_ping(self, device_id: int) -> int | None:
+        return self._ping_times.get(device_id)
+
+    def get_device_rssi(self, device_id: int) -> int | None:
+        return self._devices_rssi.get(device_id)
 
     def set_up_to_date_firmware_version(self, device_type: str, version: str):
         self._up_to_date_firmware_versions[device_type] = version

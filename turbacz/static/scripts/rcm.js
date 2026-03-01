@@ -16,6 +16,8 @@ const State = {
     lights: {},
 
     // Status tracking
+    devicesRssi: {},
+    pingTimes: {},
     onlineRelays: new Set(),
     onlineSwitches: new Set(),
     upToDateDevices: {},
@@ -114,6 +116,8 @@ let switches = State.switches
 let relays = State.relays
 let connections = State.connections
 let lights = State.lights
+let devices_rssi = State.devicesRssi
+let devices_ping_times = State.pingTimes
 let online_relays = State.onlineRelays
 let online_switches = State.onlineSwitches
 let up_to_date_devices = State.upToDateDevices
@@ -187,16 +191,22 @@ const wsManager = new WebSocketManager('/rcm/ws/', function (event) {
         online_switches = new Set(msg.online_switches)
         up_to_date_devices = msg.up_to_date_devices || {}
         root_id = msg.root_id || null
+        devices_rssi = msg.devices_rssi || {}
+        devices_ping_times = msg.ping_times || {}
         State.root_id = root_id
         State.onlineRelays = online_relays
         State.onlineSwitches = online_switches
         State.upToDateDevices = up_to_date_devices
-        clearRootHighlight()
-        highlightRoot()
+        State.devicesRssi = devices_rssi
+        State.pingTimes = devices_ping_times
         console.log('Online relays:', online_relays)
         console.log('Online switches:', online_switches)
         console.log('Up to date devices:', up_to_date_devices)
         console.log('Root device ID:', root_id)
+        console.log('Devices RSSI:', devices_rssi)
+        console.log('Ping times:', devices_ping_times)
+        clearRootHighlight()
+        highlightRoot()
         updateOnlineStatus()
         return
     }
@@ -206,8 +216,6 @@ const wsManager = new WebSocketManager('/rcm/ws/', function (event) {
         setTimeout(() => clearButtonHighlight(msg.switch_id, msg.button_id), 5000)
         return
     }
-
-
 })
 
 // Connect and start connection monitoring
@@ -1243,25 +1251,19 @@ function highlightDevice(deviceId) {
             })
         }
 
-        if (sourceId.startsWith(deviceId)) {
-            const targetMatch = targetId.match(/^(relay-\d+|switch-\d+)/)
-            if (targetMatch) {
-                const targetElement = document.getElementById(targetMatch[1])
-                if (targetElement) {
-                    targetElement.classList.add('highlighted')
-                    targetElement.style.opacity = '1'
+        // Highlight the other end of the connection (whichever side is not the current device)
+        const sourceDeviceMatch = sourceId.match(/^(relay-\d+|switch-\d+)/)
+        const targetDeviceMatch = targetId.match(/^(relay-\d+|switch-\d+)/)
+
+        [sourceDeviceMatch, targetDeviceMatch].forEach(match => {
+            if (match && match[1] !== deviceId) {
+                const el = document.getElementById(match[1])
+                if (el) {
+                    el.classList.add('highlighted')
+                    el.style.opacity = '1'
                 }
             }
-        } else {
-            const sourceMatch = sourceId.match(/^(relay-\d+|switch-\d+)/)
-            if (sourceMatch) {
-                const sourceElement = document.getElementById(sourceMatch[1])
-                if (sourceElement) {
-                    sourceElement.classList.add('highlighted')
-                    sourceElement.style.opacity = '1'
-                }
-            }
-        }
+        })
     })
 
     console.log('Highlighted device:', deviceId)
@@ -1399,17 +1401,6 @@ function updateAllSwitches() {
     wsManager.send(msg)
 }
 
-function updateRoot() {
-    if (!wsManager.isConnected()) {
-        alert('Not connected to server')
-        return
-    }
-
-    const msg = JSON.stringify({ type: 'update_root' })
-    console.log('Updating root')
-    wsManager.send(msg)
-}
-
 function clearButtonHighlight(switchId, buttonId) {
     const buttonElement = document.getElementById(`switch-${switchId}-btn-${buttonId}`)
     if (!buttonElement) {
@@ -1417,7 +1408,14 @@ function clearButtonHighlight(switchId, buttonId) {
         return
     }
 
-    buttonElement.style.background = ''
+    // Get the custom color if set, otherwise use default blue
+    let targetColor = '#6366f1' // default blue
+    if (switches[switchId] && switches[switchId].color) {
+        targetColor = switches[switchId].color
+    }
+
+    // Restore to switch's color gradient
+    buttonElement.style.background = `linear-gradient(135deg, ${targetColor}33 0%, ${targetColor}55 100%)`
     buttonElement.style.transition = ''
     console.log('Cleared button highlight:', switchId, buttonId)
 }
@@ -1701,7 +1699,7 @@ function getDemoRelays() {
 
 function getDemoOutputs() {
     return {
-        1: { "1": "Warsztat 1", "2": "Warsztat 2", "3": "Kinkiet 1", "4": "Kinkiet 2", "5": "Przedpokój", "6": "Pokój Zo", "7": "Pokój Bobusi", "8": "Output 8" },
+        1: { "1": "Warsztat 1", "2": "Warsztat 2", "3": "Kinkiet 1", "4": "Kinkiet 2", "5": "Przedpokój", "6": "Pokój f", "7": "Output 7", "8": "Output 8" },
         2: { "1": "Output 1", "2": "Output 2", "3": "Output 3", "4": "Output 4", "5": "Output 5", "6": "Output 6", "7": "Output 7", "8": "Output 8" },
         3: { "1": "Spiżarnia", "2": "Output 2", "3": "Output 3", "4": "Output 4", "5": "Downlight 1", "6": "Downlight 2", "7": "Downlight 3", "8": "Downlight 4" }
     }
@@ -1710,8 +1708,8 @@ function getDemoOutputs() {
 function getDemoSwitches() {
     return {
         1: ["Wejście Do Domu", 3],
-        2: ["Pokój Bobusi", 3],
-        3: ["Pokój Zo", 3],
+        2: ["Pokój a", 3],
+        3: ["Pokój f", 3],
         4: ["Salon Wejście", 4],
         5: ["Schody Dół", 3],
         6: ["Spiżarnia Drzwi", 1]
@@ -1747,6 +1745,34 @@ function getDemoConnections() {
 }
 
 // ========== DEVICE CREATION ==========
+
+// Returns an inline SVG 4-bar signal-strength icon for the given RSSI (dBm)
+// Thresholds: >= -55 → 4 bars green, >= -67 → 3 bars lime,
+//             >= -78 → 2 bars orange, else → 1 bar red, null → 0 bars gray
+function getRssiIcon(rssi) {
+    let bars = 0
+    let color = '#64748b'
+    if (rssi !== null && rssi !== undefined) {
+        if (rssi >= -55) { bars = 4; color = '#10b981' } // green
+        else if (rssi >= -67) { bars = 3; color = '#84cc16' } // lime
+        else if (rssi >= -78) { bars = 2; color = '#f59e0b' } // orange
+        else { bars = 1; color = '#ef4444' } // red
+    }
+    const barHeights = [6, 10, 15, 20]
+    const totalH = 22
+    const barW = 5
+    const gap = 2
+    const totalW = 4 * barW + 3 * gap
+    let svgBars = ''
+    for (let i = 0; i < 4; i++) {
+        const h = barHeights[i]
+        const x = i * (barW + gap)
+        const y = totalH - h
+        const fill = i < bars ? color : '#334155'
+        svgBars += `<rect x="${x}" y="${y}" width="${barW}" height="${h}" rx="1.5" fill="${fill}"/>`
+    }
+    return `<svg width="${totalW}" height="${totalH}" viewBox="0 0 ${totalW} ${totalH}" style="display:inline-block;vertical-align:middle;">${svgBars}</svg>`
+}
 
 function createSwitch(switchId, switchName, buttonCount, x, y) {
     const savedPos = getSavedPosition(`switch-${switchId}`, x, y)
@@ -1825,6 +1851,12 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
     }
     const statusDot = `<span class="status-indicator ${statusClass}"></span>`
 
+    const rssiSwitch = devices_rssi[switchId]
+    const rssiTitleSwitch = rssiSwitch !== undefined ? `RSSI: ${rssiSwitch} dBm` : 'RSSI: N/A'
+    const pingSwitch = devices_ping_times[switchId]
+    const pingTextSwitch = pingSwitch !== undefined ? `${pingSwitch} ms` : '-'
+    const pingTitleSwitch = pingSwitch !== undefined ? `Ping: ${pingSwitch} ms` : 'Ping: N/A'
+
     switchDiv.innerHTML = `
                 <div class="device-header">
                     <span>
@@ -1839,6 +1871,8 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
                 </div>
                 <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
                     <div class="device-name device-name-switch-${switchId}" style="flex: 1; margin-bottom: 0; cursor: pointer;">${switchName}</div>
+                    <span class="ping-time ping-time-switch-${switchId}" title="${pingTitleSwitch}" style="font-size: 0.7rem; color: #94a3b8; white-space: nowrap;">${pingTextSwitch}</span>
+                    <span class="signal-icon signal-icon-switch-${switchId}" title="${rssiTitleSwitch}">${getRssiIcon(rssiSwitch)}</span>
                     <button class="color-btn" onclick="event.stopPropagation(); showColorPicker(${switchId})" title="Change Color">🎨</button>
                 </div>
                 ${buttonsHTML}
@@ -2045,6 +2079,8 @@ function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
         statusClass = 'status-outdated' // orange/yellow
     }
     const statusDot = `<span class="status-indicator ${statusClass}"></span>`
+    const rssiRelay = devices_rssi[relayId]
+    const rssiTitleRelay = rssiRelay !== undefined ? `RSSI: ${rssiRelay} dBm` : 'RSSI: N/A'
 
     relayDiv.innerHTML = `
                 <div class="device-header">
@@ -2058,7 +2094,10 @@ function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
                         <button class="delete-btn" onclick="event.stopPropagation(); deleteRelay(${relayId})">✕</button>
                     </div>
                 </div>
-                <div class="device-name device-name-relay-${relayId}" style="cursor: pointer;">${relayName}</div>
+                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
+                    <div class="device-name device-name-relay-${relayId}" style="flex: 1; margin-bottom: 0; cursor: pointer;">${relayName}</div>
+                    <span class="signal-icon signal-icon-relay-${relayId}" title="${rssiTitleRelay}">${getRssiIcon(rssiRelay)}</span>
+                </div>
                 ${outputsHTML}
             `
 
@@ -2222,6 +2261,18 @@ function updateOnlineStatus() {
                 }
                 indicator.className = statusClass
             }
+            const rssiIcon = element.querySelector(`.signal-icon-switch-${switchId}`)
+            if (rssiIcon) {
+                const rssi = devices_rssi[parseInt(switchId)]
+                rssiIcon.innerHTML = getRssiIcon(rssi)
+                rssiIcon.title = rssi !== undefined ? `RSSI: ${rssi} dBm` : 'RSSI: N/A'
+            }
+            const pingSpan = element.querySelector(`.ping-time-switch-${switchId}`)
+            if (pingSpan) {
+                const ping = devices_ping_times[parseInt(switchId)]
+                pingSpan.textContent = ping !== undefined ? `${ping} ms` : '-'
+                pingSpan.title = ping !== undefined ? `Ping: ${ping} ms` : 'Ping: N/A'
+            }
         }
     }
 
@@ -2242,6 +2293,12 @@ function updateOnlineStatus() {
                     statusClass = 'status-indicator status-outdated' // orange/yellow
                 }
                 indicator.className = statusClass
+            }
+            const rssiIcon = element.querySelector(`.signal-icon-relay-${relayId}`)
+            if (rssiIcon) {
+                const rssi = devices_rssi[parseInt(relayId)]
+                rssiIcon.innerHTML = getRssiIcon(rssi)
+                rssiIcon.title = rssi !== undefined ? `RSSI: ${rssi} dBm` : 'RSSI: N/A'
             }
         }
     }
@@ -2284,7 +2341,7 @@ function createConnection(switchId, buttonId, relayId, outputId) {
 
         // Update lookup map for fast highlighting
         const switchDeviceId = `switch-${switchId}`
-        const relayDeviceId = `relay - ${relayId} `
+        const relayDeviceId = `relay-${relayId}`
 
         if (!connectionLookupMap[switchDeviceId]) connectionLookupMap[switchDeviceId] = []
         if (!connectionLookupMap[relayDeviceId]) connectionLookupMap[relayDeviceId] = []
@@ -2659,38 +2716,47 @@ async function saveNameEdit() {
     closeModal('editNameModal')
 }
 
-async function clearAllConnections() {
-    if (!confirm('Are you sure you want to clear all connections?')) return
+function showToast(message, isError = false) {
+    const toast = document.getElementById('rcm-toast')
+    if (!toast) return
+    toast.textContent = message
+    toast.className = 'rcm-toast' + (isError ? ' rcm-toast-error' : ' rcm-toast-success')
+    toast.classList.add('rcm-toast-visible')
+    clearTimeout(toast._hideTimer)
+    toast._hideTimer = setTimeout(() => {
+        toast.classList.remove('rcm-toast-visible')
+    }, 3500)
+}
 
-    showLoading()
-
-    const removePromises = []
-
-    for (let [switchId, buttons] of Object.entries(connections)) {
-        for (let [buttonId, connList] of Object.entries(buttons)) {
-            for (let conn of connList) {
-                removePromises.push(
-                    postForm('/lights/remove_connection', {
-                        switch_id: switchId,
-                        button_id: buttonId,
-                        relay_id: conn.relayId,
-                        output_id: conn.outputId
-                    })
-                )
+function uploadFirmware(deviceType) {
+    const input = document.getElementById('firmwareFileInput')
+    input.value = ''
+    const handler = async () => {
+        input.removeEventListener('change', handler)
+        const file = input.files[0]
+        if (!file) return
+        showLoading()
+        const formData = new FormData()
+        formData.append('file', file)
+        try {
+            const res = await fetch(`/upload/${deviceType}`, {
+                method: 'POST',
+                body: formData,
+                credentials: 'include'
+            })
+            if (res.ok) {
+                showToast(`✅ ${deviceType} firmware uploaded successfully`)
+            } else {
+                showToast(`❌ Upload failed (status ${res.status})`, true)
             }
+        } catch (err) {
+            showToast(`⚠️ Error uploading: ${err.message}`, true)
+        } finally {
+            hideLoading()
         }
     }
-
-    await Promise.all(removePromises)
-
-    jsPlumbInstance.batch(() => {
-        jsPlumbInstance.deleteEveryConnection()
-    })
-    connections = {}
-    connectionLookupMap = {}
-
-    hideLoading()
-    console.log('All connections cleared')
+    input.addEventListener('change', handler)
+    input.click()
 }
 
 window.addEventListener('load', initJsPlumb)

@@ -47,3 +47,5 @@ menu "Domator Mesh Configuration"
     config OTA_URL
         string "URL for OTA"
         default "http://127.0.0.1/firmware.bin"
+
+endmenu

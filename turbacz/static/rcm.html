@@ -28,39 +28,51 @@
         <div class="header-controls">
             <div id="toolbar">
                 <div class="toolbar-group">
-                    <button class="toolbar-btn btn-primary" onclick="showAddSwitchModal()">
+                    <button class="toolbar-btn btn-primary" onclick="showAddSwitchModal()"
+                        title="Add a new switch device">
                         <span>➕</span> <span class="btn-text">Add Switch</span>
                     </button>
-                    <button class="toolbar-btn btn-secondary" onclick="showAddRelayModal()">
+                    <button class="toolbar-btn btn-secondary" onclick="showAddRelayModal()"
+                        title="Add a new relay device">
                         <span>➕</span> <span class="btn-text">Add Relay</span>
                     </button>
                 </div>
                 <div class="toolbar-group">
-                    <button class="toolbar-btn btn-update-switches" onclick="updateAllSwitches()">
+                    <button class="toolbar-btn btn-update-switches" onclick="updateAllSwitches()"
+                        title="Trigger OTA firmware update on all switches">
                         <span>⟳</span> <span class="btn-text">Switches</span>
                     </button>
-                    <button class="toolbar-btn btn-update-relays" onclick="updateAllRelays()">
+                    <button class="toolbar-btn btn-update-relays" onclick="updateAllRelays()"
+                        title="Trigger OTA firmware update on all relays">
                         <span>⟳</span> <span class="btn-text">Relays</span>
-                    </button>
-                    <button class="toolbar-btn btn-update-root" onclick="updateRoot()">
-                        <span>⚡</span> <span class="btn-text">Root</span>
                     </button>
                 </div>
                 <div class="toolbar-group">
-                    <button class="toolbar-btn btn-refresh" onclick="loadConfiguration()">
+                    <button class="toolbar-btn btn-refresh" onclick="loadConfiguration()"
+                        title="Reload device configuration from server">
                         <span>🔄</span> <span class="btn-text">Refresh</span>
                     </button>
-                    <button class="toolbar-btn btn-show-hidden" onclick="showAllHiddenDevices()">
+                    <button class="toolbar-btn btn-show-hidden" onclick="showAllHiddenDevices()"
+                        title="Show all hidden devices">
                         <span>👁️</span> <span class="btn-text">Show</span>
                     </button>
-                    <button class="toolbar-btn btn-reset-positions" onclick="resetAllPositions()">
+                    <button class="toolbar-btn btn-reset-positions" onclick="resetAllPositions()"
+                        title="Reset all device card positions to default layout">
                         <span>⟲</span> <span class="btn-text">Reset</span>
                     </button>
-                    <button class="toolbar-btn btn-danger" onclick="clearAllConnections()">
-                        <span>🗑️</span> <span class="btn-text">Clear</span>
+                </div>
+                <div class="toolbar-group">
+                    <button class="toolbar-btn btn-upload-switch" onclick="uploadFirmware('switch')"
+                        title="Upload new firmware binary for switch devices">
+                        <span>⬆</span> <span class="btn-text">Switch FW</span>
+                    </button>
+                    <button class="toolbar-btn btn-upload-relay" onclick="uploadFirmware('relay')"
+                        title="Upload new firmware binary for relay devices">
+                        <span>⬆</span> <span class="btn-text">Relay FW</span>
                     </button>
                 </div>
             </div>
+            <input type="file" id="firmwareFileInput" accept=".bin" style="display:none">
             <div class="zoom-controls">
                 <button class="zoom-btn" onclick="zoomOut()" title="Zoom Out">−</button>
                 <span class="zoom-level" id="zoomLevel">100%</span>
@@ -153,6 +165,7 @@
         <span>Loading...</span>
     </div>
 
+    <div id="rcm-toast" class="rcm-toast"></div>
     <script src="/static/scripts/rcm.js" defer></script>
 </body>
 

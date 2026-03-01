@@ -1,3 +1,21 @@
+/**
+ * @file node_root.c
+ * @brief Root-node logic: MQTT client, node registry, button routing, and
+ *        MQTT command handling.
+ *
+ * A node becomes root dynamically via ESP-MESH self-organised election.
+ * When elected, it:
+ *  - Maintains a registry (node_registry) mapping device IDs to mesh addresses.
+ *  - Connects to the MQTT broker and subscribes to command topics.
+ *  - Publishes relay state, button state, and device status messages.
+ *  - Routes button press events to relay nodes based on the connection map
+ *    (g_connections) pushed via MQTT JSON commands.
+ *  - Handles ping/pong round-trip latency tests.
+ *
+ * When the node loses root status, node_root_stop() tears down the MQTT client
+ * and stops the Telnet server.
+ */
+
 #include <inttypes.h>
 #include <string.h>
 
@@ -11,11 +29,11 @@
 
 static const char* TAG = "ROOT";
 
-// Static buffers for MQTT configuration (must persist after mqtt_init returns)
+/** Persistent MQTT configuration buffers (must outlive mqtt_init). */
 static char g_mqtt_client_id[32] = {0};
 static char g_mqtt_lwt_message[256] = {0};
 
-// Node registry - maps device_id to mesh address
+/** @brief Maps device_id to mesh address and last-seen metadata. */
 typedef struct {
     uint64_t device_id;
     mesh_addr_t mesh_addr;
@@ -30,12 +48,23 @@ static node_registry_entry_t node_registry[MAX_NODES];
 static int node_count = 0;
 static SemaphoreHandle_t registry_mutex = NULL;
 
-// Forward declarations
 static void route_button_to_relays(uint64_t from_id, char button, int state);
 static void handle_mqtt_command(const char* topic, int topic_len,
                                 const char* data, int data_len);
 
-// ============ NODE REGISTRY ============
+// ====================
+// Node Registry
+// ====================
+
+/**
+ * @brief Insert or update a node_registry entry for the given device.
+ *        Thread-safe; acquires registry_mutex.  If device_id is not yet
+ *        in the registry and there is space, a new slot is allocated.
+ * @param device_id Unique numeric device identifier.
+ * @param addr      Current mesh address of the device.
+ * @param type      Optional one-character device type string; pass NULL to
+ *                  leave the existing type unchanged.
+ */
 static void registry_update(uint64_t device_id, mesh_addr_t* addr,
                             const char* type) {
     xSemaphoreTake(registry_mutex, portMAX_DELAY);
@@ -58,6 +87,11 @@ static void registry_update(uint64_t device_id, mesh_addr_t* addr,
     xSemaphoreGive(registry_mutex);
 }
 
+/**
+ * @brief Look up the mesh address for a device by ID.
+ * @param device_id Device to locate.
+ * @return Pointer to the stored mesh_addr_t, or NULL if not found.
+ */
 static mesh_addr_t* registry_find(uint64_t device_id) {
     xSemaphoreTake(registry_mutex, portMAX_DELAY);
     for (int i = 0; i < MAX_NODES; i++) {
@@ -70,7 +104,11 @@ static mesh_addr_t* registry_find(uint64_t device_id) {
     return NULL;
 }
 
-// Find device index by device ID
+/**
+ * @brief Return the array index of a device in node_registry.
+ * @param device_id Device to locate.
+ * @return Array index (0 – MAX_NODES-1), or -1 if not found.
+ */
 static int registry_find_index(uint64_t device_id) {
     xSemaphoreTake(registry_mutex, portMAX_DELAY);
     for (int i = 0; i < MAX_NODES; i++) {
@@ -83,6 +121,12 @@ static int registry_find_index(uint64_t device_id) {
     return -1;
 }
 
+/**
+ * @brief Retrieve the configured button type for a specific button on a device.
+ * @param device_id Source device ID.
+ * @param button    Button character ('a'-'h').
+ * @return 0 = toggle, 1 = stateful, or -1 if not found.
+ */
 static int get_button_type(uint64_t device_id, char button) {
     xSemaphoreTake(g_button_types_mutex, portMAX_DELAY);
     for (int i = 0; i < MAX_NODES; i++) {
@@ -96,10 +140,18 @@ static int get_button_type(uint64_t device_id, char button) {
         }
     }
     xSemaphoreGive(g_button_types_mutex);
-    return -1;  // Not found
+    return -1;
 }
 
-// ============ HANDLE MESH MESSAGES AS ROOT ============
+// ====================
+// Handle Mesh Messages as Root
+// ====================
+
+/**
+ * @brief Dispatch an incoming mesh message received while this node is root.
+ * @param from Mesh address of the sender.
+ * @param msg  Pointer to the decoded application message.
+ */
 void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
     registry_update(msg->src_id, from, NULL);
     ESP_LOGV(TAG, "Message from %" PRIu64 " (type=%c, len=%d)", msg->src_id,
@@ -120,7 +172,6 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
         case MSG_TYPE_SYNC_REQUEST: {
             ESP_LOGI(TAG, "Received sync request from root");
 
-            // Handle sync request for relay nodes
             if (g_node_type == NODE_TYPE_RELAY_8 ||
                 g_node_type == NODE_TYPE_RELAY_16) {
                 relay_sync_all_states();
@@ -244,6 +295,15 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
                          "with device %" PRIu64 ". Average ping time: %" PRId32
                          " ms",
                          msg->src_id, node_registry[index].avg_ping);
+
+                char topic[64];
+                snprintf(topic, sizeof(topic), "/switch/state/%" PRIu64,
+                         msg->src_id);
+                char payload[32];
+                snprintf(payload, sizeof(payload), "%" PRId32,
+                         node_registry[index].avg_ping);
+                esp_mqtt_client_publish(g_mqtt_client, topic, payload,
+                                        strlen(payload), 0, 0);
                 break;
             }
 
@@ -264,7 +324,22 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
     }
 }
 
-// ============ ROUTE BUTTON → RELAY ============
+// ====================
+// Route Button to Relays
+// ====================
+
+/**
+ * @brief Forward a button event to all configured relay targets.
+ *
+ * Looks up the routing table (g_connections) for the source device and
+ * button character, then sends a MSG_TYPE_COMMAND to each target relay node.
+ * For stateful buttons the command includes the current state; for toggle
+ * buttons a single-byte toggle command is sent.
+ *
+ * @param from_id Source device ID (the switch that was pressed).
+ * @param button  Button character ('a' – 'x').
+ * @param state   Physical button state: 1 = pressed, 0 = released.
+ */
 static void route_button_to_relays(uint64_t from_id, char button, int state) {
     ESP_LOGI(TAG, "Route button '%c' from %" PRIu64 " (state=%d)", button,
              from_id, state);
@@ -302,7 +377,7 @@ static void route_button_to_relays(uint64_t from_id, char button, int state) {
             cmd.msg_type = MSG_TYPE_COMMAND;
             cmd.data[0] = target->relay_command[0];
             if (get_button_type(from_id, button) == 1) {  // Stateful button
-                cmd.data[1] = state + '0';
+                cmd.data[1] = state ? '0' : '1';          // '0' or '1'
                 cmd.data_len = 2;
             } else {
                 cmd.data_len = 1;
@@ -320,6 +395,13 @@ static void route_button_to_relays(uint64_t from_id, char button, int state) {
     }
 }
 
+// ====================
+// Root Status Publishing
+// ====================
+
+/**
+ * @brief Build and publish a JSON status report for the root node to MQTT.
+ */
 void root_publish_status(void) {
     if (!g_mqtt_client || !g_mqtt_connected || !g_is_root) {
         return;
@@ -331,13 +413,10 @@ void root_publish_status(void) {
         return;
     }
 
-    // Get uptime in seconds
     uint32_t uptime = esp_timer_get_time() / 1000000;
 
-    // Get free heap
     uint32_t free_heap = esp_get_free_heap_size();
 
-    // Check for low heap
     if (free_heap < LOW_HEAP_THRESHOLD) {
         if (xSemaphoreTake(g_stats_mutex,
                            pdMS_TO_TICKS(STATS_MUTEX_TIMEOUT_MS)) == pdTRUE) {
@@ -346,8 +425,7 @@ void root_publish_status(void) {
         }
     }
 
-    // Get peer count (number of connected children)
-    int peer_count = esp_mesh_get_total_node_num() - 1;  // Subtract self
+    int peer_count = esp_mesh_get_total_node_num() - 1;
 
     int8_t rssi = 0;
     wifi_ap_record_t ap_info;
@@ -358,7 +436,6 @@ void root_publish_status(void) {
         ESP_LOGW(TAG, "Failed to get AP info for RSSI");
     }
 
-    // Add type based on node type
     const char* type_str = "unknown";
     if (g_node_type == NODE_TYPE_SWITCH_C3) {
         type_str = "switch";
@@ -368,10 +445,8 @@ void root_publish_status(void) {
         type_str = "relay16";
     }
 
-    // Build JSON status report
     cJSON_AddNumberToObject(json, "deviceId", g_device_id);
-    cJSON_AddNumberToObject(json, "parentId",
-                            g_device_id);  // Root's parent is itself
+    cJSON_AddNumberToObject(json, "parentId", g_device_id);
     cJSON_AddStringToObject(json, "type", type_str);
     cJSON_AddNumberToObject(json, "isRoot", 1);
     cJSON_AddNumberToObject(json, "freeHeap", free_heap);
@@ -407,18 +482,20 @@ void root_publish_status(void) {
     }
 }
 
-// ==================== MQTT Connection Status ====================
+// ====================
+// MQTT Connection Status
+// ====================
 
 /**
- * Publish connection status message to MQTT
- * @param connected true for connected, false for disconnected
+ * @brief Publish a JSON connection status message to the root MQTT topic.
+ *        Called on MQTT connect and on graceful disconnect.
+ * @param connected true = publish connected payload, false = disconnected.
  */
 static void publish_connection_status(bool connected) {
     if (!g_mqtt_client) {
         return;
     }
 
-    // Create JSON status message
     cJSON* json = cJSON_CreateObject();
     if (!json) {
         ESP_LOGE(TAG, "Failed to create connection status JSON");
@@ -465,7 +542,17 @@ static void publish_connection_status(bool connected) {
     cJSON_Delete(json);
 }
 
-// ============ MQTT EVENT HANDLER ============
+// ====================
+// MQTT Event Handler
+// ====================
+
+/**
+ * @brief Handle MQTT client lifecycle events.
+ *
+ * On MQTT_EVENT_CONNECTED subscribes to switch/relay command topics and
+ * publishes a connection status message (once per connection).  On
+ * MQTT_EVENT_DATA forwards the payload to handle_mqtt_command().
+ */
 static void mqtt_event_handler(void* handler_args, esp_event_base_t base,
                                int32_t event_id, void* event_data) {
     esp_mqtt_event_handle_t event = event_data;
@@ -480,8 +567,6 @@ static void mqtt_event_handler(void* handler_args, esp_event_base_t base,
             esp_mqtt_client_subscribe(g_mqtt_client, "/relay/cmd/+", 0);
             esp_mqtt_client_subscribe(g_mqtt_client, "/relay/cmd", 0);
 
-            // Publish connection status only once per connection
-            // (prevent duplicate publishes if event fires multiple times)
             if (!connection_status_published) {
                 publish_connection_status(true);
                 connection_status_published = true;
@@ -491,7 +576,7 @@ static void mqtt_event_handler(void* handler_args, esp_event_base_t base,
         case MQTT_EVENT_DISCONNECTED:
             ESP_LOGW(TAG, "MQTT disconnected");
             g_mqtt_connected = false;
-            connection_status_published = false;  // Reset for next connection
+            connection_status_published = false;
             break;
 
         case MQTT_EVENT_SUBSCRIBED:
@@ -516,7 +601,14 @@ static void mqtt_event_handler(void* handler_args, esp_event_base_t base,
     }
 }
 
-// ============ HANDLE NON-JSON MQTT COMMANDS ============
+// ====================
+// Handle Non-JSON MQTT Root Commands
+// ====================
+
+/**
+ * @brief Handle non-JSON commands addressed to the root itself
+ *        (e.g., a single-byte ping that broadcasts latency tests to all nodes).
+ */
 static void handle_nonJson_mqtt_root_command(const char* topic, int topic_len,
                                              const char* data, int data_len) {
     if (data_len == 1 && data[0] == MSG_TYPE_PING) {
@@ -543,7 +635,20 @@ static void handle_nonJson_mqtt_root_command(const char* topic, int topic_len,
     }
 }
 
-// =========== HANDLE JSON MQTT COMMANDS ============
+// ====================
+// Handle JSON MQTT Root Commands
+// ====================
+
+/**
+ * @brief Parse a "connections" JSON payload and populate g_connections.
+ *
+ * Expected format:
+ * @code
+ * { "<device_id>": { "a": [[<node_id>, "<relay_cmd>"], ...], "b": ... } }
+ * @endcode
+ * Frees any previously allocated route_target_t arrays before replacing them.
+ * @param data cJSON object containing the connection map.
+ */
 static void parse_json_connections(cJSON* data) {
     int device_index = 0;
     cJSON* device_item = NULL;
@@ -601,6 +706,9 @@ static void parse_json_connections(cJSON* data) {
     xSemaphoreGive(g_connections_mutex);
 }
 
+/**
+ * @brief Log the full button type table for all known devices (debug helper).
+ */
 static void print_all_button_types(void) {
     xSemaphoreTake(g_button_types_mutex, portMAX_DELAY);
     ESP_LOGI(TAG, "Button types for all devices:");
@@ -615,6 +723,15 @@ static void print_all_button_types(void) {
     xSemaphoreGive(g_button_types_mutex);
 }
 
+/**
+ * @brief Parse a "button_types" JSON payload and populate g_button_types.
+ *
+ * Expected format:
+ * @code
+ * { "<device_id>": { "a": 0, "b": 1, ... } }  // 0=toggle, 1=stateful
+ * @endcode
+ * @param data cJSON object containing per-device button type maps.
+ */
 static void parse_json_button_types(cJSON* data) {
     if (!data || !cJSON_IsObject(data)) return;
 
@@ -647,6 +764,13 @@ static void parse_json_button_types(cJSON* data) {
     print_all_button_types();
 }
 
+/**
+ * @brief Dispatch a JSON MQTT command received on /switch/cmd/root.
+ *
+ * Supported types:
+ *  - "connections"  – update the button-to-relay routing table.
+ *  - "button_types" – update the toggle/stateful classification per button.
+ */
 static void handle_json_mqtt_root_command(const char* topic, int topic_len,
                                           const char* data, int data_len) {
     cJSON* json = cJSON_ParseWithLength(data, data_len);
@@ -686,6 +810,13 @@ static void handle_json_mqtt_root_command(const char* topic, int topic_len,
     cJSON_Delete(json);
 }
 
+/**
+ * @brief Handle non-JSON MQTT commands targeting device nodes.
+ *
+ * Extracts device type and optional target device ID from the topic, then
+ * routes MSG_TYPE_COMMAND, MSG_TYPE_OTA_START, or MSG_TYPE_PING to the
+ * appropriate mesh node (or broadcasts OTA to all nodes of the given type).
+ */
 static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
                                         const char* data, int data_len) {
     // For now, just log unrecognized non-JSON commands
@@ -793,10 +924,48 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
         } else {
             ESP_LOGW(TAG, "Could not find target device %" PRIu64, target_id);
         }
+    } else if (data_len == 1 && data[0] == MSG_TYPE_PING) {
+        ESP_LOGI(TAG, "Received MQTT ping command");
+
+        if (target_id == 0) {
+            ESP_LOGW(TAG, "Ping command missing target device ID in topic.");
+            return;
+        }
+
+        ESP_LOGI(TAG, "Ping command for target device %" PRIu64, target_id);
+        mesh_addr_t* dest = registry_find(target_id);
+        if (dest) {
+            mesh_app_msg_t ping = {0};
+            ping.src_id = g_device_id;
+            ping.msg_type = MSG_TYPE_PING;
+            uint16_t pingNum = 1;
+            memcpy(ping.data, &pingNum, sizeof(uint16_t));
+            ping.data_len = sizeof(uint16_t);
+            int index = registry_find_index(target_id);
+            node_registry[index].last_ping = esp_timer_get_time() / 1000;
+            mesh_queue_to_node(&ping, TX_PRIO_HIGH, dest);
+            ESP_LOGV(TAG, "Sent MQTT ping to device %" PRIu64, target_id);
+        } else {
+            ESP_LOGW(TAG, "Could not find target device %" PRIu64, target_id);
+        }
+    } else {
+        ESP_LOGW(TAG,
+                 "Received unrecognized non-JSON MQTT command: topic=%s, "
+                 "data=%.*s",
+                 topic_str, data_len, data);
     }
 }
 
-// ============ HANDLE MQTT COMMANDS ============
+// ====================
+// Handle MQTT Commands
+// ====================
+
+/**
+ * @brief Top-level MQTT command dispatcher.
+ *
+ * Routes /switch/cmd/root traffic to root-specific handlers (JSON or
+ * non-JSON), and all other topic traffic to handle_nonJson_mqtt_command().
+ */
 static void handle_mqtt_command(const char* topic, int topic_len,
                                 const char* data, int data_len) {
     char topic_str[128];
@@ -822,7 +991,15 @@ static void handle_mqtt_command(const char* topic, int topic_len,
     }
 }
 
-// ============ ROOT START/STOP ============
+// ====================
+// Root Start / Stop
+// ====================
+
+/**
+ * @brief Initialise root-only resources when this node becomes root.
+ *        Creates the node registry mutex if it does not yet exist.
+ *        Idempotent: returns immediately if the MQTT client is already running.
+ */
 void node_root_start(void) {
     if (g_mqtt_client) return;
 
@@ -837,11 +1014,19 @@ void node_root_start(void) {
 // MQTT Initialization
 // ====================
 
+/**
+ * @brief Initialise and start the MQTT client (root node only).
+ *
+ * Builds the broker URI, generates a unique client ID from g_device_id,
+ * prepares a Last Will and Testament (LWT) message, then starts the client.
+ * Skipped silently when called on a non-root node.  The MQTT event handler
+ * (mqtt_event_handler) manages subscriptions and further lifecycle events.
+ */
 void mqtt_init(void) {
     // Strong guard: Only root node should initialize MQTT
     if (!g_is_root) {
         ESP_LOGW(TAG,
-                 "❌ MQTT init called on NON-ROOT node (device_id: %" PRIu64
+                 "MQTT init called on NON-ROOT node (device_id: %" PRIu64
                  ", layer: %d) - skipping",
                  g_device_id, g_mesh_layer);
         ESP_LOGW(TAG,
@@ -850,8 +1035,7 @@ void mqtt_init(void) {
         return;
     }
 
-    ESP_LOGI(TAG,
-             "✓ Initializing MQTT client (ROOT node, device_id: %" PRIu64 ")",
+    ESP_LOGI(TAG, "Initializing MQTT client (ROOT node, device_id: %" PRIu64 ")",
              g_device_id);
 
     // Build complete MQTT broker URI
@@ -861,8 +1045,7 @@ void mqtt_init(void) {
     // Check if URL already includes port
     if (strstr(url, "mqtt://") != NULL && strchr(url + 7, ':') == NULL) {
         // No port in URL, append it
-        snprintf(broker_uri, sizeof(broker_uri), "%s:%d", url,
-                 1883);  // Default MQTT port
+        snprintf(broker_uri, sizeof(broker_uri), "%s:%d", url, 1883);
     } else {
         // URL already complete or has port
         snprintf(broker_uri, sizeof(broker_uri), "%s", url);
@@ -874,9 +1057,6 @@ void mqtt_init(void) {
              g_device_id);
     ESP_LOGI(TAG, "Using MQTT client ID: %s", g_mqtt_client_id);
 
-    // Prepare Last Will and Testament (LWT) message for ungraceful
-    // disconnects Store in static buffer so it persists after function
-    // returns
     snprintf(g_mqtt_lwt_message, sizeof(g_mqtt_lwt_message),
              "{\"status\":\"disconnected\",\"device_id\":%" PRIu64
              ",\"timestamp\":%" PRId64 ",\"reason\":\"ungraceful\"}",
@@ -917,9 +1097,16 @@ void mqtt_init(void) {
 }
 
 // ====================
-// MQTT Cleanup (when losing root status)
+// MQTT Cleanup
 // ====================
 
+/**
+ * @brief Stop the MQTT client and all root-specific services.
+ *
+ * If connected, publishes a "disconnected" status before stopping.
+ * Destroys the MQTT client handle, stops the Telnet server, and clears
+ * g_is_root.  Safe to call when already stopped.
+ */
 void node_root_stop(void) {
     if (g_mqtt_client) {
         ESP_LOGI(TAG, "Cleaning up MQTT client (no longer root)");

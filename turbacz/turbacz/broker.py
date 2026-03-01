@@ -37,17 +37,7 @@ async def periodic_check_devices(interval: int = 15):
         except Exception as e:
             print(f"Error checking relays/switches: {e}")
 
-        await ws_manager.broadcast(
-            {
-                "type": "online_status",
-                "online_relays": list(state_manager._online_relays.keys()),
-                "online_switches": list(state_manager._online_switches.keys()),
-                "up_to_date_devices": state_manager._up_to_date_devices,
-                "root_id": connection_manager.rootId,
-            },
-            "/rcm/ws/",
-        )
-
+        await state_manager.send_online_status()
         await asyncio.sleep(interval)
 
 
@@ -145,18 +135,27 @@ async def handle_switch_state(payload_str, topic):
     """
     try:
         switch_id = topic.split("/")[-1]
-        button_id = payload_str[0]
 
-        logger.debug("Switch ID: %s, Button ID: %s", switch_id, button_id)  # Debug log
+        if payload_str[0].isalpha():
+            button_id = payload_str[0]
 
-        await ws_manager.broadcast(
-            {
-                "type": "switch_state",
-                "switch_id": switch_id,
-                "button_id": button_id,
-            },
-            "/rcm/ws/",
-        )
+            logger.debug("Switch ID: %s, Button ID: %s", switch_id, button_id)  # Debug log
+
+            await ws_manager.broadcast(
+                {
+                    "type": "switch_state",
+                    "switch_id": switch_id,
+                    "button_id": button_id,
+                },
+                "/rcm/ws/",
+            )
+
+        else:
+            ping_time = int(payload_str)
+
+            logger.debug("Switch ID: %s, Ping Time: %d ms", switch_id, ping_time)  # Debug log
+
+            state_manager.update_device_ping(switch_id, ping_time)
 
     except ValueError as e:
         logger.error("Error processing switch state: %s", e)
@@ -225,16 +224,15 @@ async def handle_root_state(payload_str):
 
     else:
         logger.warning(f"Unknown device type for ID {data['deviceId']}: {data['type']}")
+        return
 
     if data.get("isRoot") == 1:
         connection_manager.rootId = data["deviceId"]
 
-    if "name" not in data:
-        return
-
     state_manager.mark_relay_online(data["deviceId"], int(time()))
     state_manager.mark_switch_online(data["deviceId"], int(time()))
     state_manager.set_firmware_version(data["deviceId"], data["type"], data["firmware"])
+    state_manager.set_device_rssi(data["deviceId"], int(data["rssi"]))
 
     data["name"] = data["name"].replace(" ", "\\ ")
 
@@ -251,6 +249,8 @@ async def handle_root_state(payload_str):
         parent_name = "unknown"
 
     data["parent_name"] = parent_name.replace(" ", "\\ ")
+
+    mqtt.client.publish("/switch/cmd/" + str(data["deviceId"]), "P")
 
     if not config.monitoring.send_metrics:
         return

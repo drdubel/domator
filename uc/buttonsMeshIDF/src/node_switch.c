@@ -1,3 +1,22 @@
+/**
+ * @file node_switch.c
+ * @brief Switch node driver: 7-button input handling and NeoPixel status LED.
+ *
+ * Runs on ESP32-C3 switch boards.  Provides:
+ *  - button_init()  – configure GPIO inputs and install ISR handlers.
+ *  - button_task()  – debounce button events and send MSG_TYPE_BUTTON to root.
+ *  - led_init()     – configure the single WS2812 LED via the RMT peripheral.
+ *  - led_task()     – update the LED colour to reflect mesh connection state.
+ *  - led_set_color() / led_flash_cyan() – low-level LED helpers.
+ *
+ * LED colour semantics:
+ *  - Red    – mesh not started.
+ *  - Yellow – mesh started, not yet connected.
+ *  - Green  – fully connected and operational.
+ *  - Cyan   – short flash on button press acknowledgement.
+ *  - Blue   – OTA update in progress.
+ */
+
 #include <domator_mesh.h>
 #include <string.h>
 
@@ -18,7 +37,12 @@ static led_color_t g_current_led_color = {0, 0, 0};
 static bool g_led_flash_active = false;
 static uint32_t g_led_flash_end_time = 0;
 
-// ==================== Button Press Statistics ====================
+// ====================
+// Button Press Statistics
+// ====================
+
+/** @brief Safely increment the global button press counter under the stats
+ * mutex. */
 static void stats_increment_button_presses(void) {
     if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         g_stats.button_presses++;
@@ -26,13 +50,21 @@ static void stats_increment_button_presses(void) {
     }
 }
 
-// ==================== Button Initialization ====================
+// ====================
+// Button Initialization
+// ====================
+
+/**
+ * @brief GPIO ISR handler for switch buttons.
+ *        Sets the bit for the triggered button in the task notification value
+ *        and wakes button_task().
+ * @param arg Button index cast to (void*).
+ */
 static void IRAM_ATTR button_isr_handler(void* arg) {
     uint32_t button_index = (uint32_t)arg;
 
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
-    // Notify task, set bit corresponding to button index
     xTaskNotifyFromISR(button_task_handle, (1 << button_index), eSetBits,
                        &xHigherPriorityTaskWoken);
 
@@ -41,10 +73,12 @@ static void IRAM_ATTR button_isr_handler(void* arg) {
     }
 }
 
+/**
+ * @brief Configure all 7 button GPIOs and install edge-triggered ISR handlers.
+ */
 void button_init(void) {
     ESP_LOGI(TAG, "Initializing buttons");
 
-    // Configure all button pins as input with pull-down
     for (int i = 0; i < NUM_BUTTONS; i++) {
         gpio_config_t io_conf = {
             .pin_bit_mask = (1ULL << g_button_pins[i]),
@@ -55,7 +89,6 @@ void button_init(void) {
         };
         gpio_config(&io_conf);
 
-        // Initialize button states
         g_button_states[i].last_state = gpio_get_level(g_button_pins[i]);
         g_button_states[i].last_bounce_time = 0;
         g_button_states[i].press_start_time = 0;
@@ -76,6 +109,10 @@ void button_init(void) {
 // Button Task
 // ====================
 
+/**
+ * @brief FreeRTOS task: debounce button events and send MSG_TYPE_BUTTON to
+ * root.
+ */
 void button_task(void* arg) {
     ESP_LOGI(TAG, "Button task started");
 
@@ -99,8 +136,7 @@ void button_task(void* arg) {
             int gpio_num = g_button_pins[i];
 
             int current_state = gpio_get_level(gpio_num);
-            uint32_t current_time =
-                esp_timer_get_time() / 1000;  // Convert to ms
+            uint32_t current_time = esp_timer_get_time() / 1000;
 
             if (current_state == g_button_states[i].last_state) {
                 continue;
@@ -121,13 +157,12 @@ void button_task(void* arg) {
 
                 stats_increment_button_presses();
 
-                // Send button press message to root
-                char button_char = 'a' + i;  // 'a'-'g'
+                char button_char = 'a' + i;
                 mesh_app_msg_t msg = {0};
                 msg.src_id = g_device_id;
                 msg.msg_type = MSG_TYPE_BUTTON;
                 msg.data[0] = button_char;
-                msg.data[1] = current_state ? '1' : '0';  // '0' or '1'
+                msg.data[1] = current_state ? '1' : '0';
                 msg.data_len = 2;
                 mesh_queue_to_node(&msg, TX_PRIO_NORMAL, NULL);
 
@@ -148,10 +183,12 @@ void button_task(void* arg) {
 // LED Initialization
 // ====================
 
+/**
+ * @brief Initialise the WS2812 NeoPixel via the RMT peripheral.
+ */
 void led_init(void) {
     ESP_LOGI(TAG, "Initializing NeoPixel LED on GPIO %d", LED_GPIO);
 
-    // LED strip configuration for ESP-IDF 5.x
     led_strip_config_t strip_config = {
         .strip_gpio_num = LED_GPIO,
         .max_leds = 1,
@@ -160,7 +197,6 @@ void led_init(void) {
         .flags.invert_out = false,
     };
 
-    // RMT backend configuration
     led_strip_rmt_config_t rmt_config = {
         .clk_src = RMT_CLK_SRC_DEFAULT,
         .resolution_hz = 10 * 1000 * 1000,  // 10MHz
@@ -174,7 +210,6 @@ void led_init(void) {
         return;
     }
 
-    // Clear LED
     led_strip_clear(g_led_strip);
 
     ESP_LOGI(TAG, "NeoPixel LED initialized");
@@ -184,14 +219,17 @@ void led_init(void) {
 // LED Set Color
 // ====================
 
+/**
+ * @brief Set the NeoPixel to the given RGB colour at ~2 % brightness.
+ * @param r Red component (0-255 before scaling).
+ * @param g Green component (0-255 before scaling).
+ * @param b Blue component (0-255 before scaling).
+ */
 void led_set_color(uint8_t r, uint8_t g, uint8_t b) {
     if (g_led_strip == NULL) {
         return;
     }
 
-    // Reduce brightness to ~2% (divide by 51 to achieve 1/51 = ~2%
-    // brightness) This is equivalent to Adafruit NeoPixel brightness
-    // setting of 5/255
     r = r / 51;
     g = g / 51;
     b = b / 51;
@@ -218,6 +256,11 @@ void led_flash_cyan(void) {
 // LED Task
 // ====================
 
+/**
+ * @brief FreeRTOS task: update the NeoPixel colour to reflect mesh state.
+ *
+ * Also handles OTA blue indication and short cyan flash after a button press.
+ */
 void led_task(void* arg) {
     ESP_LOGI(TAG, "LED task started");
 
@@ -225,17 +268,14 @@ void led_task(void* arg) {
         vTaskDelay(pdMS_TO_TICKS(LED_UPDATE_INTERVAL_MS));
 
         if (g_ota_in_progress) {
-            // Blue during OTA
             led_set_color(0, 0, 255);
             continue;
         }
 
-        uint32_t current_time = esp_timer_get_time() / 1000;  // Convert to ms
+        uint32_t current_time = esp_timer_get_time() / 1000;
 
-        // Check if flash is active
         if (g_led_flash_active) {
             if (current_time < g_led_flash_end_time) {
-                // Flash cyan
                 led_set_color(0, 255, 255);
                 continue;
             } else {
@@ -243,15 +283,11 @@ void led_task(void* arg) {
             }
         }
 
-        // Normal status indication
         if (g_mesh_connected) {
-            // Green - fully connected and operational
             led_set_color(0, 255, 0);
         } else if (g_mesh_started) {
-            // Yellow - mesh started but not connected
             led_set_color(255, 255, 0);
         } else {
-            // Red - not connected to mesh
             led_set_color(255, 0, 0);
         }
     }

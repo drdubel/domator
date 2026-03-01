@@ -1,3 +1,19 @@
+/**
+ * @file node_relay.c
+ * @brief Relay board driver and button handling for 8-relay and 16-relay nodes.
+ *
+ * Supports two hardware variants:
+ *  - BOARD_TYPE_8_RELAY  – 8 direct-GPIO relay outputs + 8 physical buttons.
+ *  - BOARD_TYPE_16_RELAY – 16-output 74HC595 shift-register chain.
+ *
+ * Responsibilities:
+ *  - Initialise relay outputs and restore persisted state from NVS on boot.
+ *  - Provide relay_set() / relay_toggle() with mutex protection.
+ *  - Send state confirmation messages to the root after every change.
+ *  - Handle relay command strings arriving from the mesh (root → relay).
+ *  - Detect and debounce physical buttons mounted on relay boards.
+ */
+
 #include <inttypes.h>
 #include <string.h>
 
@@ -10,13 +26,15 @@
 
 static const char* TAG = "NODE_RELAY";
 
-// Relay initialization flag to prevent operations before init complete
+/** @brief Initialization guard: set to true once hardware setup is complete. */
 static bool g_relay_initialized = false;
 
 // ====================
 // Helper Functions
 // ====================
 
+/** @brief Safely increment the global button press counter under the stats
+ * mutex. */
 static void stats_increment_button_presses(void) {
     if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         g_stats.button_presses++;
@@ -28,6 +46,10 @@ static void stats_increment_button_presses(void) {
 // NVS Flash Storage for Relay States
 // ====================
 
+/**
+ * @brief Persist g_relay_outputs to NVS so relay states survive a reboot.
+ *        Writes a 16-bit value under the "relay_states" namespace.
+ */
 void relay_save_states_to_nvs(void) {
     nvs_handle_t nvs_handle;
     esp_err_t err = nvs_open("relay_states", NVS_READWRITE, &nvs_handle);
@@ -49,6 +71,10 @@ void relay_save_states_to_nvs(void) {
     nvs_close(nvs_handle);
 }
 
+/**
+ * @brief Load relay states from NVS and apply them to the hardware.
+ *        If no saved state exists, all relays remain OFF.
+ */
 void relay_load_states_from_nvs(void) {
     nvs_handle_t nvs_handle;
     esp_err_t err = nvs_open("relay_states", NVS_READONLY, &nvs_handle);
@@ -62,7 +88,6 @@ void relay_load_states_from_nvs(void) {
     if (err == ESP_OK) {
         g_relay_outputs = saved_outputs;
         ESP_LOGI(TAG, "Loaded relay states from NVS: 0x%04X", g_relay_outputs);
-        // Apply loaded states to hardware
         if (g_board_type == BOARD_TYPE_8_RELAY) {
             for (int i = 0; i < MAX_RELAYS_8; i++) {
                 bool state = (g_relay_outputs & (1 << i)) != 0;
@@ -86,9 +111,10 @@ void relay_load_states_from_nvs(void) {
 // Board Detection
 // ====================
 
+/**
+ * @brief Log the detected board type and relay count.
+ */
 void relay_board_detect(void) {
-    // This is called during hardware detection in domator_mesh.c
-    // The detection is already done in detect_hardware_type()
     ESP_LOGI(
         TAG, "Board type: %s, relays: %d",
         g_board_type == BOARD_TYPE_16_RELAY ? "16-RELAY" : "8-RELAY",
@@ -99,23 +125,24 @@ void relay_board_detect(void) {
 // 16-Relay Shift Register Control
 // ====================
 
+/**
+ * @brief Shift 16 bits out to the 74HC595 chain, MSB first, then latch.
+ * @param bits Bitmask where bit N controls relay N.
+ */
 void relay_write_shift_register(uint16_t bits) {
     if (g_board_type != BOARD_TYPE_16_RELAY) {
         return;
     }
 
-    // Disable outputs while shifting
     gpio_set_level(RELAY_16_PIN_OE, 1);
     gpio_set_level(RELAY_16_PIN_LATCH, 0);
 
-    // Shift out 16 bits, MSB first
     for (int i = 15; i >= 0; i--) {
         gpio_set_level(RELAY_16_PIN_CLOCK, 0);
         gpio_set_level(RELAY_16_PIN_DATA, (bits & (1u << i)) ? 1 : 0);
         gpio_set_level(RELAY_16_PIN_CLOCK, 1);
     }
 
-    // Latch the data and enable outputs
     gpio_set_level(RELAY_16_PIN_LATCH, 1);
     gpio_set_level(RELAY_16_PIN_OE, 0);
 }
@@ -124,6 +151,11 @@ void relay_write_shift_register(uint16_t bits) {
 // Relay Control
 // ====================
 
+/**
+ * @brief Set a single relay output to the given state.
+ * @param index Zero-based relay index.
+ * @param state true = ON, false = OFF.
+ */
 void relay_set(int index, bool state) {
     int max_relays =
         (g_board_type == BOARD_TYPE_16_RELAY) ? MAX_RELAYS_16 : MAX_RELAYS_8;
@@ -133,13 +165,11 @@ void relay_set(int index, bool state) {
         return;
     }
 
-    // Safety check: ensure relay is initialized before operations
     if (!g_relay_initialized) {
         ESP_LOGW(TAG, "Relay not initialized, skipping operation");
         return;
     }
 
-    // Safety check: ensure mutex exists
     if (g_relay_mutex == NULL) {
         ESP_LOGE(TAG, "Relay mutex not created, cannot operate relay");
         return;
@@ -151,16 +181,13 @@ void relay_set(int index, bool state) {
     }
 
     if (g_board_type == BOARD_TYPE_8_RELAY) {
-        // Direct GPIO control for 8-relay board
         gpio_set_level(g_relay_8_pins[index], state ? 1 : 0);
-        // Update shadow state
         if (state) {
             g_relay_outputs |= (1 << index);
         } else {
             g_relay_outputs &= ~(1 << index);
         }
     } else {
-        // Shift register control for 16-relay board
         if (state) {
             g_relay_outputs |= (1 << index);
         } else {
@@ -174,6 +201,10 @@ void relay_set(int index, bool state) {
     ESP_LOGI(TAG, "Relay %d set to %s", index, state ? "ON" : "OFF");
 }
 
+/**
+ * @brief Toggle a single relay output.
+ * @param index Zero-based relay index.
+ */
 void relay_toggle(int index) {
     int max_relays =
         (g_board_type == BOARD_TYPE_16_RELAY) ? MAX_RELAYS_16 : MAX_RELAYS_8;
@@ -183,13 +214,11 @@ void relay_toggle(int index) {
         return;
     }
 
-    // Safety check: ensure relay is initialized
     if (!g_relay_initialized) {
         ESP_LOGW(TAG, "Relay not initialized, skipping operation");
         return;
     }
 
-    // Safety check: ensure mutex exists
     if (g_relay_mutex == NULL) {
         ESP_LOGE(TAG, "Relay mutex not created, cannot operate relay");
         return;
@@ -208,6 +237,11 @@ void relay_toggle(int index) {
     relay_set(index, new_state);
 }
 
+/**
+ * @brief Return the current on/off state of a relay.
+ * @param index Zero-based relay index.
+ * @return true if ON, false if OFF or on error.
+ */
 bool relay_get_state(int index) {
     int max_relays =
         (g_board_type == BOARD_TYPE_16_RELAY) ? MAX_RELAYS_16 : MAX_RELAYS_8;
@@ -216,12 +250,10 @@ bool relay_get_state(int index) {
         return false;
     }
 
-    // Safety check: ensure relay is initialized
     if (!g_relay_initialized) {
         return false;
     }
 
-    // Safety check: ensure mutex exists
     if (g_relay_mutex == NULL) {
         return false;
     }
@@ -240,15 +272,17 @@ bool relay_get_state(int index) {
 // State Sync
 // ====================
 
+/**
+ * @brief Send a MSG_TYPE_RELAY_STATE confirmation for a single relay to root.
+ * @param index Zero-based relay index.
+ */
 void relay_send_state_confirmation(int index) {
     bool state = relay_get_state(index);
 
-    // Create relay state message: "A0" means relay 'A' is OFF, "A1" means ON
     mesh_app_msg_t msg = {0};
     msg.msg_type = MSG_TYPE_RELAY_STATE;
     msg.src_id = g_device_id;
 
-    // Format: index + state (e.g., "A0", "A1", "P0", "P1")
     char relay_char = 'A' + index;
     char state_char = state ? '1' : '0';
     msg.data[0] = relay_char;
@@ -261,6 +295,9 @@ void relay_send_state_confirmation(int index) {
              state_char);
 }
 
+/**
+ * @brief Send MSG_TYPE_RELAY_STATE confirmations for all relays to the root.
+ */
 void relay_sync_all_states(void) {
     int max_relays =
         (g_board_type == BOARD_TYPE_16_RELAY) ? MAX_RELAYS_16 : MAX_RELAYS_8;
@@ -276,13 +313,23 @@ void relay_sync_all_states(void) {
 // Command Handling
 // ====================
 
+/**
+ * @brief Parse and execute a relay command string.
+ *
+ * Supported formats:
+ *  - "a"      – toggle relay 0
+ *  - "a0"     – set relay 0 OFF
+ *  - "a1"     – set relay 0 ON
+ *  - "S"/"sync" – sync all states to root
+ *
+ * @param cmd_data Null-terminated command string.
+ */
 void relay_handle_command(const char* cmd_data) {
     if (cmd_data == NULL || strlen(cmd_data) == 0) {
         ESP_LOGW(TAG, "Empty relay command");
         return;
     }
 
-    // Safety check: ensure relay is initialized before processing commands
     if (!g_relay_initialized) {
         ESP_LOGW(TAG, "Relay not initialized, ignoring command: %s", cmd_data);
         return;
@@ -291,15 +338,12 @@ void relay_handle_command(const char* cmd_data) {
     int max_relays =
         (g_board_type == BOARD_TYPE_16_RELAY) ? MAX_RELAYS_16 : MAX_RELAYS_8;
 
-    // Handle sync request
     if (strcmp(cmd_data, "S") == 0 || strcmp(cmd_data, "sync") == 0) {
         ESP_LOGI(TAG, "Received sync request");
         relay_sync_all_states();
         return;
     }
 
-    // Handle relay command: "a" = toggle relay 0, "a0" = set relay 0 OFF, "a1"
-    // = set relay 0 ON
     char relay_char = cmd_data[0];
     int index = -1;
 
@@ -313,14 +357,10 @@ void relay_handle_command(const char* cmd_data) {
     }
 
     if (strlen(cmd_data) == 1) {
-        // Toggle command
         ESP_LOGI(TAG, "Toggle relay %d", index);
         relay_toggle(index);
-
-        // Track button press
         stats_increment_button_presses();
     } else if (strlen(cmd_data) == 2) {
-        // Set command
         char state_char = cmd_data[1];
         if (state_char == '0') {
             ESP_LOGI(TAG, "Set relay %d OFF", index);
@@ -332,28 +372,30 @@ void relay_handle_command(const char* cmd_data) {
             ESP_LOGW(TAG, "Invalid state character: %c", state_char);
             return;
         }
-
-        // Track button press
         stats_increment_button_presses();
     } else {
         ESP_LOGW(TAG, "Invalid command length: %s", cmd_data);
         return;
     }
 
-    // Send state confirmation
     relay_send_state_confirmation(index);
 }
 
 // ====================
-// Physical Button Handling
+// Physical Button ISR
 // ====================
 
+/**
+ * @brief GPIO ISR handler for relay board buttons.
+ *        Notifies relay_button_task() by setting the bit corresponding to the
+ *        button index in the task notification value.
+ * @param arg Button index cast to (void*).
+ */
 static void IRAM_ATTR relay_button_isr_handler(void* arg) {
     uint32_t button_index = (uint32_t)arg;
 
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
-    // Notify task, set bit corresponding to button index
     xTaskNotifyFromISR(button_task_handle, (1 << button_index), eSetBits,
                        &xHigherPriorityTaskWoken);
 
@@ -362,10 +404,12 @@ static void IRAM_ATTR relay_button_isr_handler(void* arg) {
     }
 }
 
+/**
+ * @brief Configure relay board button GPIOs and install ISR handlers.
+ */
 void relay_button_init(void) {
     ESP_LOGI(TAG, "Initializing relay board buttons");
 
-    // Configure all button pins as input with pull-down
     for (int i = 0; i < NUM_BUTTONS; i++) {
         gpio_config_t io_conf = {
             .pin_bit_mask = (1ULL << g_relay_button_pins[i]),
@@ -376,7 +420,6 @@ void relay_button_init(void) {
         };
         gpio_config(&io_conf);
 
-        // Initialize button states
         g_relay_button_states[i].last_state =
             gpio_get_level(g_relay_button_pins[i]);
         g_relay_button_states[i].last_bounce_time = 0;
@@ -395,6 +438,10 @@ void relay_button_init(void) {
     }
 }
 
+/**
+ * @brief FreeRTOS task: handle button interrupts on relay boards and forward
+ *        button state changes to the root node via MSG_TYPE_BUTTON.
+ */
 void relay_button_task(void* arg) {
     ESP_LOGI(TAG, "Relay button task started");
 
@@ -418,8 +465,7 @@ void relay_button_task(void* arg) {
             int gpio_num = g_relay_button_pins[i];
 
             int current_state = gpio_get_level(gpio_num);
-            uint32_t current_time =
-                esp_timer_get_time() / 1000;  // Convert to ms
+            uint32_t current_time = esp_timer_get_time() / 1000;
 
             if (current_state == g_relay_button_states[i].last_state) {
                 continue;
@@ -440,13 +486,12 @@ void relay_button_task(void* arg) {
 
                 stats_increment_button_presses();
 
-                // Send button press message to root
-                char button_char = 'a' + i;  // 'a'-'g'
+                char button_char = 'a' + i;
                 mesh_app_msg_t msg = {0};
                 msg.src_id = g_device_id;
                 msg.msg_type = MSG_TYPE_BUTTON;
                 msg.data[0] = button_char;
-                msg.data[1] = current_state ? '1' : '0';  // '0' or '1'
+                msg.data[1] = current_state ? '1' : '0';
                 msg.data_len = 2;
                 mesh_queue_to_node(&msg, TX_PRIO_NORMAL, NULL);
 
@@ -467,11 +512,14 @@ void relay_button_task(void* arg) {
 // Relay Initialization
 // ====================
 
+/**
+ * @brief Configure all relay output GPIOs (or shift-register pins) and
+ *        restore the last saved state from NVS.
+ */
 void relay_init(void) {
     ESP_LOGI(TAG, "Initializing relay board");
 
     if (g_board_type == BOARD_TYPE_8_RELAY) {
-        // Initialize 8 relay output pins
         gpio_config_t io_conf = {0};
         io_conf.intr_type = GPIO_INTR_DISABLE;
         io_conf.mode = GPIO_MODE_OUTPUT;
@@ -481,17 +529,15 @@ void relay_init(void) {
         for (int i = 0; i < MAX_RELAYS_8; i++) {
             io_conf.pin_bit_mask = (1ULL << g_relay_8_pins[i]);
             gpio_config(&io_conf);
-            gpio_set_level(g_relay_8_pins[i], 0);  // All relays OFF initially
+            gpio_set_level(g_relay_8_pins[i], 0);
         }
 
-        // Initialize status LED
         io_conf.pin_bit_mask = (1ULL << RELAY_8_STATUS_LED);
         gpio_config(&io_conf);
-        gpio_set_level(RELAY_8_STATUS_LED, 0);  // Status LED OFF initially
+        gpio_set_level(RELAY_8_STATUS_LED, 0);
 
         ESP_LOGI(TAG, "8-relay board initialized");
     } else {
-        // Initialize shift register pins for 16-relay board
         gpio_config_t io_conf = {0};
         io_conf.intr_type = GPIO_INTR_DISABLE;
         io_conf.mode = GPIO_MODE_OUTPUT;
@@ -502,13 +548,11 @@ void relay_init(void) {
              (1ULL << RELAY_16_PIN_LATCH) | (1ULL << RELAY_16_PIN_OE));
         gpio_config(&io_conf);
 
-        // Set initial states
-        gpio_set_level(RELAY_16_PIN_OE, 0);  // Enable outputs
+        gpio_set_level(RELAY_16_PIN_OE, 0);
         gpio_set_level(RELAY_16_PIN_DATA, 0);
         gpio_set_level(RELAY_16_PIN_CLOCK, 0);
         gpio_set_level(RELAY_16_PIN_LATCH, 0);
 
-        // Initialize all relays to OFF
         g_relay_outputs = 0;
         relay_write_shift_register(g_relay_outputs);
 
@@ -517,7 +561,6 @@ void relay_init(void) {
 
     relay_board_detect();
 
-    // Mark relay as initialized - safe to perform operations now
     g_relay_initialized = true;
 
     ESP_LOGI(TAG, "Relay initialization complete - ready for operations");

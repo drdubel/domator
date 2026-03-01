@@ -1,3 +1,15 @@
+/**
+ * @file mesh_init.c
+ * @brief WiFi and ESP-MESH network initialisation.
+ *
+ * Handles:
+ *  - WiFi driver bootstrap (AP+STA mode with power-save disabled).
+ *  - ESP-MESH configuration: ID, router credentials, AP password, topology,
+ *    root-election parameters, and layer limits.
+ *  - MESH_EVENT and IP_EVENT handlers that manage root election, parent
+ *    connection/disconnection, and MQTT/Telnet lifecycle.
+ */
+
 #include <stdlib.h>
 
 #include "domator_mesh.h"
@@ -5,7 +17,7 @@
 
 static const char* TAG = "MESH_INIT";
 
-// Check whether the station network interface is up (we have an IP)
+/** @brief Returns true when the station netif has an IP address. */
 bool domator_mesh_is_wifi_connected(void) {
     esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
     if (netif == NULL) return false;
@@ -16,20 +28,22 @@ bool domator_mesh_is_wifi_connected(void) {
 // IP Event Handler
 // ====================
 
+/**
+ * @brief Handle IP_EVENT_STA_GOT_IP: start MQTT and Telnet when this node
+ *        has been elected root and has an IP address.  Non-root nodes ignore
+ *        this event.
+ */
 static void ip_event_handler(void* arg, esp_event_base_t event_base,
                              int32_t event_id, void* event_data) {
     if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*)event_data;
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
 
-        // Only initialize MQTT if this node is actually the root
         if (esp_mesh_is_root()) {
             ESP_LOGI(TAG, "This node IS root, initializing MQTT");
             g_is_root = true;
             g_mesh_layer = 1;
 
-            // Initialize MQTT for root node (only if not already initialized)
-            // This prevents multiple MQTT clients on repeated IP events
             extern esp_mqtt_client_handle_t g_mqtt_client;
             if (g_mqtt_client == NULL) {
                 mqtt_init();
@@ -37,7 +51,6 @@ static void ip_event_handler(void* arg, esp_event_base_t event_base,
                 ESP_LOGI(TAG, "MQTT client already initialized, skipping");
             }
 
-            // Start mDNS for local network discovery
             telnet_start();
         } else {
             ESP_LOGI(TAG, "Got IP but not root (layer %d), skipping MQTT init",
@@ -46,6 +59,16 @@ static void ip_event_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
+// ====================
+// Mesh Event Handler
+// ====================
+
+/**
+ * @brief Handle MESH_EVENT_* events: track mesh start/stop, parent
+ *        connect/disconnect, root role changes, and child notifications.
+ *        On parent connect, sends a type-info message to the root so it can
+ *        populate its node registry.
+ */
 static void mesh_event_handler(void* arg, esp_event_base_t event_base,
                                int32_t event_id, void* event_data) {
     switch (event_id) {
@@ -108,7 +131,7 @@ static void mesh_event_handler(void* arg, esp_event_base_t event_base,
             }
 
             ESP_LOGI(TAG,
-                     "✓ Parent connected - Layer: %d, Mesh connected, status "
+                     "Parent connected - Layer: %d, Mesh connected, status "
                      "reports will be sent to root",
                      g_mesh_layer);
             break;
@@ -173,77 +196,21 @@ static void mesh_event_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
-bool mesh_stop_and_connect_sta(uint32_t timeout_ms) {
-    ESP_LOGI(TAG, "Stopping mesh...");
+// ====================
+// Network Initialisation
+// ====================
 
-    esp_err_t err = esp_mesh_stop();
-    if (err == ESP_ERR_MESH_NOT_INIT) {
-        ESP_LOGW(TAG, "mesh is not inited");
-    } else {
-        ESP_ERROR_CHECK(err);
-    }
-
-    err = esp_mesh_deinit();
-    if (err == ESP_ERR_MESH_NOT_INIT) {
-        ESP_LOGW(TAG, "mesh deinit called but mesh not inited");
-    } else {
-        ESP_ERROR_CHECK(err);
-    }
-
-    // Unregister mesh and IP event handlers to avoid duplicate handlers
-    // when re-initializing the network later.
-    err = esp_event_handler_unregister(MESH_EVENT, ESP_EVENT_ANY_ID,
-                                       &mesh_event_handler);
-    if (err != ESP_OK && err != ESP_ERR_INVALID_ARG &&
-        err != ESP_ERR_NOT_FOUND) {
-        ESP_ERROR_CHECK(err);
-    }
-
-    err = esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP,
-                                       &ip_event_handler);
-    if (err != ESP_OK && err != ESP_ERR_INVALID_ARG &&
-        err != ESP_ERR_NOT_FOUND) {
-        ESP_ERROR_CHECK(err);
-    }
-
-    ESP_ERROR_CHECK(esp_wifi_disconnect());
-
-    wifi_config_t sta_config = {0};
-
-    sta_config.sta.channel = 0;  // auto-detect
-    strcpy((char*)sta_config.sta.ssid, CONFIG_ROUTER_SSID);
-    strcpy((char*)sta_config.sta.password, CONFIG_ROUTER_PASSWD);
-    ESP_LOGI(TAG, "STA SSID: %s", sta_config.sta.ssid);
-    ESP_LOGI(TAG, "STA PASSWORD: %s", sta_config.sta.password);
-
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_config));
-    ESP_ERROR_CHECK(esp_wifi_connect());
-
-    ESP_LOGI(TAG, "Connecting to router for OTA...");
-
-    uint64_t start_ms = esp_timer_get_time() / 1000;  // ms
-
-    while (1) {
-        wifi_ap_record_t ap_info;
-        if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
-            ESP_LOGI(TAG, "Connected to router: %s", ap_info.ssid);
-            return true;
-        }
-
-        if (timeout_ms > 0 &&
-            (esp_timer_get_time() / 1000) - start_ms >= timeout_ms) {
-            ESP_LOGW(TAG, "Timeout connecting to AP after %u ms",
-                     (unsigned)timeout_ms);
-            return false;
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-}
-
+/**
+ * @brief Initialise WiFi and the ESP-MESH stack.
+ *
+ * Steps:
+ *  1. Create the default netifs and start WiFi in AP+STA mode.
+ *  2. Initialise the mesh stack and register event handlers.
+ *  3. Configure mesh ID, router SSID/password, softAP password, topology,
+ *     parent-switching thresholds, and root-healing delay.
+ *  4. Start the mesh.  Root election happens asynchronously.
+ */
 void mesh_network_init(void) {
-    // WiFi init
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
@@ -256,41 +223,43 @@ void mesh_network_init(void) {
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    // Disable WiFi power save to improve mesh performance
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
 
-    // Mesh init
     ESP_ERROR_CHECK(esp_mesh_init());
 
-    // Register event handlers
     ESP_ERROR_CHECK(esp_event_handler_register(MESH_EVENT, ESP_EVENT_ANY_ID,
                                                &mesh_event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
                                                &ip_event_handler, NULL));
 
-    // Mesh config
     mesh_cfg_t cfg = MESH_INIT_CONFIG_DEFAULT();
 
-    // Mesh ID
-    uint8_t mesh_id[6] = CONFIG_MESH_ID;
+    uint8_t mesh_id[6] = {0};
+    memcpy(mesh_id, CONFIG_MESH_ID, sizeof(mesh_id));
     memcpy(&cfg.mesh_id, mesh_id, 6);
 
-    // Router (your WiFi AP)
-    cfg.channel = 0;  // auto-detect
+    cfg.channel = 0;
     cfg.router.ssid_len = strlen(CONFIG_ROUTER_SSID);
     memcpy(cfg.router.ssid, CONFIG_ROUTER_SSID, cfg.router.ssid_len);
     memcpy(cfg.router.password, CONFIG_ROUTER_PASSWD,
            strlen(CONFIG_ROUTER_PASSWD));
 
-    // Mesh softAP
     cfg.mesh_ap.max_connection = 6;
     memcpy(cfg.mesh_ap.password, CONFIG_MESH_AP_PASSWD,
            strlen(CONFIG_MESH_AP_PASSWD));
 
     ESP_ERROR_CHECK(esp_mesh_set_config(&cfg));
 
-    // Self-organized root election based on RSSI
     ESP_ERROR_CHECK(esp_mesh_set_self_organized(true, true));
+
+    mesh_switch_parent_t switch_parent_paras = {0};
+    esp_mesh_get_switch_parent_paras(&switch_parent_paras);
+    switch_parent_paras.duration_ms = 10000;
+    switch_parent_paras.cnx_rssi = -55;
+    switch_parent_paras.select_rssi = -50;
+    switch_parent_paras.switch_rssi = -55;
+    switch_parent_paras.backoff_rssi = -70;
+    ESP_ERROR_CHECK(esp_mesh_set_switch_parent_paras(&switch_parent_paras));
 
     ESP_ERROR_CHECK(esp_mesh_set_max_layer(4));
 
@@ -298,7 +267,6 @@ void mesh_network_init(void) {
     ESP_ERROR_CHECK(esp_mesh_set_topology(MESH_TOPO_TREE));
     ESP_ERROR_CHECK(esp_mesh_set_root_healing_delay(10000));
 
-    // Start mesh
     ESP_ERROR_CHECK(esp_mesh_start());
 
     ESP_LOGI(TAG, "Mesh initialized, waiting for root election...");

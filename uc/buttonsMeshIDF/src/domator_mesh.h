@@ -1,5 +1,19 @@
 #pragma once
 
+/**
+ * @file domator_mesh.h
+ * @brief Shared types, constants, globals, and function declarations for
+ *        the Domator ESP-MESH firmware.
+ *
+ * This header is included by every compilation unit. It defines:
+ *  - Timing and size constants for buttons, LEDs, mesh, and health checks.
+ *  - GPIO mappings for all supported hardware boards.
+ *  - Wire-level message type codes used between mesh nodes.
+ *  - All shared data structures (messages, routing tables, peer health, etc.).
+ *  - extern declarations for every global variable.
+ *  - Forward declarations for all public functions grouped by source file.
+ */
+
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
@@ -105,7 +119,9 @@
 #define DEVICE_TYPE_SWITCH 'S'
 #define DEVICE_TYPE_RELAY 'R'
 
-// ============ NODE TYPES ============
+// ====================
+// Node Types
+// ====================
 typedef enum {
     NODE_TYPE_UNKNOWN = 0,
     NODE_TYPE_ROOT,
@@ -114,17 +130,17 @@ typedef enum {
     NODE_TYPE_RELAY_16,
 } node_type_t;
 
-// Relay board types
+/** @brief Hardware board variant. */
 typedef enum { BOARD_TYPE_8_RELAY = 0, BOARD_TYPE_16_RELAY } board_type_t;
 
-// Transmission priority levels
+/** @brief Message transmission priority. */
 typedef enum { TX_PRIO_NORMAL = 0, TX_PRIO_HIGH } tx_priority_t;
 
 // ====================
 // Data Structures
 // ====================
 
-// Mesh application message structure
+/** @brief Wire-format application message exchanged between mesh nodes. */
 typedef struct {
     uint64_t src_id;
     uint8_t msg_type;
@@ -134,7 +150,7 @@ typedef struct {
     char data[MESH_MSG_DATA_SIZE];
 } __attribute__((packed)) mesh_app_msg_t;
 
-// Device statistics
+/** @brief Runtime counters for this device. */
 typedef struct {
     uint32_t button_presses;
     uint32_t mesh_send_failed;
@@ -145,7 +161,7 @@ typedef struct {
     uint32_t mesh_disconnects;
 } device_stats_t;
 
-// Button state
+/** @brief Debounce and timing state for a single button. */
 typedef struct {
     int last_state;
     uint32_t last_bounce_time;
@@ -153,42 +169,42 @@ typedef struct {
     uint32_t last_release_time;
 } button_state_t;
 
-// LED color
+/** @brief RGB colour triplet for the NeoPixel status LED. */
 typedef struct {
     uint8_t r;
     uint8_t g;
     uint8_t b;
 } led_color_t;
 
-// Routing target for button → relay mapping
+/** @brief One relay target within a button routing entry. */
 typedef struct {
     uint64_t target_node_id;
     char relay_command[2];
 } route_target_t;
 
-// Button routing entry
+/** @brief All routing targets for a single button. */
 typedef struct {
     route_target_t* targets;
     uint8_t num_targets;
 } button_route_t;
 
-// Connection map entry for a device
+/** @brief Full routing configuration for one device (all buttons). */
 typedef struct {
-    button_route_t
-        buttons[MAX_BUTTONS_EXTENDED];  // Support up to 24 buttons (a-x)
+    button_route_t buttons[MAX_BUTTONS_EXTENDED];
     uint64_t device_id;
 } device_connections_t;
 
+/** @brief Per-device button type configuration (toggle=0, stateful=1 per slot).
+ */
 typedef struct {
     uint64_t device_id;
-    uint8_t
-        types[MAX_BUTTONS];  // Button type per button (0=toggle, 1=stateful)
+    uint8_t types[MAX_BUTTONS];
 } button_types_t;
 
-// Peer health tracking
+/** @brief Runtime health record for a peer node. */
 typedef struct {
     uint64_t device_id;
-    mesh_addr_t mac_addr;  // MAC address for direct routing
+    mesh_addr_t mac_addr;
     uint64_t last_seen;
     uint32_t disconnect_count;
     int8_t last_rssi;
@@ -219,8 +235,7 @@ extern bool g_mqtt_connected;
 // Routing configuration (root only)
 extern device_connections_t g_connections[MAX_NODES];
 extern uint8_t g_num_devices;
-extern button_types_t g_button_types[MAX_NODES];  // Button type per device
-                                                  // (0=toggle, 1=stateful)
+extern button_types_t g_button_types[MAX_NODES];
 extern SemaphoreHandle_t g_connections_mutex;
 extern SemaphoreHandle_t g_button_types_mutex;
 
@@ -231,7 +246,7 @@ extern uint32_t g_last_root_contact;
 
 // Relay state (relay nodes)
 extern board_type_t g_board_type;
-extern uint16_t g_relay_outputs;  // 16-bit state for all relays
+extern uint16_t g_relay_outputs;
 extern button_state_t g_relay_button_states[NUM_RELAY_BUTTONS];
 extern const int g_relay_8_pins[MAX_RELAYS_8];
 extern const int g_relay_button_pins[NUM_RELAY_BUTTONS];
@@ -255,56 +270,209 @@ extern bool g_ota_requested;
 extern mesh_addr_t g_broadcast_addr;
 
 // ============ mesh_init.c ============
+
+/** @brief Initialise WiFi, the ESP-MESH stack, and register all event handlers.
+ */
 void mesh_network_init(void);
-// Returns true when the station network interface is up (we have IP
-// connectivity)
+
+/** @brief Returns true when the station netif has an IP address. */
 bool domator_mesh_is_wifi_connected(void);
-// Stop mesh and switch to STA mode, try to connect to router for up to
-// `timeout_ms` milliseconds. Returns true if connected, false on timeout.
+
+/**
+ * @brief Stop the mesh stack and connect directly to the router as a plain STA.
+ * @param timeout_ms Maximum time in milliseconds to wait for an IP address.
+ * @return true on successful connection, false on timeout.
+ */
 bool mesh_stop_and_connect_sta(uint32_t timeout_ms);
 
-// node_switch.c (switch node functions)
+// ============ node_switch.c ============
+
+/** @brief Configure all button GPIOs and install ISR service. */
 void button_init(void);
+
+/**
+ * @brief FreeRTOS task: handles debounced button events and forwards state
+ *        changes to the root node via the mesh TX queue.
+ */
 void button_task(void* arg);
+
+/** @brief Initialise the NeoPixel LED strip (RMT backend). */
 void led_init(void);
+
+/**
+ * @brief FreeRTOS task: updates the status LED colour based on mesh state
+ *        and handles short flash requests.
+ */
 void led_task(void* arg);
+
+/**
+ * @brief Set the NeoPixel LED to an RGB colour at ~2 % brightness.
+ * @param r Red component (0-255).
+ * @param g Green component (0-255).
+ * @param b Blue component (0-255).
+ */
 void led_set_color(uint8_t r, uint8_t g, uint8_t b);
+
+/** @brief Trigger a short cyan LED flash to acknowledge a button press. */
 void led_flash_cyan(void);
 
 // ============ mesh_comm.c ============
+
+/**
+ * @brief FreeRTOS task: receives incoming mesh packets and dispatches them
+ *        to the appropriate handler (root or leaf).
+ */
 void mesh_rx_task(void* arg);
+
+/**
+ * @brief FreeRTOS task: drains the internal TX queue and sends each packet
+ *        to its destination via the mesh stack.
+ */
 void mesh_tx_task(void* arg);
+
+/**
+ * @brief Enqueue a mesh application message for transmission.
+ * @param msg  Pointer to the message to send (copied internally).
+ * @param prio Transmission priority (normal or high).
+ * @param dest Destination mesh address, or NULL to send to the root node.
+ */
 void mesh_queue_to_node(mesh_app_msg_t* msg, tx_priority_t prio,
                         mesh_addr_t* dest);
+
+/**
+ * @brief FreeRTOS task: periodically publishes a device status report.
+ *        Root nodes publish to MQTT; leaf nodes send a JSON status message
+ *        over the mesh toward the root.
+ */
 void status_report_task(void* arg);
 
 // ============ node_root.c ============
+
+/**
+ * @brief Dispatch an incoming mesh message received while this node is root.
+ * @param from Mesh address of the sender.
+ * @param msg  Pointer to the decoded application message.
+ */
 void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg);
+
+/** @brief Initialise root-only resources (node registry mutex, etc.). */
 void node_root_start(void);
+
+/** @brief Initialise and start the MQTT client (root node only). */
 void mqtt_init(void);
+
+/** @brief Stop the MQTT client and release all root-specific resources. */
 void node_root_stop(void);
+
+/** @brief Build and publish a JSON status report for the root node to MQTT. */
 void root_publish_status(void);
 
 // ============ node_relay.c ============
+
+/** @brief Persist the current relay output bitmask to NVS flash. */
 void relay_save_states_to_nvs(void);
+
+/** @brief Log the detected board type and relay count. */
 void relay_board_detect(void);
+
+/**
+ * @brief Configure all relay output GPIOs (or shift-register pins) and
+ *        restore the last saved state from NVS.
+ */
 void relay_init(void);
+
+/**
+ * @brief Set a single relay output.
+ * @param index Zero-based relay index.
+ * @param state true = ON, false = OFF.
+ */
 void relay_set(int index, bool state);
+
+/**
+ * @brief Toggle a single relay output.
+ * @param index Zero-based relay index.
+ */
 void relay_toggle(int index);
+
+/**
+ * @brief Shift 16 bits out to the 74HC595 shift-register chain (16-relay
+ * board).
+ * @param bits Bitmask where bit N controls relay N.
+ */
 void relay_write_shift_register(uint16_t bits);
+
+/**
+ * @brief Return the current on/off state of a relay.
+ * @param index Zero-based relay index.
+ * @return true if the relay is ON, false otherwise.
+ */
 bool relay_get_state(int index);
+
+/** @brief Send a MSG_TYPE_RELAY_STATE confirmation for every relay to the root.
+ */
 void relay_sync_all_states(void);
+
+/**
+ * @brief Send a single relay state confirmation message toward the root.
+ * @param index Zero-based relay index whose state is being reported.
+ */
 void relay_send_state_confirmation(int index);
+
+/** @brief Configure relay board button GPIOs and install ISR handlers. */
 void relay_button_init(void);
+
+/**
+ * @brief FreeRTOS task: handles button interrupts on relay boards and
+ *        forwards button state changes to the root node.
+ */
 void relay_button_task(void* arg);
+
+/**
+ * @brief Parse and execute a relay command string.
+ *
+ * Command format:
+ *  - "a"  – toggle relay 0
+ *  - "a0" – set relay 0 OFF
+ *  - "a1" – set relay 0 ON
+ *  - "S" or "sync" – sync all relay states to root
+ *
+ * @param cmd_data Null-terminated command string.
+ */
 void relay_handle_command(const char* cmd_data);
 
 // ============ health_ota.c ============
+
+/**
+ * @brief FreeRTOS task: monitors g_ota_requested and triggers OTA update
+ *        after a short countdown, allowing in-flight messages to drain.
+ */
 void ota_task(void* arg);
+
+/**
+ * @brief FreeRTOS task: monitors free heap, increments statistics counters
+ *        on low/critical heap events, and logs warnings.
+ */
 void health_monitor_task(void* arg);
 
 // ============ telnet.c ============
+
+/**
+ * @brief FreeRTOS task: listens for a Telnet TCP connection on port 23 and
+ *        echoes received data back to the client.
+ */
 void telnet_task(void* arg);
+
+/**
+ * @brief Custom vprintf handler that mirrors log output to both UART and
+ *        the active Telnet client socket.
+ * @param fmt printf-style format string.
+ * @param args Variadic argument list.
+ * @return Number of bytes written.
+ */
 int dual_log_vprintf(const char* fmt, va_list args);
+
+/** @brief Start the Telnet server and enable dual UART/Telnet logging. */
 void telnet_start(void);
+
+/** @brief Stop the Telnet server and restore the default log handler. */
 void telnet_stop(void);

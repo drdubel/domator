@@ -1,3 +1,17 @@
+/**
+ * @file telnet.c
+ * @brief Minimal Telnet server and dual UART/Telnet log mirror.
+ *
+ * When the root node gains an IP address, telnet_start() is called to:
+ *  - Install dual_log_vprintf() as the ESP-IDF log backend so every log line
+ *    is written to both UART and the active Telnet socket.
+ *  - Launch telnet_task() which listens on TCP port 23, accepts one client
+ *    at a time, and echoes received data back to the client.
+ *
+ * telnet_stop() (called when the node loses root status) tears down the
+ * server socket, deletes the task, and restores the default log handler.
+ */
+
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,33 +36,41 @@ int telnet_sock = -1;
 static SemaphoreHandle_t log_mutex;
 static int (*prev_log_vprintf)(const char* fmt, va_list args) = NULL;
 
+// ====================
+// Telnet Lifecycle
+// ====================
+
+/**
+ * @brief Start the Telnet server task and enable dual UART/Telnet logging.
+ *        Idempotent: does nothing if telnet_task_handle is already set.
+ *        Creates the log mutex on first invocation.
+ */
 void telnet_start(void) {
     if (telnet_task_handle != NULL) return;
 
-    // Initialize log mutex before enabling dual logger
     if (log_mutex == NULL) {
         log_mutex = xSemaphoreCreateMutex();
     }
 
-    // Enable dual logging (serial + telnet) now that telnet will be started
-    // Save previous vprintf so we can restore it when stopping telnet
     prev_log_vprintf = esp_log_set_vprintf(dual_log_vprintf);
 
     xTaskCreate(telnet_task, "telnet", 8192, NULL, 5, &telnet_task_handle);
 }
 
+/**
+ * @brief Stop the Telnet server, close the active socket, delete the task,
+ *        and restore the previous log vprintf handler.
+ */
 void telnet_stop(void) {
     if (telnet_task_handle != NULL) {
         close(telnet_sock);
         telnet_sock = -1;
 
-        // Restore previous log vprintf if we replaced it
         if (prev_log_vprintf != NULL) {
             esp_log_set_vprintf(prev_log_vprintf);
             prev_log_vprintf = NULL;
         }
 
-        // Disable dual logging (restore default logger)
         esp_log_set_vprintf(NULL);
 
         vTaskDelete(telnet_task_handle);
@@ -56,6 +78,17 @@ void telnet_stop(void) {
     }
 }
 
+// ====================
+// Telnet Server Task
+// ====================
+
+/**
+ * @brief FreeRTOS task: run the Telnet TCP server loop.
+ *
+ * Binds to INADDR_ANY:TELNET_PORT, accepts one client at a time, and
+ * echoes all received data back ("dumb terminal" mode).  Loops back to
+ * accept() after each client disconnects.
+ */
 void telnet_task(void* arg) {
     int listen_sock;
     struct sockaddr_in server_addr, client_addr;
@@ -97,12 +130,26 @@ void telnet_task(void* arg) {
     }
 }
 
+// ====================
+// Dual Log Handler
+// ====================
+
+/**
+ * @brief Custom ESP-IDF vprintf log handler that writes to UART and, if a
+ *        Telnet client is connected, also to the Telnet socket.
+ *
+ * Uses a small stack buffer for the common case; falls back to a heap
+ * allocation for messages that exceed 256 bytes.  Serialised by log_mutex
+ * to prevent interleaved output from multiple tasks.
+ *
+ * @param fmt printf-style format string.
+ * @param args Variadic argument list.
+ * @return Number of characters written.
+ */
 int dual_log_vprintf(const char* fmt, va_list args) {
     int len = 0;
     va_list args_copy;
 
-    // First try with a small stack buffer to avoid heap allocations most of the
-    // time
     char small_buf[256];
     va_copy(args_copy, args);
     len = vsnprintf(small_buf, sizeof(small_buf), fmt, args_copy);
@@ -114,10 +161,8 @@ int dual_log_vprintf(const char* fmt, va_list args) {
     bool used_heap = false;
 
     if (len >= (int)sizeof(small_buf)) {
-        // Need larger buffer, allocate on heap
         out_buf = malloc(len + 1);
         if (out_buf == NULL) {
-            // Allocation failed, truncate to small buffer
             len = sizeof(small_buf) - 1;
             small_buf[len] = '\0';
         } else {
@@ -134,14 +179,12 @@ int dual_log_vprintf(const char* fmt, va_list args) {
 
     xSemaphoreTake(log_mutex, portMAX_DELAY);
 
-    // Always output to serial
     if (used_heap) {
         fwrite(out_buf, 1, len, stdout);
     } else {
         fwrite(small_buf, 1, len, stdout);
     }
 
-    // Also output to telnet if connected
     if (telnet_sock >= 0) {
         if (used_heap) {
             send(telnet_sock, out_buf, len, MSG_DONTWAIT);

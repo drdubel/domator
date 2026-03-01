@@ -234,7 +234,8 @@ void mesh_network_init(void) {
 
     mesh_cfg_t cfg = MESH_INIT_CONFIG_DEFAULT();
 
-    uint8_t mesh_id[6] = CONFIG_MESH_ID;
+    uint8_t mesh_id[6] = {0};
+    memcpy(mesh_id, CONFIG_MESH_ID, sizeof(mesh_id));
     memcpy(&cfg.mesh_id, mesh_id, 6);
 
     cfg.channel = 0;

@@ -297,7 +297,7 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
                          msg->src_id, node_registry[index].avg_ping);
 
                 char topic[64];
-                snprintf(topic, sizeof(topic), "/switch/status/%" PRIu64,
+                snprintf(topic, sizeof(topic), "/switch/state/%" PRIu64,
                          msg->src_id);
                 char payload[32];
                 snprintf(payload, sizeof(payload), "%" PRId32,
@@ -1026,7 +1026,7 @@ void mqtt_init(void) {
     // Strong guard: Only root node should initialize MQTT
     if (!g_is_root) {
         ESP_LOGW(TAG,
-                 "MQTT init called on NON-ROOT node (device_id: " PRIu64
+                 "MQTT init called on NON-ROOT node (device_id: %" PRIu64
                  ", layer: %d) - skipping",
                  g_device_id, g_mesh_layer);
         ESP_LOGW(TAG,
@@ -1035,7 +1035,7 @@ void mqtt_init(void) {
         return;
     }
 
-    ESP_LOGI(TAG, "Initializing MQTT client (ROOT node, device_id: " PRIu64 ")",
+    ESP_LOGI(TAG, "Initializing MQTT client (ROOT node, device_id: %" PRIu64 ")",
              g_device_id);
 
     // Build complete MQTT broker URI

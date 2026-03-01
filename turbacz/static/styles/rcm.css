@@ -648,6 +648,19 @@ body {
     box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
 }
 
+.signal-icon {
+    display: inline-flex;
+    align-items: flex-end;
+    margin-left: 0.5rem;
+    cursor: default;
+    opacity: 0.9;
+    transition: opacity 0.3s ease;
+}
+
+.signal-icon:hover {
+    opacity: 1;
+}
+
 /* Modal */
 .modal {
     display: none;

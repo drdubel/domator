@@ -16,6 +16,7 @@ const State = {
     lights: {},
 
     // Status tracking
+    devicesRssi: {},
     onlineRelays: new Set(),
     onlineSwitches: new Set(),
     upToDateDevices: {},
@@ -114,6 +115,7 @@ let switches = State.switches
 let relays = State.relays
 let connections = State.connections
 let lights = State.lights
+let devices_rssi = State.devicesRssi
 let online_relays = State.onlineRelays
 let online_switches = State.onlineSwitches
 let up_to_date_devices = State.upToDateDevices
@@ -187,16 +189,19 @@ const wsManager = new WebSocketManager('/rcm/ws/', function (event) {
         online_switches = new Set(msg.online_switches)
         up_to_date_devices = msg.up_to_date_devices || {}
         root_id = msg.root_id || null
+        devices_rssi = msg.devices_rssi || {}
         State.root_id = root_id
         State.onlineRelays = online_relays
         State.onlineSwitches = online_switches
         State.upToDateDevices = up_to_date_devices
-        clearRootHighlight()
-        highlightRoot()
+        State.devicesRssi = devices_rssi
         console.log('Online relays:', online_relays)
         console.log('Online switches:', online_switches)
         console.log('Up to date devices:', up_to_date_devices)
         console.log('Root device ID:', root_id)
+        console.log('Devices RSSI:', devices_rssi)
+        clearRootHighlight()
+        highlightRoot()
         updateOnlineStatus()
         return
     }
@@ -206,8 +211,6 @@ const wsManager = new WebSocketManager('/rcm/ws/', function (event) {
         setTimeout(() => clearButtonHighlight(msg.switch_id, msg.button_id), 5000)
         return
     }
-
-
 })
 
 // Connect and start connection monitoring
@@ -1748,6 +1751,34 @@ function getDemoConnections() {
 
 // ========== DEVICE CREATION ==========
 
+// Returns an inline SVG 4-bar signal-strength icon for the given RSSI (dBm)
+// Thresholds: >= -55 → 4 bars green, >= -67 → 3 bars lime,
+//             >= -78 → 2 bars orange, else → 1 bar red, null → 0 bars gray
+function getRssiIcon(rssi) {
+    let bars = 0
+    let color = '#64748b'
+    if (rssi !== null && rssi !== undefined) {
+        if (rssi >= -55) { bars = 4; color = '#10b981' } // green
+        else if (rssi >= -67) { bars = 3; color = '#84cc16' } // lime
+        else if (rssi >= -78) { bars = 2; color = '#f59e0b' } // orange
+        else { bars = 1; color = '#ef4444' } // red
+    }
+    const barHeights = [6, 10, 15, 20]
+    const totalH = 22
+    const barW = 5
+    const gap = 2
+    const totalW = 4 * barW + 3 * gap
+    let svgBars = ''
+    for (let i = 0; i < 4; i++) {
+        const h = barHeights[i]
+        const x = i * (barW + gap)
+        const y = totalH - h
+        const fill = i < bars ? color : '#334155'
+        svgBars += `<rect x="${x}" y="${y}" width="${barW}" height="${h}" rx="1.5" fill="${fill}"/>`
+    }
+    return `<svg width="${totalW}" height="${totalH}" viewBox="0 0 ${totalW} ${totalH}" style="display:inline-block;vertical-align:middle;">${svgBars}</svg>`
+}
+
 function createSwitch(switchId, switchName, buttonCount, x, y) {
     const savedPos = getSavedPosition(`switch-${switchId}`, x, y)
     const savedColor = getSavedColor(`switch-${switchId}`)
@@ -1825,6 +1856,9 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
     }
     const statusDot = `<span class="status-indicator ${statusClass}"></span>`
 
+    const rssiSwitch = devices_rssi[switchId]
+    const rssiTitleSwitch = rssiSwitch !== undefined ? `RSSI: ${rssiSwitch} dBm` : 'RSSI: N/A'
+
     switchDiv.innerHTML = `
                 <div class="device-header">
                     <span>
@@ -1839,6 +1873,7 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
                 </div>
                 <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
                     <div class="device-name device-name-switch-${switchId}" style="flex: 1; margin-bottom: 0; cursor: pointer;">${switchName}</div>
+                    <span class="signal-icon signal-icon-switch-${switchId}" title="${rssiTitleSwitch}">${getRssiIcon(rssiSwitch)}</span>
                     <button class="color-btn" onclick="event.stopPropagation(); showColorPicker(${switchId})" title="Change Color">🎨</button>
                 </div>
                 ${buttonsHTML}
@@ -2045,6 +2080,8 @@ function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
         statusClass = 'status-outdated' // orange/yellow
     }
     const statusDot = `<span class="status-indicator ${statusClass}"></span>`
+    const rssiRelay = devices_rssi[relayId]
+    const rssiTitleRelay = rssiRelay !== undefined ? `RSSI: ${rssiRelay} dBm` : 'RSSI: N/A'
 
     relayDiv.innerHTML = `
                 <div class="device-header">
@@ -2058,7 +2095,10 @@ function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
                         <button class="delete-btn" onclick="event.stopPropagation(); deleteRelay(${relayId})">✕</button>
                     </div>
                 </div>
-                <div class="device-name device-name-relay-${relayId}" style="cursor: pointer;">${relayName}</div>
+                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
+                    <div class="device-name device-name-relay-${relayId}" style="flex: 1; margin-bottom: 0; cursor: pointer;">${relayName}</div>
+                    <span class="signal-icon signal-icon-relay-${relayId}" title="${rssiTitleRelay}">${getRssiIcon(rssiRelay)}</span>
+                </div>
                 ${outputsHTML}
             `
 
@@ -2222,6 +2262,12 @@ function updateOnlineStatus() {
                 }
                 indicator.className = statusClass
             }
+            const rssiIcon = element.querySelector(`.signal-icon-switch-${switchId}`)
+            if (rssiIcon) {
+                const rssi = devices_rssi[parseInt(switchId)]
+                rssiIcon.innerHTML = getRssiIcon(rssi)
+                rssiIcon.title = rssi !== undefined ? `RSSI: ${rssi} dBm` : 'RSSI: N/A'
+            }
         }
     }
 
@@ -2242,6 +2288,12 @@ function updateOnlineStatus() {
                     statusClass = 'status-indicator status-outdated' // orange/yellow
                 }
                 indicator.className = statusClass
+            }
+            const rssiIcon = element.querySelector(`.signal-icon-relay-${relayId}`)
+            if (rssiIcon) {
+                const rssi = devices_rssi[parseInt(relayId)]
+                rssiIcon.innerHTML = getRssiIcon(rssi)
+                rssiIcon.title = rssi !== undefined ? `RSSI: ${rssi} dBm` : 'RSSI: N/A'
             }
         }
     }

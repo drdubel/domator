@@ -9,6 +9,7 @@ class StateManager:
         self._states: dict[int, dict[str, int]] = {}
         self._online_relays: dict[int, int] = {}
         self._online_switches: dict[int, int] = {}
+        self._devices_rssi: dict[int, int] = {}
         self._firmware_versions: dict[int, str] = {}
         self._up_to_date_devices: dict[int, bool] = {}
         self._up_to_date_firmware_versions: dict[str, str] = {}
@@ -38,6 +39,15 @@ class StateManager:
             },
             "/lights/ws/",
         )
+
+    def set_device_rssi(self, device_id: int, rssi: int):
+        self._devices_rssi[device_id] = rssi
+
+    def get_device_rssi(self, device_id: int) -> int | None:
+        return self._devices_rssi.get(device_id)
+
+    def get_devices_rssi(self) -> dict[int, int]:
+        return self._devices_rssi.copy()
 
     def set_up_to_date_firmware_version(self, device_type: str, version: str):
         self._up_to_date_firmware_versions[device_type] = version

@@ -1871,7 +1871,7 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
                 </div>
                 <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
                     <div class="device-name device-name-switch-${switchId}" style="flex: 1; margin-bottom: 0; cursor: pointer;">${switchName}</div>
-                    <span class="ping-time ping-time-switch-${switchId}" title="${pingTitleSwitch}" style="font-size: 0.7rem; color: #94a3b8; white-space: nowrap;">${pingTextSwitch}</span>
+                    <span class="ping-time ping-time-switch-${switchId}" title="${pingTitleSwitch}" style="font-size: 0.85rem; color: #94a3b8; white-space: nowrap;">${pingTextSwitch}</span>
                     <span class="signal-icon signal-icon-switch-${switchId}" title="${rssiTitleSwitch}">${getRssiIcon(rssiSwitch)}</span>
                     <button class="color-btn" onclick="event.stopPropagation(); showColorPicker(${switchId})" title="Change Color">🎨</button>
                 </div>
@@ -1939,8 +1939,7 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
                 const dx = Math.abs(touch.clientX - touchStartPos.x)
                 const dy = Math.abs(touch.clientY - touchStartPos.y)
                 if (dx < 10 && dy < 10) {
-                    highlightDevice(`switch-${switchId
-                        } `)
+                    highlightDevice(`switch-${switchId}`)
                     e.preventDefault()
                 }
             }
@@ -2081,6 +2080,9 @@ function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
     const statusDot = `<span class="status-indicator ${statusClass}"></span>`
     const rssiRelay = devices_rssi[relayId]
     const rssiTitleRelay = rssiRelay !== undefined ? `RSSI: ${rssiRelay} dBm` : 'RSSI: N/A'
+    const pingRelay = devices_ping_times[relayId]
+    const pingTextRelay = pingRelay !== undefined ? `${pingRelay} ms` : '-'
+    const pingTitleRelay = pingRelay !== undefined ? `Ping: ${pingRelay} ms` : 'Ping: N/A'
 
     relayDiv.innerHTML = `
                 <div class="device-header">
@@ -2096,6 +2098,7 @@ function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
                 </div>
                 <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
                     <div class="device-name device-name-relay-${relayId}" style="flex: 1; margin-bottom: 0; cursor: pointer;">${relayName}</div>
+                    <span class="ping-time ping-time-relay-${relayId}" title="${pingTitleRelay}" style="font-size: 0.85rem; color: #94a3b8; white-space: nowrap;">${pingTextRelay}</span>
                     <span class="signal-icon signal-icon-relay-${relayId}" title="${rssiTitleRelay}">${getRssiIcon(rssiRelay)}</span>
                 </div>
                 ${outputsHTML}
@@ -2299,6 +2302,12 @@ function updateOnlineStatus() {
                 const rssi = devices_rssi[parseInt(relayId)]
                 rssiIcon.innerHTML = getRssiIcon(rssi)
                 rssiIcon.title = rssi !== undefined ? `RSSI: ${rssi} dBm` : 'RSSI: N/A'
+            }
+            const pingSpanRelay = element.querySelector(`.ping-time-relay-${relayId}`)
+            if (pingSpanRelay) {
+                const ping = devices_ping_times[parseInt(relayId)]
+                pingSpanRelay.textContent = ping !== undefined ? `${ping} ms` : '-'
+                pingSpanRelay.title = ping !== undefined ? `Ping: ${ping} ms` : 'Ping: N/A'
             }
         }
     }

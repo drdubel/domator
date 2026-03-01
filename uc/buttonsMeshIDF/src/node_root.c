@@ -244,6 +244,15 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
                          "with device %" PRIu64 ". Average ping time: %" PRId32
                          " ms",
                          msg->src_id, node_registry[index].avg_ping);
+
+                char topic[64];
+                snprintf(topic, sizeof(topic), "/switch/status/%" PRIu64,
+                         msg->src_id);
+                char payload[32];
+                snprintf(payload, sizeof(payload), "%" PRId32,
+                         node_registry[index].avg_ping);
+                esp_mqtt_client_publish(g_mqtt_client, topic, payload,
+                                        strlen(payload), 0, 0);
                 break;
             }
 

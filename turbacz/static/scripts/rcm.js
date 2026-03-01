@@ -1220,8 +1220,15 @@ function highlightDevice(deviceId) {
         }
     })
 
-    // Use lookup map for faster connection finding
-    const deviceConnections = connectionLookupMap[deviceId] || []
+    // Use lookup map for faster connection finding; fall back to scanning all connections
+    let deviceConnections = connectionLookupMap[deviceId] || []
+    if (deviceConnections.length === 0) {
+        deviceConnections = jsPlumbInstance.getAllConnections().filter(conn => {
+            const srcBox = conn.source && conn.source.closest ? conn.source.closest('.device-box') : null
+            const tgtBox = conn.target && conn.target.closest ? conn.target.closest('.device-box') : null
+            return (srcBox && srcBox.id === deviceId) || (tgtBox && tgtBox.id === deviceId)
+        })
+    }
 
     // Dim all connections first
     const allConnections = jsPlumbInstance.getAllConnections()
@@ -1236,10 +1243,8 @@ function highlightDevice(deviceId) {
         }
     })
 
+    console.log('deviceConnections for', deviceId, ':', deviceConnections.length)
     deviceConnections.forEach(conn => {
-        const sourceId = conn.sourceId
-        const targetId = conn.targetId
-
         conn.setPaintStyle({ stroke: '#ef4444', strokeWidth: 5 })
         conn.canvas.style.opacity = '1'
         conn.canvas.classList.add('highlighted')
@@ -1251,17 +1256,13 @@ function highlightDevice(deviceId) {
             })
         }
 
-        // Highlight the other end of the connection (whichever side is not the current device)
-        const sourceDeviceMatch = sourceId.match(/^(relay-\d+|switch-\d+)/)
-        const targetDeviceMatch = targetId.match(/^(relay-\d+|switch-\d+)/)
-
-        [sourceDeviceMatch, targetDeviceMatch].forEach(match => {
-            if (match && match[1] !== deviceId) {
-                const el = document.getElementById(match[1])
-                if (el) {
-                    el.classList.add('highlighted')
-                    el.style.opacity = '1'
-                }
+        // Highlight the other end: traverse DOM to find the device-box ancestor
+        [conn.source, conn.target].forEach(endpointEl => {
+            if (!endpointEl) return
+            const box = endpointEl.closest ? endpointEl.closest('.device-box') : null
+            if (box && box.id !== deviceId) {
+                box.classList.add('highlighted')
+                box.style.opacity = '1'
             }
         })
     })

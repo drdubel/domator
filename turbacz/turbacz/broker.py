@@ -250,6 +250,8 @@ async def handle_root_state(payload_str):
 
     data["parent_name"] = parent_name.replace(" ", "\\ ")
 
+    mqtt.client.publish("/switch/cmd/" + str(data["deviceId"]), "P")
+
     if not config.monitoring.send_metrics:
         return
 

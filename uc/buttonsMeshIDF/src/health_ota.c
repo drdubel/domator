@@ -26,12 +26,16 @@
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_timer.h"
+#include "nvs.h"
 
 static const char* TAG = "HEALTH_OTA";
 
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT BIT1
 #define WIFI_MAX_RETRIES 5
+
+#define NVS_OTA_NAMESPACE "ota_state"
+#define NVS_OTA_FAIL_KEY "fail_count"
 
 static EventGroupHandle_t s_wifi_event_group = NULL;
 static int s_retry_count = 0;
@@ -72,6 +76,44 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
         s_retry_count = 0;
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
+}
+
+// ====================
+// OTA Failure Counter (NVS-persisted)
+// ====================
+
+/**
+ * @brief Read the OTA failure counter from NVS.
+ * @return Current failure count, or 0 if not set.
+ */
+static uint8_t ota_get_fail_count(void) {
+    nvs_handle_t handle;
+    uint8_t count = 0;
+    if (nvs_open(NVS_OTA_NAMESPACE, NVS_READONLY, &handle) == ESP_OK) {
+        nvs_get_u8(handle, NVS_OTA_FAIL_KEY, &count);
+        nvs_close(handle);
+    }
+    return count;
+}
+
+/**
+ * @brief Write the OTA failure counter to NVS.
+ * @param count New failure count value.
+ */
+static void ota_set_fail_count(uint8_t count) {
+    nvs_handle_t handle;
+    if (nvs_open(NVS_OTA_NAMESPACE, NVS_READWRITE, &handle) == ESP_OK) {
+        nvs_set_u8(handle, NVS_OTA_FAIL_KEY, count);
+        nvs_commit(handle);
+        nvs_close(handle);
+    }
+}
+
+/**
+ * @brief Reset the OTA failure counter to zero (called after successful OTA).
+ */
+static void ota_reset_fail_count(void) {
+    ota_set_fail_count(0);
 }
 
 // ====================
@@ -208,10 +250,24 @@ esp_err_t mesh_disconnect_and_ota(const char* ssid, const char* password,
 
     ret = esp_https_ota(&ota_cfg);
     if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "OTA complete! Rebooting...");
+        ESP_LOGI(TAG, "OTA complete! Resetting failure counter and rebooting...");
+        ota_reset_fail_count();
         esp_restart();
     } else {
         ESP_LOGE(TAG, "OTA failed: %s", esp_err_to_name(ret));
+        uint8_t fail_count = ota_get_fail_count() + 1;
+        ota_set_fail_count(fail_count);
+        ESP_LOGE(TAG, "OTA failure count: %d / %d", fail_count, OTA_MAX_FAILURES);
+
+        if (fail_count >= OTA_MAX_FAILURES) {
+            ESP_LOGE(TAG, "Max OTA failures reached (%d). Rolling back to previous firmware...",
+                     OTA_MAX_FAILURES);
+            ota_reset_fail_count();
+            esp_ota_mark_app_invalid_rollback_and_reboot();
+            // Does not return
+        }
+
+        ESP_LOGW(TAG, "Rebooting to retry OTA later...");
         esp_restart();
     }
 }
@@ -234,6 +290,16 @@ void ota_task(void* arg) {
 
         if (g_ota_requested) {
             g_ota_requested = false;
+
+            uint8_t fail_count = ota_get_fail_count();
+            if (fail_count >= OTA_MAX_FAILURES) {
+                ESP_LOGE(TAG, "OTA blocked: %d consecutive failures reached limit. "
+                         "Rolling back to previous firmware...", fail_count);
+                ota_reset_fail_count();
+                esp_ota_mark_app_invalid_rollback_and_reboot();
+                continue;
+            }
+
             ota_countdown_active = true;
         }
 
@@ -253,6 +319,21 @@ void ota_task(void* arg) {
 // ====================
 // Health Monitoring
 // ====================
+
+/**
+ * @brief Check OTA failure counter at boot and rollback if limit exceeded.
+ *        Call this early in app_main() to catch reboot loops from failed OTA.
+ */
+void ota_check_rollback_on_boot(void) {
+    uint8_t fail_count = ota_get_fail_count();
+    if (fail_count >= OTA_MAX_FAILURES) {
+        ESP_LOGE(TAG, "Boot: OTA failure count %d >= %d. Rolling back to previous firmware...",
+                 fail_count, OTA_MAX_FAILURES);
+        ota_reset_fail_count();
+        esp_ota_mark_app_invalid_rollback_and_reboot();
+        // Does not return
+    }
+}
 
 /**
  * @brief FreeRTOS task: monitor free heap every 5 seconds and update

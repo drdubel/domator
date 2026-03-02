@@ -25,6 +25,7 @@
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
 #include "esp_system.h"
+#include "esp_task_wdt.h"
 #include "mbedtls/md5.h"
 #include "nvs.h"
 #include "nvs_flash.h"
@@ -40,14 +41,14 @@ node_type_t g_node_type = NODE_TYPE_UNKNOWN;
 char g_firmware_hash[65] = {0};
 device_stats_t g_stats = {0};
 
-bool g_mesh_connected = false;
-bool g_mesh_started = false;
-bool g_is_root = false;
-int g_mesh_layer = 0;
+volatile bool g_mesh_connected = false;
+volatile bool g_mesh_started = false;
+volatile bool g_is_root = false;
+volatile int g_mesh_layer = 0;
 uint64_t g_parent_id = 0;
 
 esp_mqtt_client_handle_t g_mqtt_client = NULL;
-bool g_mqtt_connected = false;
+volatile bool g_mqtt_connected = false;
 
 // Routing configuration (root only)
 device_connections_t g_connections[MAX_NODES] = {0};
@@ -82,8 +83,8 @@ SemaphoreHandle_t g_stats_mutex = NULL;
 TaskHandle_t button_task_handle = NULL;
 TaskHandle_t telnet_task_handle = NULL;
 
-bool g_ota_in_progress = false;
-bool g_ota_requested = false;
+volatile bool g_ota_in_progress = false;
+volatile bool g_ota_requested = false;
 
 mesh_addr_t g_broadcast_addr = {.addr = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}};
 

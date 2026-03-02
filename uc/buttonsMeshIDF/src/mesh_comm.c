@@ -15,6 +15,7 @@
 
 #include "cJSON.h"
 #include "domator_mesh.h"
+#include "esp_task_wdt.h"
 
 static const char* TAG = "MESH_COMM";
 
@@ -63,9 +64,12 @@ void mesh_rx_task(void* arg) {
     uint8_t rx_buf[sizeof(mesh_app_msg_t) + 16];
     int flag;
 
+    esp_task_wdt_add(NULL);
+
     while (true) {
         if (g_ota_in_progress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
+            esp_task_wdt_reset();
             continue;
         }
 
@@ -101,6 +105,7 @@ void mesh_rx_task(void* arg) {
 
         if (g_is_root) {
             root_handle_mesh_message(&from, msg);
+            esp_task_wdt_reset();
             continue;
         }
         switch (msg->msg_type) {
@@ -149,6 +154,7 @@ void mesh_rx_task(void* arg) {
                 break;
             }
         }
+        esp_task_wdt_reset();
     }
 }
 
@@ -173,10 +179,13 @@ static QueueHandle_t queue = NULL;
 void mesh_tx_task(void* arg) {
     queue = xQueueCreate(40, sizeof(tx_item_t*));
 
+    esp_task_wdt_add(NULL);
+
     tx_item_t* item;
     while (true) {
         if (g_ota_in_progress) {
             vTaskDelay(pdMS_TO_TICKS(1000));
+            esp_task_wdt_reset();
             continue;
         }
 
@@ -194,6 +203,7 @@ void mesh_tx_task(void* arg) {
         free(item);
 
         vTaskDelay(pdMS_TO_TICKS(2));
+        esp_task_wdt_reset();
     }
 }
 

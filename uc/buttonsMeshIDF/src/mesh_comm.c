@@ -66,7 +66,8 @@ void mesh_rx_task(void* arg) {
 
     esp_err_t wdt_err = esp_task_wdt_add(NULL);
     if (wdt_err != ESP_OK) {
-        ESP_LOGW(TAG, "mesh_rx_task: esp_task_wdt_add failed: %s", esp_err_to_name(wdt_err));
+        ESP_LOGW(TAG, "mesh_rx_task: esp_task_wdt_add failed: %s",
+                 esp_err_to_name(wdt_err));
     }
 
     while (true) {
@@ -80,10 +81,16 @@ void mesh_rx_task(void* arg) {
         rx_data.size = sizeof(rx_buf);
 
         esp_err_t err =
-            esp_mesh_recv(&from, &rx_data, portMAX_DELAY, &flag, NULL, 0);
+            esp_mesh_recv(&from, &rx_data, pdMS_TO_TICKS(5000), &flag, NULL, 0);
+
+        if (err == ESP_ERR_MESH_TIMEOUT) {
+            esp_task_wdt_reset();
+            continue;
+        }
 
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "Mesh recv error: %s", esp_err_to_name(err));
+            esp_task_wdt_reset();
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
@@ -103,6 +110,7 @@ void mesh_rx_task(void* arg) {
                 TAG,
                 "Received message for device type %c, but I am not that type",
                 msg->target_type);
+            esp_task_wdt_reset();
             continue;
         }
 
@@ -184,7 +192,8 @@ void mesh_tx_task(void* arg) {
 
     esp_err_t wdt_err = esp_task_wdt_add(NULL);
     if (wdt_err != ESP_OK) {
-        ESP_LOGW(TAG, "mesh_tx_task: esp_task_wdt_add failed: %s", esp_err_to_name(wdt_err));
+        ESP_LOGW(TAG, "mesh_tx_task: esp_task_wdt_add failed: %s",
+                 esp_err_to_name(wdt_err));
     }
 
     tx_item_t* item;
@@ -195,7 +204,8 @@ void mesh_tx_task(void* arg) {
             continue;
         }
 
-        if (xQueueReceive(queue, &item, portMAX_DELAY) != pdTRUE) {
+        if (xQueueReceive(queue, &item, pdMS_TO_TICKS(5000)) != pdTRUE) {
+            esp_task_wdt_reset();
             continue;
         }
 
@@ -320,7 +330,7 @@ void node_publish_status(void) {
     cJSON_AddNumberToObject(json, "parentId", g_parent_id);
     cJSON_AddNumberToObject(json, "freeHeap", free_heap);
     cJSON_AddNumberToObject(json, "uptime", uptime);
-    cJSON_AddStringToObject(json, "firmware", g_firmware_hash);
+    cJSON_AddNumberToObject(json, "firmware", g_firmware_timestamp);
     cJSON_AddNumberToObject(json, "clicks", g_stats.button_presses);
     cJSON_AddNumberToObject(json, "rssi", rssi);
     cJSON_AddNumberToObject(json, "meshLayer", g_mesh_layer);

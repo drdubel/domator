@@ -468,7 +468,7 @@ void root_publish_status(void) {
     cJSON_AddNumberToObject(json, "uptime", uptime);
     cJSON_AddNumberToObject(json, "meshLayer", g_mesh_layer);
     cJSON_AddNumberToObject(json, "peerCount", peer_count);
-    cJSON_AddStringToObject(json, "firmware", g_firmware_hash);
+    cJSON_AddNumberToObject(json, "firmware", g_firmware_timestamp);
     cJSON_AddNumberToObject(json, "rssi", rssi);
     cJSON_AddNumberToObject(json, "clicks", g_stats.button_presses);
     cJSON_AddNumberToObject(json, "lowHeap", g_stats.low_heap_events);
@@ -525,7 +525,7 @@ static void publish_connection_status(bool connected) {
 
     if (connected) {
         // Add additional info on connection
-        cJSON_AddStringToObject(json, "firmware", g_firmware_hash);
+        cJSON_AddNumberToObject(json, "firmware", g_firmware_timestamp);
         cJSON_AddNumberToObject(json, "mesh_layer", g_mesh_layer);
 
         // Get IP address if available
@@ -1053,7 +1053,8 @@ void mqtt_init(void) {
         return;
     }
 
-    ESP_LOGI(TAG, "Initializing MQTT client (ROOT node, device_id: %" PRIu64 ")",
+    ESP_LOGI(TAG,
+             "Initializing MQTT client (ROOT node, device_id: %" PRIu64 ")",
              g_device_id);
 
     // Build complete MQTT broker URI

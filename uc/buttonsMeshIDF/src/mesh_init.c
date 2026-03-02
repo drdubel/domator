@@ -39,10 +39,6 @@ static void ip_event_handler(void* arg, esp_event_base_t event_base,
         ip_event_got_ip_t* event = (ip_event_got_ip_t*)event_data;
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
 
-        uint8_t channel;
-        esp_wifi_get_channel(&channel, NULL);
-        ESP_LOGI(TAG, "WiFi channel: %d", channel);
-
         if (esp_mesh_is_root()) {
             ESP_LOGI(TAG, "This node IS root, initializing MQTT");
             g_is_root = true;
@@ -242,7 +238,7 @@ void mesh_network_init(void) {
     memcpy(mesh_id, CONFIG_MESH_ID, sizeof(mesh_id));
     memcpy(&cfg.mesh_id, mesh_id, 6);
 
-    cfg.channel = 0;
+    cfg.channel = 11;
     cfg.router.ssid_len = strlen(CONFIG_ROUTER_SSID);
     memcpy(cfg.router.ssid, CONFIG_ROUTER_SSID, cfg.router.ssid_len);
     memcpy(cfg.router.password, CONFIG_ROUTER_PASSWD,

@@ -238,7 +238,7 @@ void mesh_network_init(void) {
     memcpy(mesh_id, CONFIG_MESH_ID, sizeof(mesh_id));
     memcpy(&cfg.mesh_id, mesh_id, 6);
 
-    cfg.channel = 0;
+    cfg.channel = 11;
     cfg.router.ssid_len = strlen(CONFIG_ROUTER_SSID);
     memcpy(cfg.router.ssid, CONFIG_ROUTER_SSID, cfg.router.ssid_len);
     memcpy(cfg.router.password, CONFIG_ROUTER_PASSWD,

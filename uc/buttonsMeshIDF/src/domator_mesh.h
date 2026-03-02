@@ -32,6 +32,9 @@
 #include "mqtt_client.h"
 #include "nvs_flash.h"
 
+// Firmware build timestamp (used in MQTT status messages)
+#define FW_BUILD_TIME __DATE__ " " __TIME__
+
 // Constants for timing, sizes, and limits
 
 #define STATUS_REPORT_INTERVAL_MS 15000
@@ -44,7 +47,10 @@
 #define ROOT_LOSS_RESET_TIMEOUT_MS 300000    // 5 minutes
 #define PEER_HEALTH_CHECK_INTERVAL_MS 30000  // 30 seconds
 #define OTA_COUNTDOWN_MS 5000
+#define OTA_MAX_FAILURES 3
 #define PING_PONG_NUMBER 2
+#define BUTTON_PRESS_OTA_THRESHOLD_MS 4000
+#define BUTTON_PRESS_OTA_INTERVAL_MS 150
 
 #define NUM_BUTTONS 7
 #define MAX_QUEUE_SIZE 30
@@ -209,20 +215,20 @@ typedef struct {
 
 // Device info
 extern uint64_t g_device_id;
+extern uint64_t g_firmware_timestamp;
 extern node_type_t g_node_type;
-extern char g_firmware_hash[65];
 extern device_stats_t g_stats;
 
 // Mesh state
-extern bool g_mesh_connected;
-extern bool g_mesh_started;
-extern bool g_is_root;
-extern int g_mesh_layer;
+extern volatile bool g_mesh_connected;
+extern volatile bool g_mesh_started;
+extern volatile bool g_is_root;
+extern volatile int g_mesh_layer;
 extern uint64_t g_parent_id;
 
 // MQTT (root only)
 extern esp_mqtt_client_handle_t g_mqtt_client;
-extern bool g_mqtt_connected;
+extern volatile bool g_mqtt_connected;
 
 // Routing configuration (root only)
 extern device_connections_t g_connections[MAX_NODES];
@@ -255,8 +261,8 @@ extern TaskHandle_t button_task_handle;
 extern TaskHandle_t telnet_task_handle;
 
 // OTA flag
-extern bool g_ota_in_progress;
-extern bool g_ota_requested;
+extern volatile bool g_ota_in_progress;
+extern volatile bool g_ota_requested;
 
 // Broadcast address for mesh messages
 extern mesh_addr_t g_broadcast_addr;
@@ -451,6 +457,13 @@ void relay_handle_command(const char* cmd_data);
  *        after a short countdown, allowing in-flight messages to drain.
  */
 void ota_task(void* arg);
+
+/**
+ * @brief Check if OTA has exceeded the maximum failure count and rollback if
+ * needed. Called at boot to catch failed OTA attempts that resulted in a reboot
+ * loop.
+ */
+void ota_check_rollback_on_boot(void);
 
 /**
  * @brief FreeRTOS task: monitors free heap, increments statistics counters

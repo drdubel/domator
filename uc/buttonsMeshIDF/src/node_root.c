@@ -67,7 +67,10 @@ static void handle_mqtt_command(const char* topic, int topic_len,
  */
 static void registry_update(uint64_t device_id, mesh_addr_t* addr,
                             const char* type) {
-    xSemaphoreTake(registry_mutex, portMAX_DELAY);
+    if (xSemaphoreTake(registry_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+        ESP_LOGE(TAG, "registry_update: mutex timeout");
+        return;
+    }
     for (int i = 0; i < node_count; i++) {
         if (node_registry[i].device_id == device_id) {
             memcpy(&node_registry[i].mesh_addr, addr, sizeof(mesh_addr_t));
@@ -93,7 +96,10 @@ static void registry_update(uint64_t device_id, mesh_addr_t* addr,
  * @return Pointer to the stored mesh_addr_t, or NULL if not found.
  */
 static mesh_addr_t* registry_find(uint64_t device_id) {
-    xSemaphoreTake(registry_mutex, portMAX_DELAY);
+    if (xSemaphoreTake(registry_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+        ESP_LOGE(TAG, "registry_find: mutex timeout");
+        return NULL;
+    }
     for (int i = 0; i < MAX_NODES; i++) {
         if (node_registry[i].device_id == device_id) {
             xSemaphoreGive(registry_mutex);
@@ -110,7 +116,10 @@ static mesh_addr_t* registry_find(uint64_t device_id) {
  * @return Array index (0 – MAX_NODES-1), or -1 if not found.
  */
 static int registry_find_index(uint64_t device_id) {
-    xSemaphoreTake(registry_mutex, portMAX_DELAY);
+    if (xSemaphoreTake(registry_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+        ESP_LOGE(TAG, "registry_find_index: mutex timeout");
+        return -1;
+    }
     for (int i = 0; i < MAX_NODES; i++) {
         if (node_registry[i].device_id == device_id) {
             xSemaphoreGive(registry_mutex);
@@ -128,7 +137,10 @@ static int registry_find_index(uint64_t device_id) {
  * @return 0 = toggle, 1 = stateful, or -1 if not found.
  */
 static int get_button_type(uint64_t device_id, char button) {
-    xSemaphoreTake(g_button_types_mutex, portMAX_DELAY);
+    if (xSemaphoreTake(g_button_types_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+        ESP_LOGE(TAG, "get_button_type: mutex timeout");
+        return -1;
+    }
     for (int i = 0; i < MAX_NODES; i++) {
         if (g_button_types[i].device_id == device_id) {
             int button_idx = button - 'a';
@@ -204,13 +216,13 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
                     char payload[2] = {button, '\0'};
                     ESP_LOGI(TAG, "Publishing button status to MQTT: %s",
                              payload);
-                    esp_mqtt_client_publish(g_mqtt_client, topic, payload, 2, 0,
+                    esp_mqtt_client_publish(g_mqtt_client, topic, payload, 2, 1,
                                             0);
                 } else {
                     char payload[3] = {button, state + '0', '\0'};
                     ESP_LOGI(TAG, "Publishing button status to MQTT: %s",
                              payload);
-                    esp_mqtt_client_publish(g_mqtt_client, topic, payload, 3, 0,
+                    esp_mqtt_client_publish(g_mqtt_client, topic, payload, 3, 1,
                                             0);
                 }
             }
@@ -231,7 +243,7 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
                          msg->src_id);
                 char payload[3] = {relay_char, state_char, '\0'};
                 ESP_LOGI(TAG, "Publishing relay state to MQTT: %s", payload);
-                esp_mqtt_client_publish(g_mqtt_client, topic, payload, 2, 0, 0);
+                esp_mqtt_client_publish(g_mqtt_client, topic, payload, 2, 1, 1);
             }
             break;
         }
@@ -350,7 +362,10 @@ static void route_button_to_relays(uint64_t from_id, char button, int state) {
         return;
     }
     button_route_t* route = NULL;
-    xSemaphoreTake(g_connections_mutex, portMAX_DELAY);
+    if (xSemaphoreTake(g_connections_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+        ESP_LOGE(TAG, "route_button_to_relays: mutex timeout");
+        return;
+    }
     for (int i = 0; i < MAX_NODES; i++) {
         if (g_connections[i].device_id == from_id) {
             ESP_LOGI(TAG, "Found device index %d for device ID %" PRIu64, i,
@@ -453,7 +468,7 @@ void root_publish_status(void) {
     cJSON_AddNumberToObject(json, "uptime", uptime);
     cJSON_AddNumberToObject(json, "meshLayer", g_mesh_layer);
     cJSON_AddNumberToObject(json, "peerCount", peer_count);
-    cJSON_AddStringToObject(json, "firmware", g_firmware_hash);
+    cJSON_AddNumberToObject(json, "firmware", g_firmware_timestamp);
     cJSON_AddNumberToObject(json, "rssi", rssi);
     cJSON_AddNumberToObject(json, "clicks", g_stats.button_presses);
     cJSON_AddNumberToObject(json, "lowHeap", g_stats.low_heap_events);
@@ -510,7 +525,7 @@ static void publish_connection_status(bool connected) {
 
     if (connected) {
         // Add additional info on connection
-        cJSON_AddStringToObject(json, "firmware", g_firmware_hash);
+        cJSON_AddNumberToObject(json, "firmware", g_firmware_timestamp);
         cJSON_AddNumberToObject(json, "mesh_layer", g_mesh_layer);
 
         // Get IP address if available
@@ -658,6 +673,11 @@ static void parse_json_connections(cJSON* data) {
         if (device_index >= MAX_NODES) break;
 
         device_connections_t* device = &g_connections[device_index];
+        for (int i = 0; i < MAX_BUTTONS_EXTENDED; i++) {
+            if (device->buttons[i].targets != NULL) {
+                free(device->buttons[i].targets);
+            }
+        }
         memset(device, 0, sizeof(device_connections_t));
 
         // Set device_id from the JSON key
@@ -710,7 +730,10 @@ static void parse_json_connections(cJSON* data) {
  * @brief Log the full button type table for all known devices (debug helper).
  */
 static void print_all_button_types(void) {
-    xSemaphoreTake(g_button_types_mutex, portMAX_DELAY);
+    if (xSemaphoreTake(g_button_types_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+        ESP_LOGE(TAG, "print_all_button_types: mutex timeout");
+        return;
+    }
     ESP_LOGI(TAG, "Button types for all devices:");
     for (int i = 0; i < MAX_NODES; i++) {
         if (g_button_types[i].device_id == 0) continue;
@@ -907,6 +930,7 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
                          "Broadcasted OTA start command to device %" PRIu64,
                          node_registry[i].device_id);
             }
+            free(device_type);
             return;
         }
 
@@ -929,6 +953,7 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
 
         if (target_id == 0) {
             ESP_LOGW(TAG, "Ping command missing target device ID in topic.");
+            free(device_type);
             return;
         }
 
@@ -954,6 +979,8 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
                  "data=%.*s",
                  topic_str, data_len, data);
     }
+
+    free(device_type);
 }
 
 // ====================
@@ -1035,7 +1062,8 @@ void mqtt_init(void) {
         return;
     }
 
-    ESP_LOGI(TAG, "Initializing MQTT client (ROOT node, device_id: %" PRIu64 ")",
+    ESP_LOGI(TAG,
+             "Initializing MQTT client (ROOT node, device_id: %" PRIu64 ")",
              g_device_id);
 
     // Build complete MQTT broker URI

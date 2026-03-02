@@ -197,7 +197,7 @@ async def upload_firmware(
 
     logger.debug("Uploading firmware for device: %s", device)
 
-    if device not in ["switch", "relay", "root"]:
+    if device not in ["switch", "relay"]:
         return JSONResponse({"status": "error", "reason": "unknown device"}, status_code=400)
 
     try:
@@ -208,9 +208,6 @@ async def upload_firmware(
 
         with open(save_path, "wb") as buffer:
             buffer.write(contents)
-
-        hashlib_md5 = hashlib.md5(contents).hexdigest()
-        state_manager.set_up_to_date_firmware_version(device, hashlib_md5)
 
         logger.info(f"Successfully saved {len(contents)} bytes to {save_path}")
         return JSONResponse({"status": "ok", "device": device, "size": len(contents)})

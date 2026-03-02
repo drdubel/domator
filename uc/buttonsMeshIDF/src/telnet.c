@@ -12,6 +12,7 @@
  * server socket, deletes the task, and restores the default log handler.
  */
 
+#include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -63,15 +64,16 @@ void telnet_start(void) {
  */
 void telnet_stop(void) {
     if (telnet_task_handle != NULL) {
-        close(telnet_sock);
-        telnet_sock = -1;
+        if (telnet_sock >= 0) {
+            ESP_LOGI(TAG, "Closing Telnet socket");
+            close(telnet_sock);
+            telnet_sock = -1;
+        }
 
         if (prev_log_vprintf != NULL) {
             esp_log_set_vprintf(prev_log_vprintf);
             prev_log_vprintf = NULL;
         }
-
-        esp_log_set_vprintf(NULL);
 
         vTaskDelete(telnet_task_handle);
         telnet_task_handle = NULL;
@@ -96,13 +98,29 @@ void telnet_task(void* arg) {
     char rxbuf[RX_BUF_SIZE];
 
     listen_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+    if (listen_sock < 0) {
+        ESP_LOGE(TAG, "Failed to create socket: errno %d", errno);
+        vTaskDelete(NULL);
+        return;
+    }
 
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(TELNET_PORT);
     server_addr.sin_addr.s_addr = INADDR_ANY;
 
-    bind(listen_sock, (struct sockaddr*)&server_addr, sizeof(server_addr));
-    listen(listen_sock, 1);
+    if (bind(listen_sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) != 0) {
+        ESP_LOGE(TAG, "Socket bind failed: errno %d", errno);
+        close(listen_sock);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    if (listen(listen_sock, 1) != 0) {
+        ESP_LOGE(TAG, "Socket listen failed: errno %d", errno);
+        close(listen_sock);
+        vTaskDelete(NULL);
+        return;
+    }
 
     ESP_LOGI(TAG, "Telnet server listening on port %d", TELNET_PORT);
 
@@ -177,7 +195,16 @@ int dual_log_vprintf(const char* fmt, va_list args) {
         log_mutex = xSemaphoreCreateMutex();
     }
 
-    xSemaphoreTake(log_mutex, portMAX_DELAY);
+    if (xSemaphoreTake(log_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        // Fallback: write to UART only
+        if (used_heap) {
+            fwrite(out_buf, 1, len, stdout);
+        } else {
+            fwrite(small_buf, 1, len, stdout);
+        }
+        if (used_heap) free(out_buf);
+        return len;
+    }
 
     if (used_heap) {
         fwrite(out_buf, 1, len, stdout);

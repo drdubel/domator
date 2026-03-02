@@ -26,12 +26,16 @@
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_timer.h"
+#include "nvs.h"
 
 static const char* TAG = "HEALTH_OTA";
 
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT BIT1
 #define WIFI_MAX_RETRIES 5
+
+#define NVS_OTA_NAMESPACE "ota_state"
+#define NVS_OTA_FAIL_KEY "fail_count"
 
 static EventGroupHandle_t s_wifi_event_group = NULL;
 static int s_retry_count = 0;
@@ -75,6 +79,63 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
 }
 
 // ====================
+// OTA Failure Counter (NVS-persisted)
+// ====================
+
+/**
+ * @brief Read the OTA failure counter from NVS.
+ * @return Current failure count, or 0 if not set.
+ */
+static uint8_t ota_get_fail_count(void) {
+    nvs_handle_t handle;
+    uint8_t count = 0;
+    esp_err_t err = nvs_open(NVS_OTA_NAMESPACE, NVS_READONLY, &handle);
+    if (err == ESP_OK) {
+        err = nvs_get_u8(handle, NVS_OTA_FAIL_KEY, &count);
+        if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGW(TAG, "ota_get_fail_count: nvs_get_u8 error %s",
+                     esp_err_to_name(err));
+        }
+        nvs_close(handle);
+    } else if (err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGW(TAG, "ota_get_fail_count: nvs_open error %s",
+                 esp_err_to_name(err));
+    }
+    return count;
+}
+
+/**
+ * @brief Write the OTA failure counter to NVS.
+ * @param count New failure count value.
+ */
+static void ota_set_fail_count(uint8_t count) {
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_OTA_NAMESPACE, NVS_READWRITE, &handle);
+    if (err == ESP_OK) {
+        err = nvs_set_u8(handle, NVS_OTA_FAIL_KEY, count);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "ota_set_fail_count: nvs_set_u8 error %s",
+                     esp_err_to_name(err));
+        } else {
+            err = nvs_commit(handle);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "ota_set_fail_count: nvs_commit error %s",
+                         esp_err_to_name(err));
+            }
+        }
+        nvs_close(handle);
+    } else {
+        ESP_LOGE(TAG, "ota_set_fail_count: nvs_open error %s",
+                 esp_err_to_name(err));
+    }
+}
+
+/**
+ * @brief Reset the OTA failure counter to zero (called after successful OTA).
+ */
+static void ota_reset_fail_count(void) { ota_set_fail_count(0); }
+
+// ====================
 // Mesh Teardown and OTA
 // ====================
 
@@ -85,18 +146,22 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
  * successful flash).  On WiFi connection failure or OTA error, the device also
  * restarts to recover gracefully.
  *
- * @param ssid     SSID of the router to connect to for the OTA download.
- * @param password Router WiFi password.
- * @param ota_url  HTTPS URL of the firmware binary.
  * @return Never returns on success.  Returns ESP_FAIL if WiFi setup fails
  *         before the restart call is reached.
  */
-esp_err_t mesh_disconnect_and_ota(const char* ssid, const char* password,
-                                  const char* ota_url) {
+esp_err_t mesh_disconnect_and_ota() {
     esp_err_t ret;
+
+    /** Gracefully stop the mesh stack to drain in-flight messages and avoid
+     *  corrupting the flash with an OTA mid-write.  Also stop any root-only
+     *  tasks to avoid MQTT publish attempts during OTA.
+     */
+    relay_save_states_to_nvs();
 
     ESP_LOGI(TAG, "Stopping mesh...");
     g_ota_in_progress = true;
+
+    if (g_is_root) node_root_stop();
 
     esp_mesh_disconnect();
     vTaskDelay(pdMS_TO_TICKS(200));
@@ -174,29 +239,30 @@ esp_err_t mesh_disconnect_and_ota(const char* ssid, const char* password,
                     },
             },
     };
-    strlcpy((char*)wifi_cfg.sta.ssid, ssid, sizeof(wifi_cfg.sta.ssid));
-    strlcpy((char*)wifi_cfg.sta.password, password,
+    strlcpy((char*)wifi_cfg.sta.ssid, CONFIG_ROUTER_SSID,
+            sizeof(wifi_cfg.sta.ssid));
+    strlcpy((char*)wifi_cfg.sta.password, CONFIG_ROUTER_PASSWD,
             sizeof(wifi_cfg.sta.password));
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    ESP_LOGI(TAG, "Waiting for WiFi connection to '%s'...", ssid);
+    ESP_LOGI(TAG, "Waiting for WiFi connection to '%s'...", CONFIG_ROUTER_SSID);
     EventBits_t bits = xEventGroupWaitBits(
         s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT, pdFALSE,
         pdFALSE, pdMS_TO_TICKS(30000));
 
     if (!(bits & WIFI_CONNECTED_BIT)) {
-        ESP_LOGE(TAG, "Failed to connect to SSID: %s", ssid);
+        ESP_LOGE(TAG, "Failed to connect to SSID: %s", CONFIG_ROUTER_SSID);
         ret = ESP_FAIL;
         esp_restart();
     }
 
-    ESP_LOGI(TAG, "Starting OTA from: %s", ota_url);
+    ESP_LOGI(TAG, "Starting OTA from: %s", CONFIG_OTA_URL);
 
     esp_http_client_config_t http_cfg = {
-        .url = ota_url,
+        .url = CONFIG_OTA_URL,
         .timeout_ms = 30000,
         .keep_alive_enable = true,
         .crt_bundle_attach = esp_crt_bundle_attach,
@@ -208,10 +274,28 @@ esp_err_t mesh_disconnect_and_ota(const char* ssid, const char* password,
 
     ret = esp_https_ota(&ota_cfg);
     if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "OTA complete! Rebooting...");
+        ESP_LOGI(TAG,
+                 "OTA complete! Resetting failure counter and rebooting...");
+        ota_reset_fail_count();
         esp_restart();
     } else {
         ESP_LOGE(TAG, "OTA failed: %s", esp_err_to_name(ret));
+        uint8_t fail_count = ota_get_fail_count() + 1;
+        ota_set_fail_count(fail_count);
+        ESP_LOGE(TAG, "OTA failure count: %d / %d", fail_count,
+                 OTA_MAX_FAILURES);
+
+        if (fail_count >= OTA_MAX_FAILURES) {
+            ESP_LOGE(TAG,
+                     "Max OTA failures reached (%d). Rolling back to previous "
+                     "firmware...",
+                     OTA_MAX_FAILURES);
+            ota_reset_fail_count();
+            esp_ota_mark_app_invalid_rollback_and_reboot();
+            // Does not return
+        }
+
+        ESP_LOGW(TAG, "Rebooting to retry OTA later...");
         esp_restart();
     }
 }
@@ -234,6 +318,18 @@ void ota_task(void* arg) {
 
         if (g_ota_requested) {
             g_ota_requested = false;
+
+            uint8_t fail_count = ota_get_fail_count();
+            if (fail_count >= OTA_MAX_FAILURES) {
+                ESP_LOGE(TAG,
+                         "OTA blocked: %d consecutive failures reached limit. "
+                         "Rolling back to previous firmware...",
+                         fail_count);
+                ota_reset_fail_count();
+                esp_ota_mark_app_invalid_rollback_and_reboot();
+                continue;
+            }
+
             ota_countdown_active = true;
         }
 
@@ -244,8 +340,7 @@ void ota_task(void* arg) {
                    OTA_COUNTDOWN_MS) {
             ota_countdown_active = false;
             ESP_LOGI(TAG, "OTA countdown complete, starting OTA...");
-            mesh_disconnect_and_ota(CONFIG_ROUTER_SSID, CONFIG_ROUTER_PASSWD,
-                                    CONFIG_OTA_URL);
+            mesh_disconnect_and_ota();
         }
     }
 }
@@ -253,6 +348,23 @@ void ota_task(void* arg) {
 // ====================
 // Health Monitoring
 // ====================
+
+/**
+ * @brief Check OTA failure counter at boot and rollback if limit exceeded.
+ *        Call this early in app_main() to catch reboot loops from failed OTA.
+ */
+void ota_check_rollback_on_boot(void) {
+    uint8_t fail_count = ota_get_fail_count();
+    if (fail_count >= OTA_MAX_FAILURES) {
+        ESP_LOGE(TAG,
+                 "Boot: OTA failure count %d >= %d. Rolling back to previous "
+                 "firmware...",
+                 fail_count, OTA_MAX_FAILURES);
+        ota_reset_fail_count();
+        esp_ota_mark_app_invalid_rollback_and_reboot();
+        // Does not return
+    }
+}
 
 /**
  * @brief FreeRTOS task: monitor free heap every 5 seconds and update

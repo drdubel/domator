@@ -25,7 +25,9 @@
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
 #include "esp_system.h"
+#include "esp_task_wdt.h"
 #include "mbedtls/md5.h"
+#include "mbedtls/sha256.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 
@@ -37,17 +39,17 @@ static const char* TAG = "DOMATOR";
 
 uint64_t g_device_id = 0;
 node_type_t g_node_type = NODE_TYPE_UNKNOWN;
-char g_firmware_hash[65] = {0};
 device_stats_t g_stats = {0};
+uint64_t g_firmware_timestamp = 0;
 
-bool g_mesh_connected = false;
-bool g_mesh_started = false;
-bool g_is_root = false;
-int g_mesh_layer = 0;
+volatile bool g_mesh_connected = false;
+volatile bool g_mesh_started = false;
+volatile bool g_is_root = false;
+volatile int g_mesh_layer = 0;
 uint64_t g_parent_id = 0;
 
 esp_mqtt_client_handle_t g_mqtt_client = NULL;
-bool g_mqtt_connected = false;
+volatile bool g_mqtt_connected = false;
 
 // Routing configuration (root only)
 device_connections_t g_connections[MAX_NODES] = {0};
@@ -82,14 +84,10 @@ SemaphoreHandle_t g_stats_mutex = NULL;
 TaskHandle_t button_task_handle = NULL;
 TaskHandle_t telnet_task_handle = NULL;
 
-bool g_ota_in_progress = false;
-bool g_ota_requested = false;
+volatile bool g_ota_in_progress = false;
+volatile bool g_ota_requested = false;
 
 mesh_addr_t g_broadcast_addr = {.addr = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}};
-
-// ====================
-// Device ID Generation
-// ====================
 
 /**
  * @brief Derive a 48-bit device ID from the SoftAP MAC address and store it
@@ -112,31 +110,43 @@ void generate_device_id(void) {
              g_device_id, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
 
-// ====================
-// Firmware Hash Generation
-// ====================
-
 /**
- * @brief Compute a 64-character hex string from the ELF image SHA-256 digest
- *        embedded by the toolchain and store it in g_firmware_hash.
- *        Published in every status report so the server can detect mismatches.
+ * @brief Compute a firmware fingerprint from the SHA-256 digest of the running
+ *        ELF binary.  The fingerprint is used in MQTT status messages to
+ *        identify the exact firmware version running on each node.
  */
-void generate_firmware_hash() {
-    const esp_app_desc_t* desc = esp_app_get_description();
-    if (!desc) {
-        printf("Failed to get app description\n");
-        return;
+void build_time_to_unix(const char* build_time) {
+    struct tm t = {0};
+    char month_str[4];
+    int day, year;
+    int hour, min, sec;
+
+    // Parse __DATE__ and __TIME__ format
+    sscanf(build_time, "%3s %d %d %d:%d:%d", month_str, &day, &year, &hour,
+           &min, &sec);
+
+    // Convert month string to number
+    const char* months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    int mon = 0;
+    for (int i = 0; i < 12; i++) {
+        if (strncmp(month_str, months[i], 3) == 0) {
+            mon = i;
+            break;
+        }
     }
 
-    for (int i = 0; i < 32; i++) {
-        sprintf(&g_firmware_hash[i * 2], "%02x", desc->app_elf_sha256[i]);
-    }
-    g_firmware_hash[64] = '\0';
+    t.tm_year = year - 1900;
+    t.tm_mon = mon;
+    t.tm_mday = day;
+    t.tm_hour = hour;
+    t.tm_min = min;
+    t.tm_sec = sec;
+
+    g_firmware_timestamp = (uint64_t)mktime(&t);
+    ESP_LOGI(TAG, "Firmware build time: %s -> timestamp: %" PRIu64, build_time,
+             g_firmware_timestamp);
 }
-
-// ====================
-// Hardware Type Detection
-// ====================
 
 /**
  * @brief Determine the hardware board type and set g_node_type/g_board_type.
@@ -291,7 +301,7 @@ void detect_hardware_type(void) {
  *
  * Execution order:
  *  1. Initialise NVS flash.
- *  2. Generate device ID and firmware hash.
+ *  2. Generate device ID and firmware timestamp.
  *  3. Detect hardware type.
  *  4. Create all FreeRTOS queues and mutexes.
  *  5. Pre-initialise relay hardware if this is a relay node.
@@ -312,7 +322,7 @@ void app_main(void) {
     ESP_ERROR_CHECK(ret);
 
     generate_device_id();
-    generate_firmware_hash();
+    build_time_to_unix(FW_BUILD_TIME);
     detect_hardware_type();
 
     g_mesh_tx_queue = xQueueCreate(MESH_TX_QUEUE_SIZE, sizeof(mesh_app_msg_t));

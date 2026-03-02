@@ -1,4 +1,3 @@
-import hashlib
 from time import time
 
 from turbacz.connection_manager import connection_manager
@@ -13,10 +12,8 @@ class StateManager:
         self._devices_rssi: dict[int, int] = {}
         self._firmware_versions: dict[int, str] = {}
         self._up_to_date_devices: dict[int, bool] = {}
-        self._up_to_date_firmware_versions: dict[str, str] = {}
-        self._ping_times: dict[int, int] = {}
-
-        self.update_up_to_date_firmware_versions()
+        self._up_to_date_firmware_versions: dict[str, int] = {}
+        self._ping_times: dict[int, list[int]] = {}
 
     async def update_state(self, relay_id: int, output_id: str, state: int):
         if relay_id not in self._states:
@@ -50,7 +47,7 @@ class StateManager:
             "up_to_date_devices": self._up_to_date_devices,
             "devices_rssi": self._devices_rssi,
             "root_id": connection_manager.rootId,
-            "ping_times": self._ping_times,
+            "ping_times": self.get_all_device_pings(),
         }
 
         if websocket:
@@ -63,27 +60,31 @@ class StateManager:
         self._devices_rssi[device_id] = rssi
 
     def update_device_ping(self, device_id: int, ping_time: int):
-        self._ping_times[device_id] = ping_time
+        if device_id not in self._ping_times:
+            self._ping_times[device_id] = []
+        self._ping_times[device_id].append(ping_time)
+        self._ping_times[device_id] = self._ping_times[device_id][-5:]
 
     def get_device_ping(self, device_id: int) -> int | None:
-        return self._ping_times.get(device_id)
+        if device_id in self._ping_times and self._ping_times[device_id]:
+            return sum(self._ping_times[device_id]) / len(self._ping_times[device_id])
+        return None
+
+    def get_all_device_pings(self) -> dict[int, int]:
+        return {device_id: self.get_device_ping(device_id) for device_id in self._ping_times}
 
     def get_device_rssi(self, device_id: int) -> int | None:
         return self._devices_rssi.get(device_id)
 
-    def set_up_to_date_firmware_version(self, device_type: str, version: str):
-        self._up_to_date_firmware_versions[device_type] = version
-
-    def update_up_to_date_firmware_versions(self):
-        for device_type in ["relay", "switch", "root"]:
-            with open(f"static/data/{device_type}/firmware.bin", "rb") as f:
-                version = hashlib.md5(f.read()).hexdigest()
-                self._up_to_date_firmware_versions[device_type] = version
-
-    def set_firmware_version(self, device_id: int, device_type: str, version: str):
+    def set_firmware_version(self, device_id: int, device_type: str, version: int):
         self._firmware_versions[device_id] = version
 
-        if version == self._up_to_date_firmware_versions.get(device_type):
+        if version > self._up_to_date_firmware_versions.get(device_type, 0):
+            self._up_to_date_firmware_versions[device_type] = version
+            for id in self._up_to_date_devices.keys():
+                self._up_to_date_devices[id] = False
+            self._up_to_date_devices[device_id] = True
+        elif version == self._up_to_date_firmware_versions.get(device_type, 0):
             self._up_to_date_devices[device_id] = True
         else:
             self._up_to_date_devices[device_id] = False

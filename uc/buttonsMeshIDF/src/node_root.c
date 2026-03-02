@@ -673,6 +673,11 @@ static void parse_json_connections(cJSON* data) {
         if (device_index >= MAX_NODES) break;
 
         device_connections_t* device = &g_connections[device_index];
+        for (int i = 0; i < MAX_BUTTONS_EXTENDED; i++) {
+            if (device->buttons[i].targets != NULL) {
+                free(device->buttons[i].targets);
+            }
+        }
         memset(device, 0, sizeof(device_connections_t));
 
         // Set device_id from the JSON key
@@ -925,6 +930,7 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
                          "Broadcasted OTA start command to device %" PRIu64,
                          node_registry[i].device_id);
             }
+            free(device_type);
             return;
         }
 
@@ -947,6 +953,7 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
 
         if (target_id == 0) {
             ESP_LOGW(TAG, "Ping command missing target device ID in topic.");
+            free(device_type);
             return;
         }
 
@@ -972,6 +979,8 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
                  "data=%.*s",
                  topic_str, data_len, data);
     }
+
+    free(device_type);
 }
 
 // ====================

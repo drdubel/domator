@@ -85,18 +85,16 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
  * successful flash).  On WiFi connection failure or OTA error, the device also
  * restarts to recover gracefully.
  *
- * @param ssid     SSID of the router to connect to for the OTA download.
- * @param password Router WiFi password.
- * @param ota_url  HTTPS URL of the firmware binary.
  * @return Never returns on success.  Returns ESP_FAIL if WiFi setup fails
  *         before the restart call is reached.
  */
-esp_err_t mesh_disconnect_and_ota(const char* ssid, const char* password,
-                                  const char* ota_url) {
+esp_err_t mesh_disconnect_and_ota() {
     esp_err_t ret;
 
     ESP_LOGI(TAG, "Stopping mesh...");
     g_ota_in_progress = true;
+
+    if (g_is_root) node_root_stop();
 
     esp_mesh_disconnect();
     vTaskDelay(pdMS_TO_TICKS(200));
@@ -174,29 +172,30 @@ esp_err_t mesh_disconnect_and_ota(const char* ssid, const char* password,
                     },
             },
     };
-    strlcpy((char*)wifi_cfg.sta.ssid, ssid, sizeof(wifi_cfg.sta.ssid));
-    strlcpy((char*)wifi_cfg.sta.password, password,
+    strlcpy((char*)wifi_cfg.sta.ssid, CONFIG_ROUTER_SSID,
+            sizeof(wifi_cfg.sta.ssid));
+    strlcpy((char*)wifi_cfg.sta.password, CONFIG_ROUTER_PASSWD,
             sizeof(wifi_cfg.sta.password));
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    ESP_LOGI(TAG, "Waiting for WiFi connection to '%s'...", ssid);
+    ESP_LOGI(TAG, "Waiting for WiFi connection to '%s'...", CONFIG_ROUTER_SSID);
     EventBits_t bits = xEventGroupWaitBits(
         s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT, pdFALSE,
         pdFALSE, pdMS_TO_TICKS(30000));
 
     if (!(bits & WIFI_CONNECTED_BIT)) {
-        ESP_LOGE(TAG, "Failed to connect to SSID: %s", ssid);
+        ESP_LOGE(TAG, "Failed to connect to SSID: %s", CONFIG_ROUTER_SSID);
         ret = ESP_FAIL;
         esp_restart();
     }
 
-    ESP_LOGI(TAG, "Starting OTA from: %s", ota_url);
+    ESP_LOGI(TAG, "Starting OTA from: %s", CONFIG_OTA_URL);
 
     esp_http_client_config_t http_cfg = {
-        .url = ota_url,
+        .url = CONFIG_OTA_URL,
         .timeout_ms = 30000,
         .keep_alive_enable = true,
         .crt_bundle_attach = esp_crt_bundle_attach,
@@ -244,8 +243,7 @@ void ota_task(void* arg) {
                    OTA_COUNTDOWN_MS) {
             ota_countdown_active = false;
             ESP_LOGI(TAG, "OTA countdown complete, starting OTA...");
-            mesh_disconnect_and_ota(CONFIG_ROUTER_SSID, CONFIG_ROUTER_PASSWD,
-                                    CONFIG_OTA_URL);
+            mesh_disconnect_and_ota();
         }
     }
 }

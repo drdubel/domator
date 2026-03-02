@@ -93,11 +93,13 @@ static uint8_t ota_get_fail_count(void) {
     if (err == ESP_OK) {
         err = nvs_get_u8(handle, NVS_OTA_FAIL_KEY, &count);
         if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
-            ESP_LOGW(TAG, "ota_get_fail_count: nvs_get_u8 error %s", esp_err_to_name(err));
+            ESP_LOGW(TAG, "ota_get_fail_count: nvs_get_u8 error %s",
+                     esp_err_to_name(err));
         }
         nvs_close(handle);
     } else if (err != ESP_ERR_NVS_NOT_FOUND) {
-        ESP_LOGW(TAG, "ota_get_fail_count: nvs_open error %s", esp_err_to_name(err));
+        ESP_LOGW(TAG, "ota_get_fail_count: nvs_open error %s",
+                 esp_err_to_name(err));
     }
     return count;
 }
@@ -112,25 +114,26 @@ static void ota_set_fail_count(uint8_t count) {
     if (err == ESP_OK) {
         err = nvs_set_u8(handle, NVS_OTA_FAIL_KEY, count);
         if (err != ESP_OK) {
-            ESP_LOGE(TAG, "ota_set_fail_count: nvs_set_u8 error %s", esp_err_to_name(err));
+            ESP_LOGE(TAG, "ota_set_fail_count: nvs_set_u8 error %s",
+                     esp_err_to_name(err));
         } else {
             err = nvs_commit(handle);
             if (err != ESP_OK) {
-                ESP_LOGE(TAG, "ota_set_fail_count: nvs_commit error %s", esp_err_to_name(err));
+                ESP_LOGE(TAG, "ota_set_fail_count: nvs_commit error %s",
+                         esp_err_to_name(err));
             }
         }
         nvs_close(handle);
     } else {
-        ESP_LOGE(TAG, "ota_set_fail_count: nvs_open error %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "ota_set_fail_count: nvs_open error %s",
+                 esp_err_to_name(err));
     }
 }
 
 /**
  * @brief Reset the OTA failure counter to zero (called after successful OTA).
  */
-static void ota_reset_fail_count(void) {
-    ota_set_fail_count(0);
-}
+static void ota_reset_fail_count(void) { ota_set_fail_count(0); }
 
 // ====================
 // Mesh Teardown and OTA
@@ -148,6 +151,12 @@ static void ota_reset_fail_count(void) {
  */
 esp_err_t mesh_disconnect_and_ota() {
     esp_err_t ret;
+
+    /** Gracefully stop the mesh stack to drain in-flight messages and avoid
+     *  corrupting the flash with an OTA mid-write.  Also stop any root-only
+     *  tasks to avoid MQTT publish attempts during OTA.
+     */
+    relay_save_states_to_nvs();
 
     ESP_LOGI(TAG, "Stopping mesh...");
     g_ota_in_progress = true;
@@ -265,17 +274,21 @@ esp_err_t mesh_disconnect_and_ota() {
 
     ret = esp_https_ota(&ota_cfg);
     if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "OTA complete! Resetting failure counter and rebooting...");
+        ESP_LOGI(TAG,
+                 "OTA complete! Resetting failure counter and rebooting...");
         ota_reset_fail_count();
         esp_restart();
     } else {
         ESP_LOGE(TAG, "OTA failed: %s", esp_err_to_name(ret));
         uint8_t fail_count = ota_get_fail_count() + 1;
         ota_set_fail_count(fail_count);
-        ESP_LOGE(TAG, "OTA failure count: %d / %d", fail_count, OTA_MAX_FAILURES);
+        ESP_LOGE(TAG, "OTA failure count: %d / %d", fail_count,
+                 OTA_MAX_FAILURES);
 
         if (fail_count >= OTA_MAX_FAILURES) {
-            ESP_LOGE(TAG, "Max OTA failures reached (%d). Rolling back to previous firmware...",
+            ESP_LOGE(TAG,
+                     "Max OTA failures reached (%d). Rolling back to previous "
+                     "firmware...",
                      OTA_MAX_FAILURES);
             ota_reset_fail_count();
             esp_ota_mark_app_invalid_rollback_and_reboot();
@@ -308,8 +321,10 @@ void ota_task(void* arg) {
 
             uint8_t fail_count = ota_get_fail_count();
             if (fail_count >= OTA_MAX_FAILURES) {
-                ESP_LOGE(TAG, "OTA blocked: %d consecutive failures reached limit. "
-                         "Rolling back to previous firmware...", fail_count);
+                ESP_LOGE(TAG,
+                         "OTA blocked: %d consecutive failures reached limit. "
+                         "Rolling back to previous firmware...",
+                         fail_count);
                 ota_reset_fail_count();
                 esp_ota_mark_app_invalid_rollback_and_reboot();
                 continue;
@@ -341,7 +356,9 @@ void ota_task(void* arg) {
 void ota_check_rollback_on_boot(void) {
     uint8_t fail_count = ota_get_fail_count();
     if (fail_count >= OTA_MAX_FAILURES) {
-        ESP_LOGE(TAG, "Boot: OTA failure count %d >= %d. Rolling back to previous firmware...",
+        ESP_LOGE(TAG,
+                 "Boot: OTA failure count %d >= %d. Rolling back to previous "
+                 "firmware...",
                  fail_count, OTA_MAX_FAILURES);
         ota_reset_fail_count();
         esp_ota_mark_app_invalid_rollback_and_reboot();

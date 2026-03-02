@@ -152,8 +152,8 @@ void button_task(void* arg) {
                 if (current_state == 0 &&
                     current_time - g_button_states[i].press_start_time >
                         BUTTON_PRESS_OTA_THRESHOLD_MS &&
-                    g_button_states[i].last_release_time -
-                            g_button_states[i].press_start_time >
+                    g_button_states[i].press_start_time -
+                            g_button_states[i].last_release_time <
                         BUTTON_PRESS_OTA_INTERVAL_MS) {
                     ESP_LOGI(TAG,
                              "Button %d was pressed for %" PRIu32

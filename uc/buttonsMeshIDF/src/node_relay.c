@@ -481,8 +481,8 @@ void relay_button_task(void* arg) {
                 if (current_state == 0 &&
                     current_time - g_relay_button_states[i].press_start_time >
                         BUTTON_PRESS_OTA_THRESHOLD_MS &&
-                    g_relay_button_states[i].last_release_time -
-                            g_relay_button_states[i].press_start_time >
+                    g_relay_button_states[i].press_start_time -
+                            g_relay_button_states[i].last_release_time <
                         BUTTON_PRESS_OTA_INTERVAL_MS) {
                     ESP_LOGI(
                         TAG,

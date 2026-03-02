@@ -14,7 +14,7 @@ class StateManager:
         self._firmware_versions: dict[int, str] = {}
         self._up_to_date_devices: dict[int, bool] = {}
         self._up_to_date_firmware_versions: dict[str, str] = {}
-        self._ping_times: dict[int, int] = {}
+        self._ping_times: dict[int, list[int]] = {}
 
         self.update_up_to_date_firmware_versions()
 
@@ -50,7 +50,7 @@ class StateManager:
             "up_to_date_devices": self._up_to_date_devices,
             "devices_rssi": self._devices_rssi,
             "root_id": connection_manager.rootId,
-            "ping_times": self._ping_times,
+            "ping_times": self.get_all_device_pings(),
         }
 
         if websocket:
@@ -63,10 +63,18 @@ class StateManager:
         self._devices_rssi[device_id] = rssi
 
     def update_device_ping(self, device_id: int, ping_time: int):
-        self._ping_times[device_id] = ping_time
+        if device_id not in self._ping_times:
+            self._ping_times[device_id] = []
+        self._ping_times[device_id].append(ping_time)
+        self._ping_times[device_id] = self._ping_times[device_id][-5:]
 
     def get_device_ping(self, device_id: int) -> int | None:
-        return self._ping_times.get(device_id)
+        if device_id in self._ping_times and self._ping_times[device_id]:
+            return sum(self._ping_times[device_id]) / len(self._ping_times[device_id])
+        return None
+
+    def get_all_device_pings(self) -> dict[int, int]:
+        return {device_id: self.get_device_ping(device_id) for device_id in self._ping_times}
 
     def get_device_rssi(self, device_id: int) -> int | None:
         return self._devices_rssi.get(device_id)

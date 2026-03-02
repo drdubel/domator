@@ -32,9 +32,7 @@
 #include "mqtt_client.h"
 #include "nvs_flash.h"
 
-// ====================
-// Constants and Limits
-// ====================
+// Constants for timing, sizes, and limits
 
 #define STATUS_REPORT_INTERVAL_MS 15000
 #define BUTTON_POLL_INTERVAL_MS 20
@@ -46,7 +44,7 @@
 #define ROOT_LOSS_RESET_TIMEOUT_MS 300000    // 5 minutes
 #define PEER_HEALTH_CHECK_INTERVAL_MS 30000  // 30 seconds
 #define OTA_COUNTDOWN_MS 5000
-#define PING_PONG_NUMBER 50
+#define PING_PONG_NUMBER 2
 
 #define NUM_BUTTONS 7
 #define MAX_QUEUE_SIZE 30
@@ -119,9 +117,7 @@
 #define DEVICE_TYPE_SWITCH 'S'
 #define DEVICE_TYPE_RELAY 'R'
 
-// ====================
-// Node Types
-// ====================
+/** @brief Node role/type in the mesh network. */
 typedef enum {
     NODE_TYPE_UNKNOWN = 0,
     NODE_TYPE_ROOT,
@@ -135,10 +131,6 @@ typedef enum { BOARD_TYPE_8_RELAY = 0, BOARD_TYPE_16_RELAY } board_type_t;
 
 /** @brief Message transmission priority. */
 typedef enum { TX_PRIO_NORMAL = 0, TX_PRIO_HIGH } tx_priority_t;
-
-// ====================
-// Data Structures
-// ====================
 
 /** @brief Wire-format application message exchanged between mesh nodes. */
 typedef struct {
@@ -269,7 +261,9 @@ extern bool g_ota_requested;
 // Broadcast address for mesh messages
 extern mesh_addr_t g_broadcast_addr;
 
-// ============ mesh_init.c ============
+// ====================
+// Function Declarations: mesh_init.c
+// ====================
 
 /** @brief Initialise WiFi, the ESP-MESH stack, and register all event handlers.
  */
@@ -285,7 +279,9 @@ bool domator_mesh_is_wifi_connected(void);
  */
 bool mesh_stop_and_connect_sta(uint32_t timeout_ms);
 
-// ============ node_switch.c ============
+// ====================
+// Function Declarations: node_switch.c
+// ====================
 
 /** @brief Configure all button GPIOs and install ISR service. */
 void button_init(void);
@@ -316,7 +312,9 @@ void led_set_color(uint8_t r, uint8_t g, uint8_t b);
 /** @brief Trigger a short cyan LED flash to acknowledge a button press. */
 void led_flash_cyan(void);
 
-// ============ mesh_comm.c ============
+// ====================
+// Function Declarations: mesh_comm.c
+// ====================
 
 /**
  * @brief FreeRTOS task: receives incoming mesh packets and dispatches them
@@ -346,7 +344,9 @@ void mesh_queue_to_node(mesh_app_msg_t* msg, tx_priority_t prio,
  */
 void status_report_task(void* arg);
 
-// ============ node_root.c ============
+// ====================
+// Function Declarations: node_root.c
+// ====================
 
 /**
  * @brief Dispatch an incoming mesh message received while this node is root.
@@ -367,7 +367,9 @@ void node_root_stop(void);
 /** @brief Build and publish a JSON status report for the root node to MQTT. */
 void root_publish_status(void);
 
-// ============ node_relay.c ============
+// ====================
+// Function Declarations: node_relay.c
+// ====================
 
 /** @brief Persist the current relay output bitmask to NVS flash. */
 void relay_save_states_to_nvs(void);
@@ -440,7 +442,9 @@ void relay_button_task(void* arg);
  */
 void relay_handle_command(const char* cmd_data);
 
-// ============ health_ota.c ============
+// ====================
+// Function Declarations: health_ota.c
+// ====================
 
 /**
  * @brief FreeRTOS task: monitors g_ota_requested and triggers OTA update
@@ -454,7 +458,9 @@ void ota_task(void* arg);
  */
 void health_monitor_task(void* arg);
 
-// ============ telnet.c ============
+// ====================
+// Function Declarations: telnet.c
+// ====================
 
 /**
  * @brief FreeRTOS task: listens for a Telnet TCP connection on port 23 and

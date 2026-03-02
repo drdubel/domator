@@ -89,9 +89,15 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
 static uint8_t ota_get_fail_count(void) {
     nvs_handle_t handle;
     uint8_t count = 0;
-    if (nvs_open(NVS_OTA_NAMESPACE, NVS_READONLY, &handle) == ESP_OK) {
-        nvs_get_u8(handle, NVS_OTA_FAIL_KEY, &count);
+    esp_err_t err = nvs_open(NVS_OTA_NAMESPACE, NVS_READONLY, &handle);
+    if (err == ESP_OK) {
+        err = nvs_get_u8(handle, NVS_OTA_FAIL_KEY, &count);
+        if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGW(TAG, "ota_get_fail_count: nvs_get_u8 error %s", esp_err_to_name(err));
+        }
         nvs_close(handle);
+    } else if (err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGW(TAG, "ota_get_fail_count: nvs_open error %s", esp_err_to_name(err));
     }
     return count;
 }
@@ -102,10 +108,20 @@ static uint8_t ota_get_fail_count(void) {
  */
 static void ota_set_fail_count(uint8_t count) {
     nvs_handle_t handle;
-    if (nvs_open(NVS_OTA_NAMESPACE, NVS_READWRITE, &handle) == ESP_OK) {
-        nvs_set_u8(handle, NVS_OTA_FAIL_KEY, count);
-        nvs_commit(handle);
+    esp_err_t err = nvs_open(NVS_OTA_NAMESPACE, NVS_READWRITE, &handle);
+    if (err == ESP_OK) {
+        err = nvs_set_u8(handle, NVS_OTA_FAIL_KEY, count);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "ota_set_fail_count: nvs_set_u8 error %s", esp_err_to_name(err));
+        } else {
+            err = nvs_commit(handle);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "ota_set_fail_count: nvs_commit error %s", esp_err_to_name(err));
+            }
+        }
         nvs_close(handle);
+    } else {
+        ESP_LOGE(TAG, "ota_set_fail_count: nvs_open error %s", esp_err_to_name(err));
     }
 }
 

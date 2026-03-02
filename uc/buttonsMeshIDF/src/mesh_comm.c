@@ -64,7 +64,10 @@ void mesh_rx_task(void* arg) {
     uint8_t rx_buf[sizeof(mesh_app_msg_t) + 16];
     int flag;
 
-    esp_task_wdt_add(NULL);
+    esp_err_t wdt_err = esp_task_wdt_add(NULL);
+    if (wdt_err != ESP_OK) {
+        ESP_LOGW(TAG, "mesh_rx_task: esp_task_wdt_add failed: %s", esp_err_to_name(wdt_err));
+    }
 
     while (true) {
         if (g_ota_in_progress) {
@@ -179,7 +182,10 @@ static QueueHandle_t queue = NULL;
 void mesh_tx_task(void* arg) {
     queue = xQueueCreate(40, sizeof(tx_item_t*));
 
-    esp_task_wdt_add(NULL);
+    esp_err_t wdt_err = esp_task_wdt_add(NULL);
+    if (wdt_err != ESP_OK) {
+        ESP_LOGW(TAG, "mesh_tx_task: esp_task_wdt_add failed: %s", esp_err_to_name(wdt_err));
+    }
 
     tx_item_t* item;
     while (true) {

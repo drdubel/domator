@@ -63,15 +63,16 @@ void telnet_start(void) {
  */
 void telnet_stop(void) {
     if (telnet_task_handle != NULL) {
-        close(telnet_sock);
-        telnet_sock = -1;
+        if (telnet_sock >= 0) {
+            ESP_LOGI(TAG, "Closing Telnet socket");
+            close(telnet_sock);
+            telnet_sock = -1;
+        }
 
         if (prev_log_vprintf != NULL) {
             esp_log_set_vprintf(prev_log_vprintf);
             prev_log_vprintf = NULL;
         }
-
-        esp_log_set_vprintf(NULL);
 
         vTaskDelete(telnet_task_handle);
         telnet_task_handle = NULL;

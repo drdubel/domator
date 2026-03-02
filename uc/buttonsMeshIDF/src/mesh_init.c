@@ -39,6 +39,10 @@ static void ip_event_handler(void* arg, esp_event_base_t event_base,
         ip_event_got_ip_t* event = (ip_event_got_ip_t*)event_data;
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
 
+        uint8_t channel;
+        esp_wifi_get_channel(&channel, NULL);
+        ESP_LOGI(TAG, "WiFi channel: %d", channel);
+
         if (esp_mesh_is_root()) {
             ESP_LOGI(TAG, "This node IS root, initializing MQTT");
             g_is_root = true;

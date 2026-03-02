@@ -59,6 +59,21 @@ void relay_save_states_to_nvs(void) {
         return;
     }
 
+    uint16_t previous_outputs = 0;
+    err = nvs_get_u16(nvs_handle, "outputs", &previous_outputs);
+    if (err == ESP_OK) {
+        if (previous_outputs == g_relay_outputs) {
+            ESP_LOGI(TAG, "Relay states unchanged, no need to update NVS");
+            nvs_close(nvs_handle);
+            return;
+        }
+    } else if (err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGE(TAG, "Failed to read previous relay states from NVS: %s",
+                 esp_err_to_name(err));
+        nvs_close(nvs_handle);
+        return;
+    }
+
     err = nvs_set_u16(nvs_handle, "outputs", g_relay_outputs);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to save relay states to NVS: %s",

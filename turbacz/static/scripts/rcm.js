@@ -2694,7 +2694,7 @@ async function saveNameEdit() {
 
         if (result !== null) {
             switches[currentEditTarget.id].name = newName
-            const nameElement = document.querySelector(`#switch - ${currentEditTarget.id} .device - name`)
+            const nameElement = document.querySelector(`#switch-${currentEditTarget.id} .device-name`)
             if (nameElement) nameElement.textContent = newName
         }
 
@@ -2716,7 +2716,7 @@ async function saveNameEdit() {
 
         if (result !== null) {
             relays[currentEditTarget.id].name = newName
-            const nameElement = document.querySelector(`#relay - ${currentEditTarget.id} .device - name`)
+            const nameElement = document.querySelector(`#relay-${currentEditTarget.id} .device-name`)
             if (nameElement) nameElement.textContent = newName
         }
 

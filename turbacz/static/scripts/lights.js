@@ -97,45 +97,72 @@ var wsManager = new WebSocketManager('/lights/ws/', function (event) {
 			room.appendChild(section)
 		})
 
+		const outputsBySection = {}
 		Object.entries(msg.named_outputs).forEach(([relayId, outputs]) => {
-			const sortedOutputs = Object.entries(outputs)
-				.map(([outputKey, outputMeta]) => [outputKey, parseOutputMeta(outputMeta)])
-				.sort((a, b) => a[1].outputIdx - b[1].outputIdx)
+			Object.entries(outputs).forEach(([outputKey, outputMeta]) => {
+				const parsed = parseOutputMeta(outputMeta)
+				const sectionId = `${parsed.sectionId}`
+				if (!outputsBySection[sectionId]) {
+					outputsBySection[sectionId] = []
+				}
 
-			sortedOutputs.forEach(([outputKey, outputMeta]) => {
-				const outputName = outputMeta.name
-				const sectionId = outputMeta.sectionId
-				const section = document.querySelector(`section-${sectionId} .light-grid`)
-				if (!section) return
+				outputsBySection[sectionId].push({
+					relayId: `${relayId}`,
+					outputKey: `${outputKey}`,
+					outputName: parsed.name,
+					outputIdx: parsed.outputIdx,
+					sectionId: sectionId,
+				})
+			})
+		})
 
+		Object.values(outputsBySection).forEach(cards => {
+			cards.sort((a, b) => {
+				if (a.outputIdx !== b.outputIdx) {
+					return a.outputIdx - b.outputIdx
+				}
+
+				if (a.relayId !== b.relayId) {
+					return a.relayId.localeCompare(b.relayId)
+				}
+
+				return a.outputKey.localeCompare(b.outputKey)
+			})
+		})
+
+		Object.entries(outputsBySection).forEach(([sectionId, cards]) => {
+			const section = document.querySelector(`section-${sectionId} .light-grid`)
+			if (!section) return
+
+			cards.forEach(card => {
 				const button = document.createElement("div")
 				button.className = "light-card"
 				button.draggable = true
-				button.dataset.cardId = `${relayId}${outputKey}`
-				button.dataset.relayId = `${relayId}`
-				button.dataset.outputId = `${outputKey}`
-				button.dataset.sectionId = `${sectionId}`
-				button.dataset.outputIdx = `${outputMeta.outputIdx}`
+				button.dataset.cardId = `${card.relayId}${card.outputKey}`
+				button.dataset.relayId = card.relayId
+				button.dataset.outputId = card.outputKey
+				button.dataset.sectionId = card.sectionId
+				button.dataset.outputIdx = `${card.outputIdx}`
 				button.onclick = function () {
 					if (Date.now() < preventCardToggleUntil) {
 						return
 					}
-					changeSwitchState(`${relayId}${outputKey}`)
+					changeSwitchState(`${card.relayId}${card.outputKey}`)
 				}
 
 				const img = document.createElement("img")
-				img.id = `${relayId}${outputKey}`
+				img.id = `${card.relayId}${card.outputKey}`
 				img.src = "/static/data/img/off.png"
-				img.alt = outputName
+				img.alt = card.outputName
 
 				const label = document.createElement("span")
 				label.className = "light-label"
-				label.textContent = outputName
+				label.textContent = card.outputName
 
 				button.appendChild(img)
 				button.appendChild(label)
 				section.appendChild(button)
-				active_sections.add(sectionId)
+				active_sections.add(Number(card.sectionId))
 			})
 		})
 
@@ -273,14 +300,13 @@ function bindLightCardDnDHandlers() {
 			movedCard.dataset.sectionId = targetSectionId || movedCard.dataset.sectionId
 
 			preventCardToggleUntil = Date.now() + 250
-			if (sectionChanged) {
-				sendChangeSection(movedCard.dataset.relayId, movedCard.dataset.outputId, targetSectionId)
-			}
-
-			if (sourceGrid && sourceGrid !== this) {
-				sendSectionPositions(sourceGrid)
-			}
-			sendSectionPositions(this)
+			const positions = collectPositionsFromGrids([sourceGrid, this])
+			sendLayoutUpdate(
+				positions,
+				movedCard.dataset.relayId,
+				movedCard.dataset.outputId,
+				sectionChanged ? targetSectionId : null,
+			)
 			this.classList.remove('drag-over')
 		})
 	})
@@ -444,15 +470,13 @@ function finishTouchDrag(cancelled) {
 		placeholder.parentElement.insertBefore(card, placeholder)
 		card.dataset.sectionId = targetSectionId || card.dataset.sectionId
 
-		if (sectionChanged) {
-			sendChangeSection(card.dataset.relayId, card.dataset.outputId, targetSectionId)
-		}
-
-		if (sourceGrid && sourceGrid !== targetGrid) {
-			sendSectionPositions(sourceGrid)
-		}
-
-		sendSectionPositions(targetGrid)
+		const positions = collectPositionsFromGrids([sourceGrid, targetGrid])
+		sendLayoutUpdate(
+			positions,
+			card.dataset.relayId,
+			card.dataset.outputId,
+			sectionChanged ? targetSectionId : null,
+		)
 	} else if (touchDragState.sourceGrid) {
 		touchDragState.sourceGrid.appendChild(card)
 	}
@@ -551,6 +575,48 @@ function sendSectionPositions(sectionGrid) {
 	}
 
 	wsManager.send(JSON.stringify({ type: 'change_positions', positions: positions }))
+}
+
+function collectPositionsFromGrids(grids) {
+	const uniqueGrids = [...new Set(grids.filter(Boolean))]
+	const positions = []
+
+	uniqueGrids.forEach(grid => {
+		const cards = [...grid.querySelectorAll('.light-card')]
+		cards.forEach((card, index) => {
+			card.dataset.outputIdx = `${index}`
+			positions.push({
+				relay_id: card.dataset.relayId,
+				output_id: card.dataset.outputId,
+				output_idx: index,
+			})
+		})
+	})
+
+	return positions
+}
+
+function sendLayoutUpdate(positions, relayId, outputId, sectionId) {
+	if (!wsManager.isConnected()) {
+		return
+	}
+
+	if (!positions || !positions.length) {
+		return
+	}
+
+	const payload = {
+		type: 'layout_update',
+		positions: positions,
+	}
+
+	if (sectionId && relayId && outputId) {
+		payload.relay_id = relayId
+		payload.output_id = outputId
+		payload.section = sectionId
+	}
+
+	wsManager.send(JSON.stringify(payload))
 }
 
 function sendChangeSection(relayId, outputId, sectionId) {

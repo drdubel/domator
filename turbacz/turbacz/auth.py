@@ -1,6 +1,4 @@
-import logging
 import os
-import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -12,16 +10,14 @@ from starlette.responses import HTMLResponse, RedirectResponse
 from turbacz.settings import config
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
 
 JWT_ALG = "HS256"
 JWT_EXPIRE_MINUTES = 60 * 24 * 14  # 14 days
-JWT_SECRET = config.jwt_secret or os.getenv("JWT_SECRET", "")
+JWT_SECRET = config.jwt_secret
 if not JWT_SECRET:
-    JWT_SECRET = secrets.token_urlsafe(48)
-    logger.warning(
-        "JWT secret is not configured; using ephemeral in-memory secret. "
-        "Set JWT_SECRET to keep sessions valid across restarts."
+    raise RuntimeError(
+        "Missing jwt_secret in turbacz.toml. "
+        "Set jwt_secret to a stable value before starting the app."
     )
 
 oauth = OAuth()

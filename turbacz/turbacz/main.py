@@ -425,6 +425,30 @@ async def websocket_rcm(websocket: WebSocket):
         async for cmd in websocket.iter_json():
             logger.debug("putting %s in command queue", cmd)
 
+            if cmd.get("type") == "auto_off_update":
+                try:
+                    relay_id = int(cmd.get("relay_id"))
+                    output_id = str(cmd.get("output_id"))
+                    timeout_seconds = max(int(cmd.get("auto_off_seconds", 0)), 0)
+                except (TypeError, ValueError):
+                    logger.warning("Invalid auto_off_update payload: %s", cmd)
+                    continue
+
+                mqtt.client.publish(
+                    "/switch/cmd/root",
+                    json.dumps(
+                        {
+                            "type": "auto_off",
+                            "data": {
+                                str(relay_id): {
+                                    output_id: timeout_seconds,
+                                }
+                            },
+                        }
+                    ),
+                )
+                continue
+
             if cmd.get("type") == "update":
                 connections = connection_manager.get_all_connections()
 

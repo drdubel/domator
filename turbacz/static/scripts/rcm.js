@@ -48,6 +48,122 @@ if (isFirefox) {
     document.documentElement.classList.add('firefox')
 }
 
+const SETTINGS_STORAGE_KEY = 'rcm_settings'
+const DEFAULT_SETTINGS = {
+    showAutoOffControls: false,
+    persistHiddenDevicesOnReload: false,
+    showDeviceMetrics: true,
+    confirmBeforeDelete: true,
+    showToastNotifications: true,
+    enableButtonHighlightAnimation: true,
+    rememberCanvasView: true
+}
+
+function loadSettings() {
+    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY)
+    if (!raw) {
+        return { ...DEFAULT_SETTINGS }
+    }
+
+    try {
+        const parsed = JSON.parse(raw)
+        return { ...DEFAULT_SETTINGS, ...parsed }
+    } catch (error) {
+        console.warn('Failed to parse RCM settings, using defaults', error)
+        return { ...DEFAULT_SETTINGS }
+    }
+}
+
+let appSettings = loadSettings()
+
+function saveSettings() {
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(appSettings))
+}
+
+function applySettingsToUI() {
+    document.body.classList.toggle('hide-auto-off-controls', !appSettings.showAutoOffControls)
+    document.body.classList.toggle('hide-device-metrics', !appSettings.showDeviceMetrics)
+}
+
+function syncSettingsForm() {
+    const fields = {
+        settingsShowAutoOffControls: appSettings.showAutoOffControls,
+        settingsPersistHiddenDevicesOnReload: appSettings.persistHiddenDevicesOnReload,
+        settingsShowDeviceMetrics: appSettings.showDeviceMetrics,
+        settingsConfirmBeforeDelete: appSettings.confirmBeforeDelete,
+        settingsShowToastNotifications: appSettings.showToastNotifications,
+        settingsEnableButtonHighlightAnimation: appSettings.enableButtonHighlightAnimation,
+        settingsRememberCanvasView: appSettings.rememberCanvasView
+    }
+
+    Object.entries(fields).forEach(([id, value]) => {
+        const element = document.getElementById(id)
+        if (element) {
+            element.checked = Boolean(value)
+        }
+    })
+}
+
+function syncHiddenDevicesStorage() {
+    if (appSettings.persistHiddenDevicesOnReload) {
+        saveHiddenDevices()
+        return
+    }
+    localStorage.removeItem('rcm_hidden_devices')
+}
+
+function showSettingsModal() {
+    syncSettingsForm()
+    document.getElementById('settingsModal').classList.add('active')
+    bindModalShortcuts('settingsModal', () => saveSettingsFromModal())
+}
+
+function closeSettingsModal() {
+    closeModal('settingsModal')
+}
+
+function saveSettingsFromModal() {
+    const getChecked = (id) => {
+        const element = document.getElementById(id)
+        return element ? element.checked : false
+    }
+
+    appSettings = {
+        showAutoOffControls: getChecked('settingsShowAutoOffControls'),
+        persistHiddenDevicesOnReload: getChecked('settingsPersistHiddenDevicesOnReload'),
+        showDeviceMetrics: getChecked('settingsShowDeviceMetrics'),
+        confirmBeforeDelete: getChecked('settingsConfirmBeforeDelete'),
+        showToastNotifications: getChecked('settingsShowToastNotifications'),
+        enableButtonHighlightAnimation: getChecked('settingsEnableButtonHighlightAnimation'),
+        rememberCanvasView: getChecked('settingsRememberCanvasView')
+    }
+
+    saveSettings()
+    applySettingsToUI()
+    syncHiddenDevicesStorage()
+
+    if (!appSettings.rememberCanvasView) {
+        localStorage.removeItem('rcm_canvas_view')
+    }
+
+    if (!appSettings.persistHiddenDevicesOnReload) {
+        hiddenDevices = new Set()
+    }
+
+    closeSettingsModal()
+    showToast('Settings saved')
+}
+
+function resetSettingsToDefaults() {
+    appSettings = { ...DEFAULT_SETTINGS }
+    saveSettings()
+    applySettingsToUI()
+    syncSettingsForm()
+    syncHiddenDevicesStorage()
+
+    showToast('Settings reset to defaults')
+}
+
 // ========== CANVAS VIEW & ZOOM SYSTEM ==========
 const CanvasView = {
     // Constants
@@ -75,6 +191,13 @@ const CanvasView = {
     zoomLevelElement: null,
 
     init() {
+        if (!appSettings.rememberCanvasView) {
+            this.zoomLevel = this.DEFAULT_ZOOM
+            this.panX = this.getDefaultPanX()
+            this.panY = this.getDefaultPanY()
+            return
+        }
+
         const saved = localStorage.getItem('rcm_canvas_view')
         if (saved) {
             const view = JSON.parse(saved)
@@ -212,8 +335,10 @@ const wsManager = new WebSocketManager('/rcm/ws/', function (event) {
     }
 
     if (msg.type === "switch_state" && msg.switch_id && msg.button_id) {
-        highlightButton(msg.switch_id, msg.button_id)
-        setTimeout(() => clearButtonHighlight(msg.switch_id, msg.button_id), 5000)
+        if (appSettings.enableButtonHighlightAnimation) {
+            highlightButton(msg.switch_id, msg.button_id)
+            setTimeout(() => clearButtonHighlight(msg.switch_id, msg.button_id), 5000)
+        }
         return
     }
 })
@@ -535,6 +660,10 @@ function initPanning() {
 
 // Save/Load canvas view
 function saveCanvasView() {
+    if (!appSettings.rememberCanvasView) {
+        return
+    }
+
     localStorage.setItem('rcm_canvas_view', JSON.stringify({
         zoomLevel: zoomLevel,
         panX: panX,
@@ -820,6 +949,7 @@ function sendButtonTypesToWebSocket() {
 
 function hideDevice(deviceId, deviceType) {
     hiddenDevices.add(`${deviceType}-${deviceId}`)
+    syncHiddenDevicesStorage()
 
     const element = document.getElementById(`${deviceType}-${deviceId}`)
     if (element) {
@@ -853,6 +983,7 @@ function showAllHiddenDevices() {
     })
 
     hiddenDevices.clear()
+    syncHiddenDevicesStorage()
 
     // Repaint to fix connection line positions immediately
     if (jsPlumbInstance) {
@@ -995,7 +1126,7 @@ async function fetchAPI(endpoint) {
     }
 }
 
-async function postForm(endpoint, data) {
+async function postForm(endpoint, data, sendUpdate = true) {
     try {
         const formData = new FormData()
         Object.keys(data).forEach(key => {
@@ -1015,7 +1146,7 @@ async function postForm(endpoint, data) {
 
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`)
-        } else {
+        } else if (sendUpdate) {
             wsManager.send(JSON.stringify({ "type": "update" }))
         }
 
@@ -1493,6 +1624,8 @@ function addConnectionHoverEffect(conn) {
 
 function initJsPlumb() {
     jsPlumb.ready(function () {
+        applySettingsToUI()
+
         jsPlumbInstance = jsPlumb.getInstance({
             Container: "canvas",
             Connector: ["Bezier", { curviness: 50 }],
@@ -1593,7 +1726,10 @@ async function loadConfiguration() {
     connections = {}
     connectionLookupMap = {}
     cachedElements = { canvas, zoomLevel: cachedElements.zoomLevel }
-    hiddenDevices = new Set()  // Don't persist hidden devices across reloads
+    hiddenDevices = appSettings.persistHiddenDevicesOnReload ? loadHiddenDevices() : new Set()
+    if (!appSettings.persistHiddenDevicesOnReload) {
+        localStorage.removeItem('rcm_hidden_devices')
+    }
     buttonTypes = {}
     hiddenButtons = loadHiddenButtons()
 
@@ -2095,7 +2231,7 @@ async function saveOutputConfig(relayId, outputId, outputName, autoOffSeconds, s
         output_id: outputId,
         output_name: outputName,
         auto_off_seconds: normalizedAutoOff
-    })
+    }, false)
 
     if (result === null) {
         if (showFeedback) {
@@ -2129,6 +2265,14 @@ async function saveOutputConfig(relayId, outputId, outputName, autoOffSeconds, s
         autoOffBadge.textContent = formatAutoOffBadge(normalizedAutoOff)
         autoOffBadge.title = normalizedAutoOff > 0 ? `Turns off after ${normalizedAutoOff}s` : ''
     }
+
+    // Send only changed timer to root to avoid full mesh resync on every slider change.
+    wsManager.send(JSON.stringify({
+        type: 'auto_off_update',
+        relay_id: relayId,
+        output_id: outputId,
+        auto_off_seconds: normalizedAutoOff
+    }))
 
     if (showFeedback) {
         showToast(normalizedAutoOff > 0 ? `Auto-off set to ${formatAutoOff(normalizedAutoOff)}` : 'Auto-off disabled')
@@ -2593,41 +2737,65 @@ function updateLightUI(relay_id, output_id, state) {
 
 // ========== MODAL DIALOGS ==========
 
+let activeModalShortcut = null
+
+function unbindModalShortcuts() {
+    if (activeModalShortcut && activeModalShortcut.handler) {
+        document.removeEventListener('keydown', activeModalShortcut.handler)
+    }
+    activeModalShortcut = null
+}
+
+function bindModalShortcuts(modalId, onEnter) {
+    unbindModalShortcuts()
+
+    const handler = (e) => {
+        const modal = document.getElementById(modalId)
+        if (!modal || !modal.classList.contains('active')) {
+            return
+        }
+
+        if (e.key === 'Escape') {
+            e.preventDefault()
+            closeModal(modalId)
+            return
+        }
+
+        if (e.key === 'Enter') {
+            const tag = (e.target && e.target.tagName ? e.target.tagName : '').toLowerCase()
+            if (tag === 'textarea') {
+                return
+            }
+
+            e.preventDefault()
+            onEnter()
+        }
+    }
+
+    activeModalShortcut = { modalId, handler }
+    document.addEventListener('keydown', handler)
+}
+
 function showAddSwitchModal() {
     document.getElementById('addSwitchModal').classList.add('active')
     document.getElementById('switchId').value = ''
     document.getElementById('switchName').value = ''
     document.getElementById('switchButtons').value = '3'
-    document.addEventListener('keydown', function handler(e) {
-        if (e.key === 'Enter') {
-            addSwitch()
-            document.removeEventListener('keydown', handler)
-        }
-        if (e.key === 'Escape') {
-            closeModal('addSwitchModal')
-            document.removeEventListener('keydown', handler)
-        }
-    })
+    bindModalShortcuts('addSwitchModal', () => addSwitch())
 }
 
 function showAddRelayModal() {
     document.getElementById('addRelayModal').classList.add('active')
     document.getElementById('relayId').value = ''
     document.getElementById('relayName').value = ''
-    document.addEventListener('keydown', function handler(e) {
-        if (e.key === 'Enter') {
-            addRelay()
-            document.removeEventListener('keydown', handler)
-        }
-        if (e.key === 'Escape') {
-            closeModal('addRelayModal')
-            document.removeEventListener('keydown', handler)
-        }
-    })
+    bindModalShortcuts('addRelayModal', () => addRelay())
 }
 
 function closeModal(modalId) {
     document.getElementById(modalId).classList.remove('active')
+    if (activeModalShortcut && activeModalShortcut.modalId === modalId) {
+        unbindModalShortcuts()
+    }
 }
 
 // ========== DEVICE CRUD OPERATIONS ==========
@@ -2703,7 +2871,7 @@ async function addRelay() {
 }
 
 async function deleteSwitch(switchId) {
-    if (!confirm('Are you sure you want to delete this switch?')) return
+    if (appSettings.confirmBeforeDelete && !confirm('Are you sure you want to delete this switch?')) return
 
     const result = await postForm('/lights/remove_switch', {
         switch_id: switchId
@@ -2727,7 +2895,7 @@ async function deleteSwitch(switchId) {
 }
 
 async function deleteRelay(relayId) {
-    if (!confirm('Are you sure you want to delete this relay?')) return
+    if (appSettings.confirmBeforeDelete && !confirm('Are you sure you want to delete this relay?')) return
 
     const result = await postForm('/lights/remove_relay', {
         relay_id: relayId
@@ -2764,16 +2932,7 @@ function editDeviceName(type, id) {
         document.getElementById('editButtonNumber').value = relays[id].outputsCount || 8
     }
 
-    document.addEventListener('keydown', function handler(e) {
-        if (e.key === 'Enter') {
-            saveNameEdit()
-            document.removeEventListener('keydown', handler)
-        }
-        if (e.key === 'Escape') {
-            closeModal('editNameModal')
-            document.removeEventListener('keydown', handler)
-        }
-    })
+    bindModalShortcuts('editNameModal', () => saveNameEdit())
 }
 
 function editOutputName(relayId, outputId) {
@@ -2791,16 +2950,7 @@ function editOutputName(relayId, outputId) {
     document.getElementById('editButtonNumber').style.display = 'none'
     document.getElementById('editNameModal').classList.add('active')
 
-    document.addEventListener('keydown', function handler(e) {
-        if (e.key === 'Enter') {
-            saveNameEdit()
-            document.removeEventListener('keydown', handler)
-        }
-        if (e.key === 'Escape') {
-            closeModal('editNameModal')
-            document.removeEventListener('keydown', handler)
-        }
-    })
+    bindModalShortcuts('editNameModal', () => saveNameEdit())
 }
 
 async function saveNameEdit() {
@@ -2868,6 +3018,10 @@ async function saveNameEdit() {
 }
 
 function showToast(message, isError = false) {
+    if (!appSettings.showToastNotifications && !isError) {
+        return
+    }
+
     const toast = document.getElementById('rcm-toast')
     if (!toast) return
     toast.textContent = message

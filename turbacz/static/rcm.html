@@ -71,6 +71,12 @@
                         <span>⬆</span> <span class="btn-text">Relay FW</span>
                     </button>
                 </div>
+                <div class="toolbar-group">
+                    <button class="toolbar-btn btn-settings" onclick="showSettingsModal()"
+                        title="Open display and behavior settings">
+                        <span>⚙</span> <span class="btn-text">Settings</span>
+                    </button>
+                </div>
             </div>
             <input type="file" id="firmwareFileInput" accept=".bin" style="display:none">
             <div class="zoom-controls">
@@ -160,6 +166,76 @@
             <div class="modal-buttons">
                 <button class="modal-btn save" onclick="saveNameEdit()">Save</button>
                 <button class="modal-btn cancel" onclick="closeModal('editNameModal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="settingsModal" class="modal">
+        <div class="modal-content settings-modal-content">
+            <div class="modal-header">RCM Settings</div>
+            <div class="settings-list">
+                <label class="setting-row" for="settingsShowAutoOffControls">
+                    <div class="setting-copy">
+                        <span class="setting-title">Show Delay Sliders</span>
+                        <span class="setting-description">Show inline auto-off delay sliders on relay outputs.</span>
+                    </div>
+                    <input type="checkbox" id="settingsShowAutoOffControls" checked>
+                </label>
+
+                <label class="setting-row" for="settingsPersistHiddenDevicesOnReload">
+                    <div class="setting-copy">
+                        <span class="setting-title">Keep Hidden Devices Hidden After Reload</span>
+                        <span class="setting-description">Persist hidden switch/relay cards between refreshes.</span>
+                    </div>
+                    <input type="checkbox" id="settingsPersistHiddenDevicesOnReload">
+                </label>
+
+                <label class="setting-row" for="settingsShowDeviceMetrics">
+                    <div class="setting-copy">
+                        <span class="setting-title">Show Ping and RSSI</span>
+                        <span class="setting-description">Display network quality metrics on every device card.</span>
+                    </div>
+                    <input type="checkbox" id="settingsShowDeviceMetrics" checked>
+                </label>
+
+                <label class="setting-row" for="settingsConfirmBeforeDelete">
+                    <div class="setting-copy">
+                        <span class="setting-title">Confirm Before Delete</span>
+                        <span class="setting-description">Ask for confirmation before removing switches or
+                            relays.</span>
+                    </div>
+                    <input type="checkbox" id="settingsConfirmBeforeDelete" checked>
+                </label>
+
+                <label class="setting-row" for="settingsShowToastNotifications">
+                    <div class="setting-copy">
+                        <span class="setting-title">Show Success Toasts</span>
+                        <span class="setting-description">Display short success popups after save/upload actions.</span>
+                    </div>
+                    <input type="checkbox" id="settingsShowToastNotifications" checked>
+                </label>
+
+                <label class="setting-row" for="settingsEnableButtonHighlightAnimation">
+                    <div class="setting-copy">
+                        <span class="setting-title">Animate Incoming Button Presses</span>
+                        <span class="setting-description">Highlight pressed buttons when switch_state events
+                            arrive.</span>
+                    </div>
+                    <input type="checkbox" id="settingsEnableButtonHighlightAnimation" checked>
+                </label>
+
+                <label class="setting-row" for="settingsRememberCanvasView">
+                    <div class="setting-copy">
+                        <span class="setting-title">Remember Canvas Zoom and Position</span>
+                        <span class="setting-description">Restore your last pan/zoom view after page reload.</span>
+                    </div>
+                    <input type="checkbox" id="settingsRememberCanvasView" checked>
+                </label>
+            </div>
+            <div class="modal-buttons">
+                <button class="modal-btn save" onclick="saveSettingsFromModal()">Save</button>
+                <button class="modal-btn" onclick="resetSettingsToDefaults()">Defaults</button>
+                <button class="modal-btn cancel" onclick="closeSettingsModal()">Cancel</button>
             </div>
         </div>
     </div>

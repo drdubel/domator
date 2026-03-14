@@ -50,7 +50,7 @@ if (isFirefox) {
 
 const SETTINGS_STORAGE_KEY = 'rcm_settings'
 const DEFAULT_SETTINGS = {
-    showAutoOffControls: true,
+    showAutoOffControls: false,
     persistHiddenDevicesOnReload: false,
     showDeviceMetrics: true,
     confirmBeforeDelete: true,
@@ -115,6 +115,7 @@ function syncHiddenDevicesStorage() {
 function showSettingsModal() {
     syncSettingsForm()
     document.getElementById('settingsModal').classList.add('active')
+    bindModalShortcuts('settingsModal', () => saveSettingsFromModal())
 }
 
 function closeSettingsModal() {
@@ -2728,41 +2729,65 @@ function updateLightUI(relay_id, output_id, state) {
 
 // ========== MODAL DIALOGS ==========
 
+let activeModalShortcut = null
+
+function unbindModalShortcuts() {
+    if (activeModalShortcut && activeModalShortcut.handler) {
+        document.removeEventListener('keydown', activeModalShortcut.handler)
+    }
+    activeModalShortcut = null
+}
+
+function bindModalShortcuts(modalId, onEnter) {
+    unbindModalShortcuts()
+
+    const handler = (e) => {
+        const modal = document.getElementById(modalId)
+        if (!modal || !modal.classList.contains('active')) {
+            return
+        }
+
+        if (e.key === 'Escape') {
+            e.preventDefault()
+            closeModal(modalId)
+            return
+        }
+
+        if (e.key === 'Enter') {
+            const tag = (e.target && e.target.tagName ? e.target.tagName : '').toLowerCase()
+            if (tag === 'textarea') {
+                return
+            }
+
+            e.preventDefault()
+            onEnter()
+        }
+    }
+
+    activeModalShortcut = { modalId, handler }
+    document.addEventListener('keydown', handler)
+}
+
 function showAddSwitchModal() {
     document.getElementById('addSwitchModal').classList.add('active')
     document.getElementById('switchId').value = ''
     document.getElementById('switchName').value = ''
     document.getElementById('switchButtons').value = '3'
-    document.addEventListener('keydown', function handler(e) {
-        if (e.key === 'Enter') {
-            addSwitch()
-            document.removeEventListener('keydown', handler)
-        }
-        if (e.key === 'Escape') {
-            closeModal('addSwitchModal')
-            document.removeEventListener('keydown', handler)
-        }
-    })
+    bindModalShortcuts('addSwitchModal', () => addSwitch())
 }
 
 function showAddRelayModal() {
     document.getElementById('addRelayModal').classList.add('active')
     document.getElementById('relayId').value = ''
     document.getElementById('relayName').value = ''
-    document.addEventListener('keydown', function handler(e) {
-        if (e.key === 'Enter') {
-            addRelay()
-            document.removeEventListener('keydown', handler)
-        }
-        if (e.key === 'Escape') {
-            closeModal('addRelayModal')
-            document.removeEventListener('keydown', handler)
-        }
-    })
+    bindModalShortcuts('addRelayModal', () => addRelay())
 }
 
 function closeModal(modalId) {
     document.getElementById(modalId).classList.remove('active')
+    if (activeModalShortcut && activeModalShortcut.modalId === modalId) {
+        unbindModalShortcuts()
+    }
 }
 
 // ========== DEVICE CRUD OPERATIONS ==========
@@ -2899,16 +2924,7 @@ function editDeviceName(type, id) {
         document.getElementById('editButtonNumber').value = relays[id].outputsCount || 8
     }
 
-    document.addEventListener('keydown', function handler(e) {
-        if (e.key === 'Enter') {
-            saveNameEdit()
-            document.removeEventListener('keydown', handler)
-        }
-        if (e.key === 'Escape') {
-            closeModal('editNameModal')
-            document.removeEventListener('keydown', handler)
-        }
-    })
+    bindModalShortcuts('editNameModal', () => saveNameEdit())
 }
 
 function editOutputName(relayId, outputId) {
@@ -2926,16 +2942,7 @@ function editOutputName(relayId, outputId) {
     document.getElementById('editButtonNumber').style.display = 'none'
     document.getElementById('editNameModal').classList.add('active')
 
-    document.addEventListener('keydown', function handler(e) {
-        if (e.key === 'Enter') {
-            saveNameEdit()
-            document.removeEventListener('keydown', handler)
-        }
-        if (e.key === 'Escape') {
-            closeModal('editNameModal')
-            document.removeEventListener('keydown', handler)
-        }
-    })
+    bindModalShortcuts('editNameModal', () => saveNameEdit())
 }
 
 async function saveNameEdit() {

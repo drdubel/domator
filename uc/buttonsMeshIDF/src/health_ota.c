@@ -152,12 +152,6 @@ static void ota_reset_fail_count(void) { ota_set_fail_count(0); }
 esp_err_t mesh_disconnect_and_ota() {
     esp_err_t ret;
 
-    /** Gracefully stop the mesh stack to drain in-flight messages and avoid
-     *  corrupting the flash with an OTA mid-write.  Also stop any root-only
-     *  tasks to avoid MQTT publish attempts during OTA.
-     */
-    relay_save_states_to_nvs();
-
     ESP_LOGI(TAG, "Stopping mesh...");
     g_ota_in_progress = true;
 
@@ -411,6 +405,11 @@ void health_monitor_task(void* arg) {
                     xSemaphoreGive(g_stats_mutex);
                 }
             }
+        }
+
+        if (g_node_type == NODE_TYPE_RELAY_8 ||
+            g_node_type == NODE_TYPE_RELAY_16) {
+            relay_save_states_to_nvs();
         }
     }
 }

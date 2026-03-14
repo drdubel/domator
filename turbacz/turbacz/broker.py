@@ -187,6 +187,22 @@ async def handle_root_state(payload_str):
             "/switch/cmd/root", json.dumps({"type": "button_types", "data": connection_manager.get_all_buttons()})
         )
 
+        # Sync per-output auto-off timers to relay boards.
+        outputs = connection_manager.get_outputs()
+        auto_off_payload: dict[str, dict[str, int]] = {}
+        for relay_id, relay_outputs in outputs.items():
+            relay_key = str(relay_id)
+            auto_off_payload[relay_key] = {}
+            for output_id, output_meta in relay_outputs.items():
+                timeout_seconds = 0
+                if isinstance(output_meta, (tuple, list)) and len(output_meta) > 3:
+                    timeout_seconds = max(int(output_meta[3] or 0), 0)
+                auto_off_payload[relay_key][str(output_id)] = timeout_seconds
+
+        mqtt.client.publish(
+            "/switch/cmd/root",
+            json.dumps({"type": "auto_off", "data": auto_off_payload}),
+        )
         return
 
     if status == "disconnected":

@@ -153,6 +153,10 @@
                 <input type="text" id="editNameInput" placeholder="Enter new name">
                 <input style="display:none;" type="number" id="editButtonNumber" placeholder="Enter new button number">
             </div>
+            <div class="form-group" id="editAutoOffGroup" style="display:none;">
+                <label>Auto-Off Timeout (seconds, 0 = disabled, max 1800)</label>
+                <input type="number" id="editAutoOffSeconds" min="0" max="1800" step="15" placeholder="0">
+            </div>
             <div class="modal-buttons">
                 <button class="modal-btn save" onclick="saveNameEdit()">Save</button>
                 <button class="modal-btn cancel" onclick="closeModal('editNameModal')">Cancel</button>

@@ -256,10 +256,21 @@ void mesh_queue_to_node(mesh_app_msg_t* msg, tx_priority_t prio,
     }
     memcpy(item->msg, msg, sizeof(mesh_app_msg_t));
 
-    BaseType_t sent = xQueueSendToBack(queue, &item, pdMS_TO_TICKS(100));
+    BaseType_t sent = pdFALSE;
+    const int max_attempts = (prio == TX_PRIO_HIGH) ? 3 : 2;
+    for (int attempt = 0; attempt < max_attempts && sent != pdTRUE; attempt++) {
+        TickType_t wait_ticks =
+            (prio == TX_PRIO_HIGH) ? pdMS_TO_TICKS(250) : pdMS_TO_TICKS(100);
+        if (prio == TX_PRIO_HIGH) {
+            sent = xQueueSendToFront(queue, &item, wait_ticks);
+        } else {
+            sent = xQueueSendToBack(queue, &item, wait_ticks);
+        }
+    }
 
     if (sent != pdTRUE) {
-        ESP_LOGW(TAG, "Queue full, dropping message");
+        ESP_LOGW(TAG, "Queue full, dropping message (prio=%d, pending=%u)",
+                 prio, (unsigned int)uxQueueMessagesWaiting(queue));
         free(item->msg);
         free(item);
     }

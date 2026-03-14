@@ -73,8 +73,7 @@ class WebSocketManager {
 		this.isReconnecting = true
 
 		console.log('Connecting WebSocket...')
-		const auth_token = getCookie("access_token")
-		this.ws = new WebSocket(`wss://${window.location.host}${this.endpoint}${this.wsId}?token=${auth_token}`)
+		this.ws = new WebSocket(`wss://${window.location.host}${this.endpoint}${this.wsId}`)
 
 		this.ws.onopen = () => {
 			console.log('WebSocket connected!')

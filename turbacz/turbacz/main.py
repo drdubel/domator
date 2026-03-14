@@ -1,8 +1,8 @@
 import asyncio
-import hashlib
 import json
 import logging
 import os
+import secrets
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -10,10 +10,10 @@ import httpx
 import sentry_sdk
 from aioprometheus.asgi.middleware import MetricsMiddleware
 from aioprometheus.asgi.starlette import metrics
-from fastapi import Cookie, FastAPI, File, Response, UploadFile, WebSocket
+from fastapi import Cookie, Depends, FastAPI, File, HTTPException, Query, Response, UploadFile, WebSocket
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -59,9 +59,23 @@ if config.monitoring.sentry_dsn is not None:
 
 app = FastAPI(title="Turbacz Home Automation System", version="0.1.0")
 app.add_middleware(CustomRequestSizeMiddleware, max_content_size=MAX_REQUEST_SIZE)
-app.add_middleware(SessionMiddleware, secret_key="!secret")
+session_secret = config.session_secret
+if not session_secret:
+    session_secret = secrets.token_urlsafe(32)
+    logger.warning(
+        "SESSION_SECRET not set; using ephemeral in-memory secret. Set SESSION_SECRET for stable and secure sessions."
+    )
+app.add_middleware(SessionMiddleware, secret_key=session_secret)
 app.add_middleware(MetricsMiddleware)
-app.add_route("/metrics", metrics)
+
+
+def _require_authenticated_user(access_token: Optional[str] = Cookie(None)):
+    user = auth.get_current_user(access_token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+app.add_api_route("/metrics", metrics, methods=["GET"], dependencies=[Depends(_require_authenticated_user)])
 app.include_router(auth.router)
 app.include_router(connection_router)
 mqtt.init_app(app)
@@ -69,6 +83,26 @@ mqtt.init_app(app)
 background_task_started = False
 
 app.mount("/static", StaticFiles(directory="./static", html=True), name="static")
+
+
+def publish_relay_auto_off_config() -> None:
+    outputs = connection_manager.get_outputs()
+    payload: dict[str, dict[str, int]] = {}
+
+    for relay_id, relay_outputs in outputs.items():
+        relay_map: dict[str, int] = {}
+        for output_id, output_meta in relay_outputs.items():
+            timeout_seconds = 0
+            if isinstance(output_meta, (tuple, list)) and len(output_meta) > 3:
+                timeout_seconds = max(int(output_meta[3] or 0), 0)
+            relay_map[str(output_id)] = timeout_seconds
+
+        payload[str(relay_id)] = relay_map
+
+    mqtt.client.publish(
+        "/switch/cmd/root",
+        json.dumps({"type": "auto_off", "data": payload}),
+    )
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -103,7 +137,13 @@ async def heating(request: Request, access_token: Optional[str] = Cookie(None)):
 
 
 @app.get("/api/temperatures")
-async def get_temperatures(request: Request, start: int, end: int, step: int):
+async def get_temperatures(
+    request: Request,
+    start: int = Query(..., ge=0),
+    end: int = Query(..., ge=0),
+    step: int = Query(..., gt=0, le=3600),
+    user: dict = Depends(_require_authenticated_user),
+):
     async with httpx.AsyncClient() as client:
         response1 = await client.get(
             f"{config.monitoring.metrics}/api/v1/query_range",
@@ -218,8 +258,8 @@ async def upload_firmware(
 
 
 class BlindRequest(BaseModel):
-    blind: str
-    position: int
+    blind: str = Field(pattern=r"^b[0-9]+$")
+    position: int = Field(ge=0, le=999)
 
 
 class SwitchChange(BaseModel):
@@ -228,7 +268,7 @@ class SwitchChange(BaseModel):
 
 
 @app.post("/setblind")
-async def set_blind(req: BlindRequest):
+async def set_blind(req: BlindRequest, user: dict = Depends(_require_authenticated_user)):
     return {"current_position": req.position}
 
 
@@ -339,6 +379,21 @@ async def websocket_lights(websocket: WebSocket):
                 )
                 continue
 
+            if cmd.get("type") == "change_positions":
+                positions = cmd.get("positions", [])
+                if isinstance(positions, list) and positions:
+                    connection_manager.set_output_positions(positions)
+
+                    await ws_manager.broadcast(
+                        {
+                            "type": "configuration",
+                            "sections": connection_manager.get_sections(),
+                            "named_outputs": connection_manager.get_named_outputs(),
+                        },
+                        "/lights/ws/",
+                    )
+                continue
+
             try:
                 topic = f"/relay/cmd/{cmd['relay_id']}"
                 mqtt.client.publish(topic, f"{cmd['output_id']}{cmd['state']}")
@@ -377,6 +432,7 @@ async def websocket_rcm(websocket: WebSocket):
                     "/switch/cmd/root",
                     json.dumps({"type": "connections", "data": connections}),
                 )
+                publish_relay_auto_off_config()
                 await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
                 continue
 

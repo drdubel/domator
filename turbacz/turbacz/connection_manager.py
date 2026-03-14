@@ -52,6 +52,7 @@ class ConnectionManager:
                     name TEXT NOT NULL,
                     section_id INTEGER REFERENCES sections(id) DEFAULT 1,
                     output_idx INTEGER NOT NULL DEFAULT 0,
+                    auto_off_seconds INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (relay_id, output_id)
                 );
                 """
@@ -61,6 +62,12 @@ class ConnectionManager:
                 """
                 ALTER TABLE outputs
                 ADD COLUMN IF NOT EXISTS output_idx INTEGER NOT NULL DEFAULT 0;
+                """
+            )
+            cur.execute(
+                """
+                ALTER TABLE outputs
+                ADD COLUMN IF NOT EXISTS auto_off_seconds INTEGER NOT NULL DEFAULT 0;
                 """
             )
             cur.execute(
@@ -301,16 +308,34 @@ class ConnectionManager:
 
         self.conn.commit()
 
-    def name_output(self, relay_id: int, output_id: str, output_name: str):
+    def name_output(
+        self,
+        relay_id: int,
+        output_id: str,
+        output_name: str,
+        auto_off_seconds: Optional[int] = None,
+    ):
+        auto_off_seconds = max(int(auto_off_seconds or 0), 0) if auto_off_seconds is not None else None
+
         with self.conn.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE outputs
-                SET name = %s
-                WHERE relay_id = %s AND output_id = %s;
-                """,
-                (output_name, relay_id, output_id),
-            )
+            if auto_off_seconds is None:
+                cur.execute(
+                    """
+                    UPDATE outputs
+                    SET name = %s
+                    WHERE relay_id = %s AND output_id = %s;
+                    """,
+                    (output_name, relay_id, output_id),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE outputs
+                    SET name = %s, auto_off_seconds = %s
+                    WHERE relay_id = %s AND output_id = %s;
+                    """,
+                    (output_name, auto_off_seconds, relay_id, output_id),
+                )
 
         self.conn.commit()
 
@@ -358,31 +383,46 @@ class ConnectionManager:
 
         self.conn.commit()
 
-    def get_outputs(self) -> dict[int, dict[str, tuple[str, int, int]]]:
+    def get_outputs(self) -> dict[int, dict[str, tuple[str, int, int, int]]]:
         with self.conn.cursor() as cur:
-            cur.execute("SELECT relay_id, output_id, name, section_id, output_idx FROM outputs;")
+            cur.execute("SELECT relay_id, output_id, name, section_id, output_idx, auto_off_seconds FROM outputs;")
             outputs = cur.fetchall()
 
         output_dict = {}
         for row in outputs:
-            relay_id, output_id, name, section_id, output_idx = row
+            relay_id, output_id, name, section_id, output_idx, auto_off_seconds = row
             if relay_id not in output_dict:
                 output_dict[relay_id] = {}
-            output_dict[relay_id][output_id] = (name, section_id, output_idx)
+            output_dict[relay_id][output_id] = (name, section_id, output_idx, auto_off_seconds)
 
         return output_dict
 
-    def get_named_outputs(self) -> dict[int, dict[str, tuple[str, int, int]]]:
+    def get_named_outputs(self) -> dict[int, dict[str, tuple[str, int, int, int]]]:
         named_outputs = {}
 
         for relay_id, outputs in self.get_outputs().items():
             named_outputs[relay_id] = {
-                output_id: (output[0], output[1], output[2])
+                output_id: (output[0], output[1], output[2], output[3])
                 for output_id, output in outputs.items()
                 if not output[0].startswith("Output ")
             }
 
         return named_outputs
+
+    def get_output_auto_off_seconds(self, relay_id: int, output_id: str) -> int:
+        with self.conn.cursor() as cur:
+            row = cur.execute(
+                """
+                SELECT auto_off_seconds
+                FROM outputs
+                WHERE relay_id = %s AND output_id = %s;
+                """,
+                (relay_id, output_id),
+            ).fetchone()
+
+        if not row:
+            return 0
+        return max(int(row[0] or 0), 0)
 
     def add_section(self, section_name: str):
         with self.conn.cursor() as cur:
@@ -601,6 +641,7 @@ def add_output(
     relay_id: int = Form(...),
     output_id: str = Form(...),
     output_name: str = Form(...),
+    auto_off_seconds: Optional[int] = Form(None),
     access_token: Optional[str] = Cookie(None),
 ):
     user = auth.get_current_user(access_token)
@@ -608,7 +649,7 @@ def add_output(
     if not user:
         return {"error": "Unauthorized"}
 
-    connection_manager.name_output(relay_id, output_id, output_name)
+    connection_manager.name_output(relay_id, output_id, output_name, auto_off_seconds)
 
     return {"status": "Output added"}
 

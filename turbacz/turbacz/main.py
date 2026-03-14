@@ -59,7 +59,7 @@ if config.monitoring.sentry_dsn is not None:
 
 app = FastAPI(title="Turbacz Home Automation System", version="0.1.0")
 app.add_middleware(CustomRequestSizeMiddleware, max_content_size=MAX_REQUEST_SIZE)
-session_secret = os.getenv("SESSION_SECRET")
+session_secret = config.session_secret
 if not session_secret:
     session_secret = secrets.token_urlsafe(32)
     logger.warning(
@@ -83,6 +83,26 @@ mqtt.init_app(app)
 background_task_started = False
 
 app.mount("/static", StaticFiles(directory="./static", html=True), name="static")
+
+
+def publish_relay_auto_off_config() -> None:
+    outputs = connection_manager.get_outputs()
+    payload: dict[str, dict[str, int]] = {}
+
+    for relay_id, relay_outputs in outputs.items():
+        relay_map: dict[str, int] = {}
+        for output_id, output_meta in relay_outputs.items():
+            timeout_seconds = 0
+            if isinstance(output_meta, (tuple, list)) and len(output_meta) > 3:
+                timeout_seconds = max(int(output_meta[3] or 0), 0)
+            relay_map[str(output_id)] = timeout_seconds
+
+        payload[str(relay_id)] = relay_map
+
+    mqtt.client.publish(
+        "/switch/cmd/root",
+        json.dumps({"type": "auto_off", "data": payload}),
+    )
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -412,6 +432,7 @@ async def websocket_rcm(websocket: WebSocket):
                     "/switch/cmd/root",
                     json.dumps({"type": "connections", "data": connections}),
                 )
+                publish_relay_auto_off_config()
                 await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
                 continue
 

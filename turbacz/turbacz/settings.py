@@ -41,6 +41,7 @@ class Monitoring(BaseModel):
 class TurbaczSettings(BaseSettings):
     authorized: set[str] = set()
     jwt_secret: str = ""
+    session_secret: str = ""
     mqtt: MQTTServerSettings = MQTTServerSettings(password="")
     oidc: OIDCSettings = OIDCSettings(client_id="", client_secret="")
     monitoring: Monitoring = Monitoring()

@@ -2044,6 +2044,99 @@ pointer-events: none;
     })
 }
 
+function parseOutputMeta(outputMetaRaw, fallbackName) {
+    if (Array.isArray(outputMetaRaw)) {
+        return {
+            name: outputMetaRaw[0] || fallbackName,
+            sectionId: outputMetaRaw[1],
+            outputIdx: outputMetaRaw[2],
+            autoOffSeconds: normalizeAutoOffSeconds(outputMetaRaw[3] || 0)
+        }
+    }
+
+    return {
+        name: outputMetaRaw || fallbackName,
+        sectionId: null,
+        outputIdx: null,
+        autoOffSeconds: 0
+    }
+}
+
+const AUTO_OFF_STEP_SECONDS = 15
+const AUTO_OFF_MAX_SECONDS = 30 * 60
+
+function normalizeAutoOffSeconds(rawSeconds) {
+    const parsed = Number(rawSeconds || 0)
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+        return 0
+    }
+
+    const rounded = Math.round(parsed / AUTO_OFF_STEP_SECONDS) * AUTO_OFF_STEP_SECONDS
+    return Math.min(Math.max(rounded, 0), AUTO_OFF_MAX_SECONDS)
+}
+
+function formatAutoOff(seconds) {
+    const value = Math.max(Number(seconds || 0), 0)
+    if (value <= 0) return 'off'
+    if (value < 60) return `${value}s`
+    if (value % 60 === 0) return `${Math.floor(value / 60)}m`
+    return `${Math.floor(value / 60)}m ${value % 60}s`
+}
+
+function formatAutoOffBadge(seconds) {
+    const value = Math.max(Number(seconds || 0), 0)
+    return value > 0 ? `⏱ ${formatAutoOff(value)}` : ''
+}
+
+async function saveOutputConfig(relayId, outputId, outputName, autoOffSeconds, showFeedback = false) {
+    const normalizedAutoOff = normalizeAutoOffSeconds(autoOffSeconds)
+    const result = await postForm('/lights/name_output', {
+        relay_id: relayId,
+        output_id: outputId,
+        output_name: outputName,
+        auto_off_seconds: normalizedAutoOff
+    })
+
+    if (result === null) {
+        if (showFeedback) {
+            showToast('Failed to save auto-off delay', true)
+        }
+        return false
+    }
+
+    const currentOutput = relays[relayId].outputs[outputId]
+    const currentMeta = parseOutputMeta(currentOutput, outputName)
+    relays[relayId].outputs[outputId] = [outputName, currentMeta.sectionId, currentMeta.outputIdx, normalizedAutoOff]
+
+    const outputElement = document.querySelector(`#relay-${relayId}-output-${outputId} .output-name`)
+    if (outputElement) {
+        outputElement.textContent = outputName
+    }
+
+    const autoOffSlider = document.getElementById(`relay-${relayId}-auto-off-slider-${outputId}`)
+    if (autoOffSlider) {
+        autoOffSlider.value = String(normalizedAutoOff)
+    }
+
+    const autoOffLabel = document.getElementById(`relay-${relayId}-auto-off-value-${outputId}`)
+    if (autoOffLabel) {
+        autoOffLabel.textContent = formatAutoOff(normalizedAutoOff)
+        autoOffLabel.title = normalizedAutoOff > 0 ? `Auto off after ${normalizedAutoOff}s` : 'Auto off disabled'
+    }
+
+    const autoOffBadge = document.getElementById(`relay-${relayId}-auto-off-badge-${outputId}`)
+    if (autoOffBadge) {
+        autoOffBadge.textContent = formatAutoOffBadge(normalizedAutoOff)
+        autoOffBadge.title = normalizedAutoOff > 0 ? `Turns off after ${normalizedAutoOff}s` : ''
+    }
+
+    if (showFeedback) {
+        showToast(normalizedAutoOff > 0 ? `Auto-off set to ${formatAutoOff(normalizedAutoOff)}` : 'Auto-off disabled')
+    }
+
+    return true
+}
+
 function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
     const savedPos = getSavedPosition(`relay-${relayId}`, x, y)
 
@@ -2056,14 +2149,30 @@ function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
 
     let outputsHTML = ''
     for (let i = 1; i <= outputsCount; i++) {
-        let outputName = outputs[String.fromCharCode(96 + i)] || `Output ${i}`
-        if (Array.isArray(outputName)) {
-            outputName = outputName[0]
-        }
+        const outputId = String.fromCharCode(96 + i)
+        const outputMetaRaw = outputs[outputId] || [`Output ${i}`, 1, i - 1, 0]
+        const outputMeta = parseOutputMeta(outputMetaRaw, `Output ${i}`)
+        const outputName = outputMeta.name
+        const autoOffSeconds = outputMeta.autoOffSeconds
+
         outputsHTML += `
                     <div class="output-item" id="relay-${relayId}-output-${String.fromCharCode(96 + i)}">
                         <span><img class="item-icon light-bulb-${relayId}-${String.fromCharCode(96 + i)}" src="/static/data/img/off.png" alt="switch" style="cursor: pointer;"></span>
                         <span class="output-name output-name-${relayId}-${String.fromCharCode(96 + i)}" style="cursor: pointer;">${outputName}</span>
+                        <span class="output-auto-off-badge" id="relay-${relayId}-auto-off-badge-${outputId}" title="${autoOffSeconds > 0 ? `Turns off after ${autoOffSeconds}s` : ''}">${formatAutoOffBadge(autoOffSeconds)}</span>
+                        <div class="output-inline-controls" title="Auto-off delay">
+                            <span class="output-inline-icon">⏱</span>
+                            <input
+                                type="range"
+                                class="auto-off-slider"
+                                id="relay-${relayId}-auto-off-slider-${outputId}"
+                                min="0"
+                                max="${AUTO_OFF_MAX_SECONDS}"
+                                step="${AUTO_OFF_STEP_SECONDS}"
+                                value="${autoOffSeconds}"
+                            >
+                            <span class="auto-off-value" id="relay-${relayId}-auto-off-value-${outputId}" title="${autoOffSeconds > 0 ? `Auto off after ${autoOffSeconds}s` : 'Auto off disabled'}">${formatAutoOff(autoOffSeconds)}</span>
+                        </div>
                     </div>
                 `
     }
@@ -2126,6 +2235,33 @@ function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
             addClickAndTouchHandler(nameElement, (e) => {
                 e.stopPropagation()
                 editOutputName(relayId, outputId)
+            })
+        }
+
+        const autoOffSlider = relayDiv.querySelector(`#relay-${relayId}-auto-off-slider-${outputId}`)
+        if (autoOffSlider) {
+            const autoOffLabel = relayDiv.querySelector(`#relay-${relayId}-auto-off-value-${outputId}`)
+
+            const stopProp = (e) => {
+                e.stopPropagation()
+            }
+            autoOffSlider.addEventListener('pointerdown', stopProp)
+            autoOffSlider.addEventListener('click', stopProp)
+            autoOffSlider.addEventListener('touchstart', stopProp, { passive: true })
+
+            autoOffSlider.addEventListener('input', (e) => {
+                if (autoOffLabel) {
+                    const seconds = parseInt(e.target.value || '0')
+                    autoOffLabel.textContent = formatAutoOff(seconds)
+                    autoOffLabel.title = seconds > 0 ? `Auto off after ${seconds}s` : 'Auto off disabled'
+                }
+            })
+
+            autoOffSlider.addEventListener('change', async (e) => {
+                const seconds = normalizeAutoOffSeconds(e.target.value || '0')
+                const currentOutput = relays[relayId].outputs[outputId]
+                const currentMeta = parseOutputMeta(currentOutput, `Output ${outputId.charCodeAt(0) - 96}`)
+                await saveOutputConfig(relayId, outputId, currentMeta.name, seconds, true)
             })
         }
     }
@@ -2618,6 +2754,7 @@ function editDeviceName(type, id) {
     const currentName = type === 'switch' ? switches[id].name : relays[id].name
     document.getElementById('editNameInput').value = currentName
     document.getElementById('editNameModal').classList.add('active')
+    document.getElementById('editAutoOffGroup').style.display = 'none'
 
     if (type === 'switch') {
         document.getElementById('editButtonNumber').style.display = 'block'
@@ -2643,10 +2780,15 @@ function editOutputName(relayId, outputId) {
     currentEditTarget = { type: 'output', relayId, outputId }
     const outputs = relays[relayId].outputs
     let currentName = outputs[outputId] || outputs[outputId] || `Output ${outputId.charCodeAt(0) - 96} `
+    let currentAutoOffSeconds = 0
     if (Array.isArray(currentName)) {
+        currentAutoOffSeconds = Number(currentName[3] || 0)
         currentName = currentName[0]
     }
     document.getElementById('editNameInput').value = currentName
+    document.getElementById('editAutoOffSeconds').value = currentAutoOffSeconds
+    document.getElementById('editAutoOffGroup').style.display = 'block'
+    document.getElementById('editButtonNumber').style.display = 'none'
     document.getElementById('editNameModal').classList.add('active')
 
     document.addEventListener('keydown', function handler(e) {
@@ -2669,20 +2811,17 @@ async function saveNameEdit() {
     }
 
     if (currentEditTarget.type === 'output') {
-        const result = await postForm('/lights/name_output', {
-            relay_id: currentEditTarget.relayId,
-            output_id: currentEditTarget.outputId,
-            output_name: newName
-        })
+        const autoOffSeconds = normalizeAutoOffSeconds(document.getElementById('editAutoOffSeconds').value || '0')
+        const success = await saveOutputConfig(
+            currentEditTarget.relayId,
+            currentEditTarget.outputId,
+            newName,
+            autoOffSeconds,
+            false
+        )
 
-        if (result !== null) {
-            // Keep tuple metadata (name, section_id, output_idx).
-            const currentOutput = relays[currentEditTarget.relayId].outputs[currentEditTarget.outputId]
-            const sectionId = Array.isArray(currentOutput) ? currentOutput[1] : null
-            const outputIdx = Array.isArray(currentOutput) ? currentOutput[2] : null
-            relays[currentEditTarget.relayId].outputs[currentEditTarget.outputId] = [newName, sectionId, outputIdx]
-            const outputElement = document.querySelector(`#relay-${currentEditTarget.relayId}-output-${currentEditTarget.outputId} .output-name`)
-            if (outputElement) outputElement.textContent = newName
+        if (!success) {
+            return
         }
     } else if (currentEditTarget.type === 'switch') {
         // Rename switch
@@ -2725,6 +2864,7 @@ async function saveNameEdit() {
     }
 
     closeModal('editNameModal')
+    document.getElementById('editAutoOffGroup').style.display = 'none'
 }
 
 function showToast(message, isError = false) {

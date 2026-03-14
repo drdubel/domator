@@ -595,6 +595,8 @@ body {
 .output-item {
     background: linear-gradient(135deg, rgba(245, 158, 11, 0.2) 0%, rgba(217, 119, 6, 0.2) 100%);
     border-color: rgba(245, 158, 11, 0.3);
+    gap: 0.5rem;
+    position: relative;
 }
 
 .output-item:hover {
@@ -611,6 +613,76 @@ body {
     font-weight: 500;
     font-size: 1rem;
     margin-left: 1rem;
+    min-width: 0;
+}
+
+.output-inline-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.45rem;
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 0.92);
+    border: 1px solid rgba(245, 158, 11, 0.5);
+    cursor: default;
+    position: absolute;
+    right: 0.7rem;
+    top: 50%;
+    transform: translateY(-50%) translateX(10px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+    z-index: 5;
+    box-shadow: var(--shadow-md);
+}
+
+.output-item:hover .output-inline-controls,
+.output-item:focus-within .output-inline-controls,
+.output-inline-controls:hover {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(-50%) translateX(0);
+}
+
+.output-inline-icon {
+    font-size: 0.7rem;
+    color: #fbbf24;
+    line-height: 1;
+}
+
+.auto-off-slider {
+    width: 120px;
+    accent-color: #f59e0b;
+    cursor: pointer;
+}
+
+.auto-off-value {
+    min-width: 3.1rem;
+    text-align: right;
+    font-size: 0.72rem;
+    color: #fbbf24;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.output-auto-off-badge {
+    margin-left: auto;
+    margin-right: 0.15rem;
+    font-size: 0.73rem;
+    color: #fbbf24;
+    font-weight: 700;
+    white-space: nowrap;
+    opacity: 0.9;
+    transition: opacity 0.18s ease;
+}
+
+.output-auto-off-badge:empty {
+    display: none;
+}
+
+.output-item:hover .output-auto-off-badge,
+.output-item:focus-within .output-auto-off-badge {
+    opacity: 0.35;
 }
 
 .item-icon {
@@ -976,6 +1048,21 @@ body {
     .output-item {
         padding: 0.75rem;
         font-size: 0.875rem;
+    }
+
+    .output-inline-controls {
+        padding: 0.15rem 0.3rem;
+        gap: 0.25rem;
+        right: 0.45rem;
+    }
+
+    .auto-off-slider {
+        width: 88px;
+    }
+
+    .auto-off-value {
+        min-width: 2.5rem;
+        font-size: 0.68rem;
     }
 
     .modal-content {

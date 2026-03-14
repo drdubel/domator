@@ -2676,10 +2676,11 @@ async function saveNameEdit() {
         })
 
         if (result !== null) {
-            // Keep the tuple structure (name, section_id)
+            // Keep tuple metadata (name, section_id, output_idx).
             const currentOutput = relays[currentEditTarget.relayId].outputs[currentEditTarget.outputId]
             const sectionId = Array.isArray(currentOutput) ? currentOutput[1] : null
-            relays[currentEditTarget.relayId].outputs[currentEditTarget.outputId] = [newName, sectionId]
+            const outputIdx = Array.isArray(currentOutput) ? currentOutput[2] : null
+            relays[currentEditTarget.relayId].outputs[currentEditTarget.outputId] = [newName, sectionId, outputIdx]
             const outputElement = document.querySelector(`#relay-${currentEditTarget.relayId}-output-${currentEditTarget.outputId} .output-name`)
             if (outputElement) outputElement.textContent = newName
         }

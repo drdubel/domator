@@ -236,6 +236,12 @@
 	transform: translateY(-2px);
 }
 
+.light-card.dragging {
+	opacity: 0.45;
+	transform: scale(0.98);
+	border-style: dashed;
+}
+
 .light-card.active {
 	border-color: rgba(102, 126, 234, 0.7);
 	box-shadow: var(--shadow-md);

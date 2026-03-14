@@ -51,8 +51,16 @@ class ConnectionManager:
                     output_id TEXT NOT NULL,
                     name TEXT NOT NULL,
                     section_id INTEGER REFERENCES sections(id) DEFAULT 1,
+                    output_idx INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (relay_id, output_id)
                 );
+                """
+            )
+            # Backward-compatible migration for existing databases.
+            cur.execute(
+                """
+                ALTER TABLE outputs
+                ADD COLUMN IF NOT EXISTS output_idx INTEGER NOT NULL DEFAULT 0;
                 """
             )
             cur.execute(
@@ -83,6 +91,31 @@ class ConnectionManager:
                     type INT NOT NULL DEFAULT 0,
                     PRIMARY KEY (switch_id, button_id)
                 );
+                """
+            )
+
+        self.conn.commit()
+        self._initialize_output_positions()
+
+    def _initialize_output_positions(self):
+        with self.conn.cursor() as cur:
+            non_zero_count = cur.execute(
+                """
+                SELECT COUNT(*) FROM outputs WHERE output_idx <> 0;
+                """
+            ).fetchone()[0]
+
+            if non_zero_count > 0:
+                return
+
+            cur.execute(
+                """
+                UPDATE outputs
+                SET output_idx = CASE
+                    WHEN ascii(output_id) BETWEEN 97 AND 122 THEN ascii(output_id) - 97
+                    ELSE 0
+                END
+                WHERE output_idx = 0;
                 """
             )
 
@@ -244,25 +277,26 @@ class ConnectionManager:
         self.conn.commit()
 
     def add_output(self, relay_id: int, output_id: str, output_name: str, section_id: int = 1):
+        output_idx = max(ord(output_id.lower()) - 97, 0)
         with self.conn.cursor() as cur:
             if section_id != 1:
                 cur.execute(
                     """
-                    INSERT INTO outputs (relay_id, output_id, name, section_id)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO outputs (relay_id, output_id, name, section_id, output_idx)
+                    VALUES (%s, %s, %s, %s, %s)
                     ON CONFLICT (relay_id, output_id) DO NOTHING;
                     """,
-                    (relay_id, output_id, output_name, section_id),
+                    (relay_id, output_id, output_name, section_id, output_idx),
                 )
 
             else:
                 cur.execute(
                     """
-                    INSERT INTO outputs (relay_id, output_id, name)
-                    VALUES (%s, %s, %s)
+                    INSERT INTO outputs (relay_id, output_id, name, output_idx)
+                    VALUES (%s, %s, %s, %s)
                     ON CONFLICT (relay_id, output_id) DO NOTHING;
                     """,
-                    (relay_id, output_id, output_name),
+                    (relay_id, output_id, output_name, output_idx),
                 )
 
         self.conn.commit()
@@ -293,26 +327,57 @@ class ConnectionManager:
 
         self.conn.commit()
 
-    def get_outputs(self) -> dict[int, dict[str, tuple[str, int]]]:
+    def change_output_position(self, relay_id: int, output_id: str, output_idx: int):
         with self.conn.cursor() as cur:
-            cur.execute("SELECT relay_id, output_id, name, section_id FROM outputs;")
+            cur.execute(
+                """
+                UPDATE outputs
+                SET output_idx = %s
+                WHERE relay_id = %s AND output_id = %s;
+                """,
+                (output_idx, relay_id, output_id),
+            )
+
+        self.conn.commit()
+
+    def set_output_positions(self, positions: list[dict]):
+        with self.conn.cursor() as cur:
+            for pos in positions:
+                relay_id = int(pos["relay_id"])
+                output_id = str(pos["output_id"])
+                output_idx = int(pos["output_idx"])
+
+                cur.execute(
+                    """
+                    UPDATE outputs
+                    SET output_idx = %s
+                    WHERE relay_id = %s AND output_id = %s;
+                    """,
+                    (output_idx, relay_id, output_id),
+                )
+
+        self.conn.commit()
+
+    def get_outputs(self) -> dict[int, dict[str, tuple[str, int, int]]]:
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT relay_id, output_id, name, section_id, output_idx FROM outputs;")
             outputs = cur.fetchall()
 
         output_dict = {}
         for row in outputs:
-            relay_id, output_id, name, section_id = row
+            relay_id, output_id, name, section_id, output_idx = row
             if relay_id not in output_dict:
                 output_dict[relay_id] = {}
-            output_dict[relay_id][output_id] = (name, section_id)
+            output_dict[relay_id][output_id] = (name, section_id, output_idx)
 
         return output_dict
 
-    def get_named_outputs(self) -> dict[int, dict[str, tuple[str, int]]]:
+    def get_named_outputs(self) -> dict[int, dict[str, tuple[str, int, int]]]:
         named_outputs = {}
 
         for relay_id, outputs in self.get_outputs().items():
             named_outputs[relay_id] = {
-                output_id: (output[0], output[1])
+                output_id: (output[0], output[1], output[2])
                 for output_id, output in outputs.items()
                 if not output[0].startswith("Output ")
             }

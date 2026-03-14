@@ -5,6 +5,19 @@ var sections = {}
 var active_sections = new Set()
 var draggedCard = null
 var preventCardToggleUntil = 0
+var LONG_PRESS_MS = 380
+var LONG_PRESS_MOVE_CANCEL_PX = 10
+var touchPressTimer = null
+var touchPressCandidate = null
+var touchDragState = {
+	active: false,
+	card: null,
+	placeholder: null,
+	sourceGrid: null,
+	offsetX: 0,
+	offsetY: 0,
+}
+var invisibleDragImage = null
 
 function parseOutputMeta(outputMeta) {
 	if (Array.isArray(outputMeta)) {
@@ -78,6 +91,7 @@ var wsManager = new WebSocketManager('/lights/ws/', function (event) {
 
 			const grid = document.createElement("div")
 			grid.className = "light-grid"
+			grid.dataset.sectionId = `${sectionId}`
 			section.appendChild(grid)
 
 			room.appendChild(section)
@@ -201,25 +215,38 @@ function changeSwitchState(id) {
 function bindLightCardDnDHandlers() {
 	const cards = document.querySelectorAll('.light-card')
 	const grids = document.querySelectorAll('.light-grid')
+	ensureInvisibleDragImage()
 
 	cards.forEach(card => {
+		card.style.cursor = 'grab'
+
 		card.addEventListener('dragstart', function (e) {
 			draggedCard = this
+			this.dataset.sourceSectionId = this.dataset.sectionId || ''
 			this.classList.add('dragging')
 			e.dataTransfer.effectAllowed = 'move'
 			e.dataTransfer.setData('text/plain', this.dataset.cardId || '')
+			if (invisibleDragImage && e.dataTransfer.setDragImage) {
+				e.dataTransfer.setDragImage(invisibleDragImage, 0, 0)
+			}
 		})
 
 		card.addEventListener('dragend', function () {
 			this.classList.remove('dragging')
+			delete this.dataset.sourceSectionId
 			draggedCard = null
+			document.querySelectorAll('.light-grid.drag-over').forEach(grid => grid.classList.remove('drag-over'))
 		})
+
+		bindTouchReorderHandlers(card)
 	})
 
 	grids.forEach(grid => {
 		grid.addEventListener('dragover', function (e) {
 			e.preventDefault()
 			if (!draggedCard) return
+
+			this.classList.add('drag-over')
 
 			const afterElement = getDragAfterElement(this, e.clientX, e.clientY)
 			if (!afterElement) {
@@ -229,14 +256,256 @@ function bindLightCardDnDHandlers() {
 			}
 		})
 
+		grid.addEventListener('dragleave', function () {
+			this.classList.remove('drag-over')
+		})
+
 		grid.addEventListener('drop', function (e) {
 			e.preventDefault()
 			if (!draggedCard) return
 
+			const sourceGrid = getCardGridFromSectionId(draggedCard.dataset.sourceSectionId)
+			const movedCard = draggedCard
+			const sourceSectionId = movedCard.dataset.sourceSectionId || movedCard.dataset.sectionId
+			const targetSectionId = this.dataset.sectionId
+			const sectionChanged = !!targetSectionId && sourceSectionId !== targetSectionId
+
+			movedCard.dataset.sectionId = targetSectionId || movedCard.dataset.sectionId
+
 			preventCardToggleUntil = Date.now() + 250
+			if (sectionChanged) {
+				sendChangeSection(movedCard.dataset.relayId, movedCard.dataset.outputId, targetSectionId)
+			}
+
+			if (sourceGrid && sourceGrid !== this) {
+				sendSectionPositions(sourceGrid)
+			}
 			sendSectionPositions(this)
+			this.classList.remove('drag-over')
 		})
 	})
+}
+
+function ensureInvisibleDragImage() {
+	if (invisibleDragImage) {
+		return
+	}
+
+	const canvas = document.createElement('canvas')
+	canvas.width = 1
+	canvas.height = 1
+	invisibleDragImage = canvas
+}
+
+function bindTouchReorderHandlers(card) {
+	card.addEventListener('touchstart', function (e) {
+		if (e.touches.length !== 1) {
+			clearTouchPressState()
+			return
+		}
+
+		const touch = e.touches[0]
+		touchPressCandidate = {
+			card: this,
+			startX: touch.clientX,
+			startY: touch.clientY,
+		}
+
+		clearTimeout(touchPressTimer)
+		touchPressTimer = setTimeout(function () {
+			if (!touchPressCandidate || touchDragState.active) {
+				return
+			}
+
+			startTouchDrag(touchPressCandidate.card, touchPressCandidate.startX, touchPressCandidate.startY)
+		}, LONG_PRESS_MS)
+	}, { passive: true })
+
+	card.addEventListener('touchmove', function (e) {
+		if (touchDragState.active) {
+			e.preventDefault()
+			if (!e.touches.length) return
+
+			moveTouchDrag(e.touches[0].clientX, e.touches[0].clientY)
+			return
+		}
+
+		if (!touchPressCandidate || touchPressCandidate.card !== this || !e.touches.length) {
+			return
+		}
+
+		const touch = e.touches[0]
+		const dx = touch.clientX - touchPressCandidate.startX
+		const dy = touch.clientY - touchPressCandidate.startY
+		if (Math.hypot(dx, dy) > LONG_PRESS_MOVE_CANCEL_PX) {
+			clearTouchPressState()
+		}
+	}, { passive: false })
+
+	card.addEventListener('touchend', function () {
+		if (touchDragState.active) {
+			finishTouchDrag(false)
+			return
+		}
+
+		clearTouchPressState()
+	}, { passive: true })
+
+	card.addEventListener('touchcancel', function () {
+		if (touchDragState.active) {
+			finishTouchDrag(true)
+			return
+		}
+
+		clearTouchPressState()
+	}, { passive: true })
+}
+
+function startTouchDrag(card, startX, startY) {
+	const sourceGrid = card.parentElement
+	if (!sourceGrid || !sourceGrid.classList.contains('light-grid')) {
+		return
+	}
+
+	const rect = card.getBoundingClientRect()
+	const placeholder = document.createElement('div')
+	placeholder.className = 'light-card-placeholder'
+	placeholder.style.width = `${rect.width}px`
+	placeholder.style.height = `${rect.height}px`
+
+	sourceGrid.insertBefore(placeholder, card.nextSibling)
+
+	touchDragState.active = true
+	touchDragState.card = card
+	touchDragState.placeholder = placeholder
+	touchDragState.sourceGrid = sourceGrid
+	touchDragState.offsetX = startX - rect.left
+	touchDragState.offsetY = startY - rect.top
+
+	preventCardToggleUntil = Date.now() + 800
+	document.body.classList.add('touch-reordering')
+
+	card.classList.add('touch-dragging')
+	card.style.width = `${rect.width}px`
+	card.style.height = `${rect.height}px`
+	card.style.left = '0'
+	card.style.top = '0'
+	card.style.position = 'fixed'
+	card.style.zIndex = '2500'
+	card.style.pointerEvents = 'none'
+
+	moveTouchDrag(startX, startY)
+}
+
+function moveTouchDrag(clientX, clientY) {
+	if (!touchDragState.active || !touchDragState.card) {
+		return
+	}
+
+	const card = touchDragState.card
+	const x = clientX - touchDragState.offsetX
+	const y = clientY - touchDragState.offsetY
+	card.style.transform = `translate3d(${x}px, ${y}px, 0)`
+
+	const elementUnderTouch = document.elementFromPoint(clientX, clientY)
+	const targetGrid = elementUnderTouch ? elementUnderTouch.closest('.light-grid') : null
+	if (!targetGrid) {
+		return
+	}
+
+	const afterElement = getDragAfterElement(targetGrid, clientX, clientY)
+	if (!afterElement) {
+		targetGrid.appendChild(touchDragState.placeholder)
+	} else if (afterElement !== touchDragState.placeholder) {
+		targetGrid.insertBefore(touchDragState.placeholder, afterElement)
+	}
+
+	targetGrid.classList.add('drag-over')
+}
+
+function finishTouchDrag(cancelled) {
+	if (!touchDragState.active || !touchDragState.card) {
+		clearTouchPressState()
+		return
+	}
+
+	const card = touchDragState.card
+	const placeholder = touchDragState.placeholder
+
+	document.querySelectorAll('.light-grid.drag-over').forEach(grid => grid.classList.remove('drag-over'))
+
+	if (!cancelled && placeholder && placeholder.parentElement) {
+		const targetGrid = placeholder.parentElement
+		const sourceGrid = touchDragState.sourceGrid
+		const sourceSectionId = card.dataset.sectionId
+		const targetSectionId = targetGrid.dataset.sectionId
+		const sectionChanged = !!targetSectionId && sourceSectionId !== targetSectionId
+
+		placeholder.parentElement.insertBefore(card, placeholder)
+		card.dataset.sectionId = targetSectionId || card.dataset.sectionId
+
+		if (sectionChanged) {
+			sendChangeSection(card.dataset.relayId, card.dataset.outputId, targetSectionId)
+		}
+
+		if (sourceGrid && sourceGrid !== targetGrid) {
+			sendSectionPositions(sourceGrid)
+		}
+
+		sendSectionPositions(targetGrid)
+	} else if (touchDragState.sourceGrid) {
+		touchDragState.sourceGrid.appendChild(card)
+	}
+
+	if (placeholder && placeholder.parentElement) {
+		placeholder.parentElement.removeChild(placeholder)
+	}
+
+	card.classList.remove('touch-dragging')
+	card.style.width = ''
+	card.style.height = ''
+	card.style.left = ''
+	card.style.top = ''
+	card.style.position = ''
+	card.style.zIndex = ''
+	card.style.pointerEvents = ''
+	card.style.transform = ''
+
+	document.body.classList.remove('touch-reordering')
+
+	touchDragState.active = false
+	touchDragState.card = null
+	touchDragState.placeholder = null
+	touchDragState.sourceGrid = null
+	touchDragState.offsetX = 0
+	touchDragState.offsetY = 0
+
+	clearTouchPressState()
+}
+
+function clearTouchPressState() {
+	if (touchPressTimer) {
+		clearTimeout(touchPressTimer)
+	}
+
+	touchPressTimer = null
+	touchPressCandidate = null
+}
+
+function canDropInGrid(card, grid) {
+	if (!card || !grid) {
+		return false
+	}
+
+	return !!grid.dataset.sectionId
+}
+
+function getCardGridFromSectionId(sectionId) {
+	if (!sectionId) {
+		return null
+	}
+
+	return document.querySelector(`.light-grid[data-section-id="${sectionId}"]`)
 }
 
 function getDragAfterElement(container, x, y) {
@@ -268,17 +537,37 @@ function sendSectionPositions(sectionGrid) {
 	}
 
 	const cards = [...sectionGrid.querySelectorAll('.light-card')]
-	const positions = cards.map((card, index) => ({
-		relay_id: card.dataset.relayId,
-		output_id: card.dataset.outputId,
-		output_idx: index,
-	}))
+	const positions = cards.map((card, index) => {
+		card.dataset.outputIdx = `${index}`
+		return {
+			relay_id: card.dataset.relayId,
+			output_id: card.dataset.outputId,
+			output_idx: index,
+		}
+	})
 
 	if (!positions.length) {
 		return
 	}
 
 	wsManager.send(JSON.stringify({ type: 'change_positions', positions: positions }))
+}
+
+function sendChangeSection(relayId, outputId, sectionId) {
+	if (!wsManager.isConnected()) {
+		return
+	}
+
+	if (!relayId || !outputId || !sectionId) {
+		return
+	}
+
+	wsManager.send(JSON.stringify({
+		type: 'change_section',
+		relay_id: relayId,
+		output_id: outputId,
+		section: sectionId,
+	}))
 }
 
 // Navigation functions are now in common.js

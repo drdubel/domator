@@ -1,6 +1,6 @@
+import logging
 import os
 import secrets
-import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 

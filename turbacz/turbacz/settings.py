@@ -53,7 +53,12 @@ class TurbaczSettings(BaseSettings):
     psql: PSQLSettings = PSQLSettings()
     use_mqtt: bool = True
 
-    model_config = SettingsConfigDict(toml_file="turbacz.toml")
+    model_config = SettingsConfigDict(
+        toml_file="turbacz.toml",
+        env_file=".env",
+        env_nested_delimiter="__",
+        extra="ignore",
+    )
 
     @classmethod
     def settings_customise_sources(
@@ -64,7 +69,13 @@ class TurbaczSettings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
-        return (TomlConfigSettingsSource(settings_cls),)
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            TomlConfigSettingsSource(settings_cls),
+            file_secret_settings,
+        )
 
 
 config = TurbaczSettings()

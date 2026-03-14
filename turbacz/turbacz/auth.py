@@ -1,4 +1,6 @@
 import os
+import secrets
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -10,9 +12,17 @@ from starlette.responses import HTMLResponse, RedirectResponse
 from turbacz.settings import config
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 JWT_ALG = "HS256"
 JWT_EXPIRE_MINUTES = 60 * 24 * 14  # 14 days
+JWT_SECRET = config.jwt_secret or os.getenv("JWT_SECRET", "")
+if not JWT_SECRET:
+    JWT_SECRET = secrets.token_urlsafe(48)
+    logger.warning(
+        "JWT secret is not configured; using ephemeral in-memory secret. "
+        "Set JWT_SECRET to keep sessions valid across restarts."
+    )
 
 oauth = OAuth()
 oauth.register(
@@ -34,12 +44,12 @@ def create_jwt(data: dict) -> str:
         }
     )
 
-    return jwt.encode(payload, config.jwt_secret, algorithm=JWT_ALG)
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
 
 
 def verify_jwt(token: str) -> dict | None:
     try:
-        return jwt.decode(token, config.jwt_secret, algorithms=[JWT_ALG])
+        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
 
     except JWTError:
         return None
@@ -53,7 +63,7 @@ def get_current_user(access_token: str | None) -> dict | None:
 
 
 async def websocket_auth(websocket: WebSocket) -> dict | None:
-    token = websocket.query_params.get("token")
+    token = websocket.cookies.get("access_token")
 
     if not token:
         return None
@@ -93,10 +103,11 @@ async def auth(request: Request):
         response.set_cookie(
             "access_token",
             jwt_token,
-            httponly=False,
-            secure=True,  # Set to False in development if not using HTTPS
+            httponly=True,
+            secure=request.url.scheme == "https",
             samesite="lax",
             max_age=JWT_EXPIRE_MINUTES * 60,
+            path="/",
         )
 
         return response
@@ -107,7 +118,7 @@ async def auth(request: Request):
 @router.get("/logout")
 async def logout(response: Response):
     response = RedirectResponse(url="/")
-    response.delete_cookie("access_token")
+    response.delete_cookie("access_token", path="/")
 
     return response
 

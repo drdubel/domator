@@ -394,6 +394,28 @@ async def websocket_lights(websocket: WebSocket):
                     )
                 continue
 
+            if cmd.get("type") == "layout_update":
+                section = cmd.get("section")
+                relay_id = cmd.get("relay_id")
+                output_id = cmd.get("output_id")
+                positions = cmd.get("positions", [])
+
+                if section is not None and relay_id is not None and output_id is not None:
+                    connection_manager.change_output_section(int(relay_id), str(output_id), int(section))
+
+                if isinstance(positions, list) and positions:
+                    connection_manager.set_output_positions(positions)
+
+                await ws_manager.broadcast(
+                    {
+                        "type": "configuration",
+                        "sections": connection_manager.get_sections(),
+                        "named_outputs": connection_manager.get_named_outputs(),
+                    },
+                    "/lights/ws/",
+                )
+                continue
+
             try:
                 topic = f"/relay/cmd/{cmd['relay_id']}"
                 mqtt.client.publish(topic, f"{cmd['output_id']}{cmd['state']}")

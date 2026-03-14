@@ -1126,7 +1126,7 @@ async function fetchAPI(endpoint) {
     }
 }
 
-async function postForm(endpoint, data) {
+async function postForm(endpoint, data, sendUpdate = true) {
     try {
         const formData = new FormData()
         Object.keys(data).forEach(key => {
@@ -1146,7 +1146,7 @@ async function postForm(endpoint, data) {
 
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`)
-        } else {
+        } else if (sendUpdate) {
             wsManager.send(JSON.stringify({ "type": "update" }))
         }
 
@@ -2231,7 +2231,7 @@ async function saveOutputConfig(relayId, outputId, outputName, autoOffSeconds, s
         output_id: outputId,
         output_name: outputName,
         auto_off_seconds: normalizedAutoOff
-    })
+    }, false)
 
     if (result === null) {
         if (showFeedback) {
@@ -2265,6 +2265,14 @@ async function saveOutputConfig(relayId, outputId, outputName, autoOffSeconds, s
         autoOffBadge.textContent = formatAutoOffBadge(normalizedAutoOff)
         autoOffBadge.title = normalizedAutoOff > 0 ? `Turns off after ${normalizedAutoOff}s` : ''
     }
+
+    // Send only changed timer to root to avoid full mesh resync on every slider change.
+    wsManager.send(JSON.stringify({
+        type: 'auto_off_update',
+        relay_id: relayId,
+        output_id: outputId,
+        auto_off_seconds: normalizedAutoOff
+    }))
 
     if (showFeedback) {
         showToast(normalizedAutoOff > 0 ? `Auto-off set to ${formatAutoOff(normalizedAutoOff)}` : 'Auto-off disabled')

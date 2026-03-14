@@ -15,6 +15,7 @@
  */
 
 #include <inttypes.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "cJSON.h"
@@ -22,12 +23,141 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "freertos/timers.h"
 #include "soc/soc_caps.h"
 
 static const char* TAG = "NODE_RELAY";
+static const uint32_t MAX_AUTO_OFF_SECONDS = 7 * 24 * 60 * 60;
 
 /** @brief Initialization guard: set to true once hardware setup is complete. */
 static bool g_relay_initialized = false;
+static uint32_t g_auto_off_seconds[MAX_RELAYS_16] = {0};
+static TimerHandle_t g_auto_off_timers[MAX_RELAYS_16] = {0};
+
+void relay_send_state_confirmation(int index);
+
+static int relay_max_outputs(void) {
+    return (g_board_type == BOARD_TYPE_16_RELAY) ? MAX_RELAYS_16 : MAX_RELAYS_8;
+}
+
+static void relay_save_auto_off_to_nvs(int index) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open("relay_states", NVS_READWRITE, &nvs_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS for auto-off: %s",
+                 esp_err_to_name(err));
+        return;
+    }
+
+    char key[8];
+    snprintf(key, sizeof(key), "to_%c", (char)('a' + index));
+    err = nvs_set_u32(nvs_handle, key, g_auto_off_seconds[index]);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to store auto-off for %c: %s", 'a' + index,
+                 esp_err_to_name(err));
+    } else {
+        nvs_commit(nvs_handle);
+    }
+    nvs_close(nvs_handle);
+}
+
+static void relay_load_auto_off_from_nvs(void) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open("relay_states", NVS_READONLY, &nvs_handle);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "No saved auto-off config in NVS");
+        return;
+    }
+
+    int max_relays = relay_max_outputs();
+    for (int i = 0; i < max_relays; i++) {
+        char key[8];
+        snprintf(key, sizeof(key), "to_%c", (char)('a' + i));
+        uint32_t value = 0;
+        err = nvs_get_u32(nvs_handle, key, &value);
+        if (err == ESP_OK) {
+            g_auto_off_seconds[i] = value;
+        } else if (err == ESP_ERR_NVS_NOT_FOUND) {
+            g_auto_off_seconds[i] = 0;
+        } else {
+            ESP_LOGW(TAG, "Failed reading auto-off key %s: %s", key,
+                     esp_err_to_name(err));
+            g_auto_off_seconds[i] = 0;
+        }
+    }
+
+    nvs_close(nvs_handle);
+}
+
+static void relay_auto_off_timer_callback(TimerHandle_t timer) {
+    int index = (int)(intptr_t)pvTimerGetTimerID(timer);
+    int max_relays = relay_max_outputs();
+    if (index < 0 || index >= max_relays) {
+        return;
+    }
+
+    if (g_auto_off_seconds[index] == 0) {
+        return;
+    }
+
+    if (!relay_get_state(index)) {
+        return;
+    }
+
+    ESP_LOGI(TAG, "Auto-off timeout reached for relay %d", index);
+    relay_set(index, false);
+    relay_send_state_confirmation(index);
+    relay_save_states_to_nvs();
+}
+
+static void relay_update_auto_off_timer(int index, bool state) {
+    int max_relays = relay_max_outputs();
+    if (index < 0 || index >= max_relays) {
+        return;
+    }
+
+    TimerHandle_t timer = g_auto_off_timers[index];
+    if (timer == NULL) {
+        return;
+    }
+
+    xTimerStop(timer, 0);
+
+    uint32_t timeout_seconds = g_auto_off_seconds[index];
+    if (!state || timeout_seconds == 0) {
+        return;
+    }
+
+    uint64_t timeout_ms = (uint64_t)timeout_seconds * 1000ULL;
+    TickType_t timeout_ticks = pdMS_TO_TICKS(timeout_ms);
+    if (timeout_ticks == 0) {
+        timeout_ticks = 1;
+    }
+
+    xTimerChangePeriod(timer, timeout_ticks, 0);
+    xTimerStart(timer, 0);
+}
+
+static void relay_set_auto_off_seconds(int index, uint32_t timeout_seconds) {
+    int max_relays = relay_max_outputs();
+    if (index < 0 || index >= max_relays) {
+        ESP_LOGW(TAG, "Invalid relay index for auto-off: %d", index);
+        return;
+    }
+
+    if (timeout_seconds > MAX_AUTO_OFF_SECONDS) {
+        timeout_seconds = MAX_AUTO_OFF_SECONDS;
+    }
+
+    g_auto_off_seconds[index] = timeout_seconds;
+    relay_save_auto_off_to_nvs(index);
+
+    bool current_state = relay_get_state(index);
+    relay_update_auto_off_timer(index, current_state);
+
+    ESP_LOGI(TAG, "Relay %d auto-off set to %" PRIu32 " seconds", index,
+             timeout_seconds);
+}
 
 // ====================
 // Helper Functions
@@ -213,6 +343,8 @@ void relay_set(int index, bool state) {
 
     xSemaphoreGive(g_relay_mutex);
 
+    relay_update_auto_off_timer(index, state);
+
     ESP_LOGI(TAG, "Relay %d set to %s", index, state ? "ON" : "OFF");
 }
 
@@ -356,6 +488,37 @@ void relay_handle_command(const char* cmd_data) {
     if (strcmp(cmd_data, "S") == 0 || strcmp(cmd_data, "sync") == 0) {
         ESP_LOGI(TAG, "Received sync request");
         relay_sync_all_states();
+        return;
+    }
+
+    if (cmd_data[0] == 'T' || cmd_data[0] == 't') {
+        if (strlen(cmd_data) < 3) {
+            ESP_LOGW(TAG, "Invalid auto-off command: %s", cmd_data);
+            return;
+        }
+
+        char relay_cfg_char = cmd_data[1];
+        int index = -1;
+        if (relay_cfg_char >= 'a' && relay_cfg_char < 'a' + max_relays) {
+            index = relay_cfg_char - 'a';
+        } else if (relay_cfg_char >= 'A' && relay_cfg_char < 'A' + max_relays) {
+            index = relay_cfg_char - 'A';
+        }
+
+        if (index < 0) {
+            ESP_LOGW(TAG, "Invalid auto-off target: %c", relay_cfg_char);
+            return;
+        }
+
+        char* end_ptr = NULL;
+        unsigned long timeout = strtoul(&cmd_data[2], &end_ptr, 10);
+        if (end_ptr == &cmd_data[2] || (end_ptr != NULL && *end_ptr != '\0')) {
+            ESP_LOGW(TAG, "Invalid auto-off timeout in command: %s", cmd_data);
+            return;
+        }
+
+        relay_set_auto_off_seconds(index, (uint32_t)timeout);
+        relay_send_state_confirmation(index);
         return;
     }
 
@@ -593,9 +756,26 @@ void relay_init(void) {
 
     relay_board_detect();
 
+    int max_relays = relay_max_outputs();
+    for (int i = 0; i < max_relays; i++) {
+        g_auto_off_timers[i] =
+            xTimerCreate("auto_off", pdMS_TO_TICKS(1000), pdFALSE,
+                         (void*)(intptr_t)i, relay_auto_off_timer_callback);
+        if (g_auto_off_timers[i] == NULL) {
+            ESP_LOGE(TAG, "Failed to create auto-off timer for relay %d", i);
+        }
+    }
+
     g_relay_initialized = true;
 
     ESP_LOGI(TAG, "Relay initialization complete - ready for operations");
 
     relay_load_states_from_nvs();
+    relay_load_auto_off_from_nvs();
+
+    for (int i = 0; i < max_relays; i++) {
+        if (relay_get_state(i)) {
+            relay_update_auto_off_timer(i, true);
+        }
+    }
 }

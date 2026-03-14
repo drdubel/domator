@@ -489,6 +489,7 @@ void relay_sync_all_states(void) {
  *  - "a0"     – set relay 0 OFF
  *  - "a1"     – set relay 0 ON
  *  - "S"/"sync" – sync all states to root
+ * - "Ta10"   – set auto-off for relay 0 to 10 seconds (same for Tb, Tc, etc.)
  *
  * @param cmd_data Null-terminated command string.
  */
@@ -538,6 +539,8 @@ void relay_handle_command(const char* cmd_data) {
             return;
         }
 
+        ESP_LOGI(TAG, "Setting auto-off for relay %d to %lu seconds", index,
+                 timeout);
         relay_set_auto_off_seconds(index, (uint32_t)timeout);
         return;
     }

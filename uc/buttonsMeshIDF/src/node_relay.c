@@ -51,12 +51,29 @@ static void relay_save_auto_off_to_nvs(int index) {
 
     char key[8];
     snprintf(key, sizeof(key), "to_%c", (char)('a' + index));
+
+    uint32_t previous_value = 0;
+    err = nvs_get_u32(nvs_handle, key, &previous_value);
+    if (err == ESP_OK && previous_value == g_auto_off_seconds[index]) {
+        nvs_close(nvs_handle);
+        return;
+    }
+    if (err == ESP_ERR_NVS_NOT_FOUND && g_auto_off_seconds[index] == 0) {
+        // Keep default 0 as implicit state to avoid unnecessary flash writes.
+        nvs_close(nvs_handle);
+        return;
+    }
+
     err = nvs_set_u32(nvs_handle, key, g_auto_off_seconds[index]);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to store auto-off for %c: %s", 'a' + index,
                  esp_err_to_name(err));
     } else {
-        nvs_commit(nvs_handle);
+        err = nvs_commit(nvs_handle);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to commit auto-off for %c: %s", 'a' + index,
+                     esp_err_to_name(err));
+        }
     }
     nvs_close(nvs_handle);
 }
@@ -147,6 +164,10 @@ static void relay_set_auto_off_seconds(int index, uint32_t timeout_seconds) {
 
     if (timeout_seconds > MAX_AUTO_OFF_SECONDS) {
         timeout_seconds = MAX_AUTO_OFF_SECONDS;
+    }
+
+    if (g_auto_off_seconds[index] == timeout_seconds) {
+        return;
     }
 
     g_auto_off_seconds[index] = timeout_seconds;
@@ -518,7 +539,6 @@ void relay_handle_command(const char* cmd_data) {
         }
 
         relay_set_auto_off_seconds(index, (uint32_t)timeout);
-        relay_send_state_confirmation(index);
         return;
     }
 

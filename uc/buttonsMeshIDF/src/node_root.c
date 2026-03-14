@@ -800,11 +800,84 @@ static void parse_json_button_types(cJSON* data) {
 }
 
 /**
+ * @brief Parse and route per-relay auto-off timers.
+ *
+ * Expected format:
+ * @code
+ * { "<relay_id>": { "a": 120, "b": 0, ... }, ... }
+ * @endcode
+ * For each entry, routes a relay command in the form: T<output><seconds>
+ */
+static void parse_json_auto_off(cJSON* data) {
+    if (!data || !cJSON_IsObject(data)) {
+        return;
+    }
+
+    cJSON* relay_item = NULL;
+    cJSON_ArrayForEach(relay_item, data) {
+        if (!relay_item->string || !cJSON_IsObject(relay_item)) {
+            continue;
+        }
+
+        uint64_t relay_id = strtoull(relay_item->string, NULL, 10);
+        if (relay_id == 0) {
+            continue;
+        }
+
+        mesh_addr_t dest = {0};
+        if (!registry_find(relay_id, &dest)) {
+            ESP_LOGW(TAG,
+                     "Auto-off config: relay %" PRIu64 " not found in registry",
+                     relay_id);
+            continue;
+        }
+
+        cJSON* output_item = NULL;
+        cJSON_ArrayForEach(output_item, relay_item) {
+            if (!output_item->string || !cJSON_IsNumber(output_item)) {
+                continue;
+            }
+
+            char output_char = output_item->string[0];
+            if (output_char >= 'A' && output_char <= 'Z') {
+                output_char = (char)(output_char - 'A' + 'a');
+            }
+            if (output_char < 'a' || output_char > 'z') {
+                continue;
+            }
+
+            int timeout_seconds = output_item->valueint;
+            if (timeout_seconds < 0) {
+                timeout_seconds = 0;
+            }
+
+            mesh_app_msg_t cmd = {0};
+            cmd.src_id = g_device_id;
+            cmd.msg_type = MSG_TYPE_COMMAND;
+            int written = snprintf(cmd.data, sizeof(cmd.data), "T%c%d",
+                                   output_char, timeout_seconds);
+            if (written <= 0 || written >= (int)sizeof(cmd.data)) {
+                ESP_LOGW(TAG,
+                         "Auto-off config command too long for relay %" PRIu64,
+                         relay_id);
+                continue;
+            }
+            cmd.data_len = written;
+
+            mesh_queue_to_node(&cmd, TX_PRIO_NORMAL, &dest);
+            ESP_LOGI(TAG, "Routed auto-off config to relay %" PRIu64 ": %s",
+                     relay_id, cmd.data);
+        }
+    }
+}
+
+/**
  * @brief Dispatch a JSON MQTT command received on /switch/cmd/root.
  *
  * Supported types:
  *  - "connections"  – update the button-to-relay routing table.
  *  - "button_types" – update the toggle/stateful classification per button.
+ *  - "auto_off"     – update per-relay output auto-off timeout values.
  */
 static void handle_json_mqtt_root_command(const char* topic, int topic_len,
                                           const char* data, int data_len) {
@@ -838,6 +911,14 @@ static void handle_json_mqtt_root_command(const char* topic, int topic_len,
             return;
         }
         parse_json_button_types(data);
+    } else if (strcmp(msgType->valuestring, "auto_off") == 0) {
+        cJSON* data = cJSON_GetObjectItem(json, "data");
+        if (!data) {
+            ESP_LOGE(TAG, "Auto-off command missing 'data' field");
+            cJSON_Delete(json);
+            return;
+        }
+        parse_json_auto_off(data);
     } else {
         ESP_LOGW(TAG, "Unknown JSON command type: %s", msgType->valuestring);
     }

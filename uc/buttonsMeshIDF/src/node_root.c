@@ -670,7 +670,8 @@ static void handle_nonJson_mqtt_root_command(const char* topic, int topic_len,
             if (mesh_queue_to_node(&ping, TX_PRIO_HIGH, &targets[i])) {
                 // Record the time we queued the ping; update last_ping later
                 ping_timestamps[i] = esp_timer_get_time() / 1000;
-                ESP_LOGV(TAG, "Sent MQTT ping to device %" PRIu64, target_ids[i]);
+                ESP_LOGV(TAG, "Sent MQTT ping to device %" PRIu64,
+                         target_ids[i]);
             } else {
                 ESP_LOGW(TAG, "Failed to enqueue ping for device %" PRIu64,
                          target_ids[i]);
@@ -681,13 +682,15 @@ static void handle_nonJson_mqtt_root_command(const char* topic, int topic_len,
         if (target_count > 0) {
             if (xSemaphoreTake(registry_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
                 ESP_LOGE(TAG,
-                         "handle_nonJson_mqtt_root_command: mutex timeout updating last_ping");
+                         "handle_nonJson_mqtt_root_command: mutex timeout "
+                         "updating last_ping");
                 return;
             }
 
             for (int i = 0; i < target_count; i++) {
                 if (ping_timestamps[i] == 0) {
-                    continue;  // ping was not successfully queued for this target
+                    continue;  // ping was not successfully queued for this
+                               // target
                 }
                 int registry_idx = target_indices[i];
                 if (registry_idx >= 0 && registry_idx < MAX_NODES &&

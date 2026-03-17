@@ -305,22 +305,22 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
 
             if (pingNum > PING_PONG_NUMBER) {
                 node_registry[index].avg_ping /= pingNum;
+                int32_t avg_ping = node_registry[index].avg_ping;
 
                 ESP_LOGW(TAG,
                          "Ping Pong communication test completed successfully "
                          "with device %" PRIu64 ". Average ping time: %" PRId32
                          " ms",
-                         msg->src_id, node_registry[index].avg_ping);
+                         msg->src_id, avg_ping);
 
                 char topic[64];
                 snprintf(topic, sizeof(topic), "/switch/state/%" PRIu64,
                          msg->src_id);
                 char payload[32];
-                snprintf(payload, sizeof(payload), "%" PRId32,
-                         node_registry[index].avg_ping);
+                snprintf(payload, sizeof(payload), "%" PRId32, avg_ping);
+                xSemaphoreGive(registry_mutex);
                 esp_mqtt_client_publish(g_mqtt_client, topic, payload,
                                         strlen(payload), 0, 0);
-                xSemaphoreGive(registry_mutex);
                 break;
             }
 

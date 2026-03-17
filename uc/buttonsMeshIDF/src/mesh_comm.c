@@ -264,10 +264,10 @@ bool mesh_queue_to_node(mesh_app_msg_t* msg, tx_priority_t prio,
     memcpy(item->msg, msg, sizeof(mesh_app_msg_t));
 
     BaseType_t sent = pdFALSE;
-    const int max_attempts = (prio == TX_PRIO_HIGH) ? 3 : 2;
+    const int max_attempts = (prio == TX_PRIO_HIGH) ? 2 : 2;
     for (int attempt = 0; attempt < max_attempts && sent != pdTRUE; attempt++) {
-        TickType_t wait_ticks =
-            (prio == TX_PRIO_HIGH) ? pdMS_TO_TICKS(250) : pdMS_TO_TICKS(100);
+        // Keep high-priority enqueue non-blocking to avoid inflating ping RTT.
+        TickType_t wait_ticks = (prio == TX_PRIO_HIGH) ? 0 : pdMS_TO_TICKS(100);
         if (prio == TX_PRIO_HIGH) {
             sent = xQueueSendToFront(queue, &item, wait_ticks);
         } else {

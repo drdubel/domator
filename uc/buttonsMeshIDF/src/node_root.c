@@ -638,6 +638,7 @@ static void handle_nonJson_mqtt_root_command(const char* topic, int topic_len,
         mesh_addr_t targets[MAX_NODES] = {0};
         uint64_t target_ids[MAX_NODES] = {0};
         int target_indices[MAX_NODES] = {0};
+        int64_t ping_timestamps[MAX_NODES] = {0};
         int target_count = 0;
 
         if (xSemaphoreTake(registry_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
@@ -667,21 +668,35 @@ static void handle_nonJson_mqtt_root_command(const char* topic, int topic_len,
             ping.data_len = sizeof(uint16_t);
 
             if (mesh_queue_to_node(&ping, TX_PRIO_HIGH, &targets[i])) {
-                if (xSemaphoreTake(registry_mutex, pdMS_TO_TICKS(5000)) ==
-                    pdTRUE) {
-                    int registry_idx = target_indices[i];
-                    if (registry_idx >= 0 && registry_idx < MAX_NODES &&
-                        node_registry[registry_idx].device_id == target_ids[i]) {
-                        node_registry[registry_idx].last_ping =
-                            esp_timer_get_time() / 1000;
-                    }
-                    xSemaphoreGive(registry_mutex);
-                }
+                // Record the time we queued the ping; update last_ping later
+                ping_timestamps[i] = esp_timer_get_time() / 1000;
                 ESP_LOGV(TAG, "Sent MQTT ping to device %" PRIu64, target_ids[i]);
             } else {
                 ESP_LOGW(TAG, "Failed to enqueue ping for device %" PRIu64,
                          target_ids[i]);
             }
+        }
+
+        // Batch-update last_ping under a single mutex acquisition
+        if (target_count > 0) {
+            if (xSemaphoreTake(registry_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+                ESP_LOGE(TAG,
+                         "handle_nonJson_mqtt_root_command: mutex timeout updating last_ping");
+                return;
+            }
+
+            for (int i = 0; i < target_count; i++) {
+                if (ping_timestamps[i] == 0) {
+                    continue;  // ping was not successfully queued for this target
+                }
+                int registry_idx = target_indices[i];
+                if (registry_idx >= 0 && registry_idx < MAX_NODES &&
+                    node_registry[registry_idx].device_id == target_ids[i]) {
+                    node_registry[registry_idx].last_ping = ping_timestamps[i];
+                }
+            }
+
+            xSemaphoreGive(registry_mutex);
         }
     }
 }

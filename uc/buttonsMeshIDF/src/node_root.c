@@ -637,6 +637,7 @@ static void handle_nonJson_mqtt_root_command(const char* topic, int topic_len,
         // Send ping to all nodes in registry
         mesh_addr_t targets[MAX_NODES] = {0};
         uint64_t target_ids[MAX_NODES] = {0};
+        int target_indices[MAX_NODES] = {0};
         int target_count = 0;
 
         if (xSemaphoreTake(registry_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
@@ -651,6 +652,7 @@ static void handle_nonJson_mqtt_root_command(const char* topic, int topic_len,
             memcpy(&targets[target_count], &node_registry[i].mesh_addr,
                    sizeof(mesh_addr_t));
             target_ids[target_count] = node_registry[i].device_id;
+            target_indices[target_count] = i;
             target_count++;
         }
 
@@ -667,12 +669,11 @@ static void handle_nonJson_mqtt_root_command(const char* topic, int topic_len,
             if (mesh_queue_to_node(&ping, TX_PRIO_HIGH, &targets[i])) {
                 if (xSemaphoreTake(registry_mutex, pdMS_TO_TICKS(5000)) ==
                     pdTRUE) {
-                    for (int j = 0; j < MAX_NODES; j++) {
-                        if (node_registry[j].device_id == target_ids[i]) {
-                            node_registry[j].last_ping =
-                                esp_timer_get_time() / 1000;
-                            break;
-                        }
+                    int registry_idx = target_indices[i];
+                    if (registry_idx >= 0 && registry_idx < MAX_NODES &&
+                        node_registry[registry_idx].device_id == target_ids[i]) {
+                        node_registry[registry_idx].last_ping =
+                            esp_timer_get_time() / 1000;
                     }
                     xSemaphoreGive(registry_mutex);
                 }

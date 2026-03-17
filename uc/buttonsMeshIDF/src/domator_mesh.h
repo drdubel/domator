@@ -339,8 +339,9 @@ void mesh_tx_task(void* arg);
  * @param msg  Pointer to the message to send (copied internally).
  * @param prio Transmission priority (normal or high).
  * @param dest Destination mesh address, or NULL to send to the root node.
+ * @return true if queued successfully, false otherwise.
  */
-void mesh_queue_to_node(mesh_app_msg_t* msg, tx_priority_t prio,
+bool mesh_queue_to_node(mesh_app_msg_t* msg, tx_priority_t prio,
                         mesh_addr_t* dest);
 
 /**

@@ -10,7 +10,7 @@ from fastapi_mqtt import FastMQTT, MQTTConfig
 import turbacz.metrics as metrics
 from turbacz.connection_manager import connection_manager
 from turbacz.settings import config
-from turbacz.state import state_manager
+from turbacz.state_manager import state_manager
 from turbacz.websocket import ws_manager
 
 logger = logging.getLogger(__name__)
@@ -134,7 +134,7 @@ async def handle_switch_state(payload_str, topic):
     Process switch state payload from /switch/state/+ topic.
     """
     try:
-        switch_id = topic.split("/")[-1]
+        switch_id = int(topic.split("/")[-1])
 
         if payload_str[0].isalpha():
             button_id = payload_str[0]
@@ -271,7 +271,7 @@ async def handle_root_state(payload_str):
     if not config.monitoring.send_metrics:
         return
 
-    metric_node = f"node_info,id={data['deviceId']},name={data['name']}{labels} uptime={data['uptime']},clicks={data['clicks']},free_heap={data['freeHeap']}"
+    metric_node = f"node_info,id={data['deviceId']},name={data['name']}{labels} uptime={data['uptime']},clicks={data['clicks']},free_heap={data['freeHeap']},ping_time={state_manager.get_device_ping(data['deviceId'])}"
     metric_mesh = f"mesh_node,id={data['deviceId']},name={data['name']},parent={data['parentId']},parent_name={data['parent_name']},firmware={data['firmware']},type={data['type']}{labels} rssi={data['rssi']}"
 
     logger.debug(metric_node)  # Debug log

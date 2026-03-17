@@ -230,8 +230,15 @@ void mesh_tx_task(void* arg) {
  * freed by mesh_tx_task() after delivery.
  *
  * @param msg  Source message (copied; the caller may reuse or free its copy).
- * @param prio Unused priority hint (reserved for future QoS differentiation).
+ * @param prio Priority hint that controls queue position and timing:
+ *             high-priority messages are queued at the front with more
+ *             retries and longer wait times, while normal-priority messages
+ *             are queued at the back with fewer retries and shorter waits.
  * @param dest Destination address, or NULL to send to the root node.
+ *
+ * @return true if the message was successfully enqueued; false if allocation
+ *         fails or the queue cannot accept the message after the configured
+ *         number of retry attempts.
  */
 bool mesh_queue_to_node(mesh_app_msg_t* msg, tx_priority_t prio,
                         mesh_addr_t* dest) {

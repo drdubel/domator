@@ -233,12 +233,12 @@ void mesh_tx_task(void* arg) {
  * @param prio Unused priority hint (reserved for future QoS differentiation).
  * @param dest Destination address, or NULL to send to the root node.
  */
-void mesh_queue_to_node(mesh_app_msg_t* msg, tx_priority_t prio,
+bool mesh_queue_to_node(mesh_app_msg_t* msg, tx_priority_t prio,
                         mesh_addr_t* dest) {
     tx_item_t* item = malloc(sizeof(tx_item_t));
     if (!item) {
         ESP_LOGE(TAG, "OOM queuing message");
-        return;
+        return false;
     }
 
     if (dest != NULL) {
@@ -252,7 +252,7 @@ void mesh_queue_to_node(mesh_app_msg_t* msg, tx_priority_t prio,
     item->msg = malloc(sizeof(mesh_app_msg_t));
     if (!item->msg) {
         free(item);
-        return;
+        return false;
     }
     memcpy(item->msg, msg, sizeof(mesh_app_msg_t));
 
@@ -273,7 +273,10 @@ void mesh_queue_to_node(mesh_app_msg_t* msg, tx_priority_t prio,
                  prio, (unsigned int)uxQueueMessagesWaiting(queue));
         free(item->msg);
         free(item);
+        return false;
     }
+
+    return true;
 }
 
 // ====================

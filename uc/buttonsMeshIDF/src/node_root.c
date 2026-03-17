@@ -635,6 +635,10 @@ static void handle_nonJson_mqtt_root_command(const char* topic, int topic_len,
                                              const char* data, int data_len) {
     if (data_len == 1 && data[0] == MSG_TYPE_PING) {
         // Send ping to all nodes in registry
+        mesh_addr_t targets[MAX_NODES] = {0};
+        uint64_t target_ids[MAX_NODES] = {0};
+        int target_count = 0;
+
         if (xSemaphoreTake(registry_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
             ESP_LOGE(TAG, "handle_nonJson_mqtt_root_command: mutex timeout");
             return;
@@ -644,6 +648,15 @@ static void handle_nonJson_mqtt_root_command(const char* topic, int topic_len,
             if (node_registry[i].device_id == 0 ||
                 node_registry[i].device_id == g_device_id)
                 continue;
+            memcpy(&targets[target_count], &node_registry[i].mesh_addr,
+                   sizeof(mesh_addr_t));
+            target_ids[target_count] = node_registry[i].device_id;
+            target_count++;
+        }
+
+        xSemaphoreGive(registry_mutex);
+
+        for (int i = 0; i < target_count; i++) {
             mesh_app_msg_t ping = {0};
             ping.src_id = g_device_id;
             ping.msg_type = MSG_TYPE_PING;
@@ -651,14 +664,24 @@ static void handle_nonJson_mqtt_root_command(const char* topic, int topic_len,
             memcpy(ping.data, &pingNum, sizeof(uint16_t));
             ping.data_len = sizeof(uint16_t);
 
-            node_registry[i].last_ping = esp_timer_get_time() / 1000;
-            mesh_queue_to_node(&ping, TX_PRIO_HIGH,
-                               &node_registry[i].mesh_addr);
-            ESP_LOGV(TAG, "Sent MQTT ping to device %" PRIu64,
-                     node_registry[i].device_id);
+            if (mesh_queue_to_node(&ping, TX_PRIO_HIGH, &targets[i])) {
+                if (xSemaphoreTake(registry_mutex, pdMS_TO_TICKS(5000)) ==
+                    pdTRUE) {
+                    for (int j = 0; j < MAX_NODES; j++) {
+                        if (node_registry[j].device_id == target_ids[i]) {
+                            node_registry[j].last_ping =
+                                esp_timer_get_time() / 1000;
+                            break;
+                        }
+                    }
+                    xSemaphoreGive(registry_mutex);
+                }
+                ESP_LOGV(TAG, "Sent MQTT ping to device %" PRIu64, target_ids[i]);
+            } else {
+                ESP_LOGW(TAG, "Failed to enqueue ping for device %" PRIu64,
+                         target_ids[i]);
+            }
         }
-
-        xSemaphoreGive(registry_mutex);
     }
 }
 
@@ -1074,23 +1097,27 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
             memcpy(ping.data, &pingNum, sizeof(uint16_t));
             ping.data_len = sizeof(uint16_t);
 
-            if (xSemaphoreTake(registry_mutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-                int index = -1;
-                for (int i = 0; i < MAX_NODES; i++) {
-                    if (node_registry[i].device_id == target_id) {
-                        index = i;
-                        break;
+            if (mesh_queue_to_node(&ping, TX_PRIO_HIGH, &dest)) {
+                if (xSemaphoreTake(registry_mutex, pdMS_TO_TICKS(5000)) ==
+                    pdTRUE) {
+                    int index = -1;
+                    for (int i = 0; i < MAX_NODES; i++) {
+                        if (node_registry[i].device_id == target_id) {
+                            index = i;
+                            break;
+                        }
                     }
+                    if (index >= 0) {
+                        node_registry[index].last_ping =
+                            esp_timer_get_time() / 1000;
+                    }
+                    xSemaphoreGive(registry_mutex);
                 }
-                if (index >= 0) {
-                    node_registry[index].last_ping =
-                        esp_timer_get_time() / 1000;
-                }
-                xSemaphoreGive(registry_mutex);
+                ESP_LOGV(TAG, "Sent MQTT ping to device %" PRIu64, target_id);
+            } else {
+                ESP_LOGW(TAG, "Failed to enqueue ping for device %" PRIu64,
+                         target_id);
             }
-
-            mesh_queue_to_node(&ping, TX_PRIO_HIGH, &dest);
-            ESP_LOGV(TAG, "Sent MQTT ping to device %" PRIu64, target_id);
         } else {
             ESP_LOGW(TAG, "Could not find target device %" PRIu64, target_id);
         }

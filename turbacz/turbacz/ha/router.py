@@ -7,7 +7,7 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
 import turbacz.auth as auth
-from turbacz.ha.apply import apply, get_command_topics
+from turbacz.ha.apply import apply, build_lights_from_turbacz
 from turbacz.ha.db import ha_db
 from turbacz.ha.models import (
     HAApplyResult,
@@ -143,7 +143,8 @@ def delete_capability(cap_id: str, user=Depends(_require_authenticated_user)):
 
 @ha_router.get("/tree", response_model=list[HAHome])
 def get_tree(user=Depends(_require_authenticated_user)):
-    return ha_db.get_full_tree()
+    """Return the auto-derived entity tree built from Turbacz relay outputs."""
+    return build_lights_from_turbacz()
 
 
 # ── Apply ─────────────────────────────────────────────────────────────────────
@@ -155,8 +156,8 @@ def trigger_apply(
     mqtt_client=Depends(_get_mqtt_client),
 ):
     """
-    Publish (or clear) retained HA MQTT Discovery configs for all
-    capabilities stored in the database.  Idempotent — safe to call
+    Publish (or clear) retained HA MQTT Discovery configs for all named
+    light outputs registered in Turbacz.  Idempotent — safe to call
     multiple times.
     """
     result = apply(mqtt_client, ha_db)

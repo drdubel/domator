@@ -651,6 +651,18 @@ def add_output(
 
     connection_manager.name_output(relay_id, output_id, output_name, auto_off_seconds)
 
+    # Auto-sync named outputs to Home Assistant if enabled
+    if config.ha.enabled:
+        try:
+            from turbacz.broker import mqtt  # noqa: PLC0415
+            from turbacz.ha.apply import apply
+            from turbacz.ha.db import ha_db
+
+            if mqtt.client:
+                apply(mqtt.client, ha_db)
+        except Exception:
+            pass  # HA sync failure must not break the main response
+
     return {"status": "Output added"}
 
 

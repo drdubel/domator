@@ -51,9 +51,8 @@ def connect(client, flags, rc, properties):
     if config.ha.enabled:
         try:
             from turbacz.ha.apply import get_command_topics
-            from turbacz.ha.db import ha_db
 
-            for topic in get_command_topics(ha_db):
+            for topic in get_command_topics():
                 mqtt.client.subscribe(topic, qos=1)
                 logger.info("Subscribed to HA command topic: %s", topic)
         except Exception as exc:
@@ -86,6 +85,9 @@ async def message(client, topic, payload, qos, properties):
 
     elif topic.startswith("/switch/state/"):
         await handle_switch_state(payload_str, topic)
+
+    elif topic.startswith("domator/") and topic.endswith("/light/set"):
+        await handle_ha_light_command(topic, payload_str)
 
 
 async def handle_heating_metrics(payload_str):
@@ -135,6 +137,9 @@ async def handle_relay_state(payload_str, topic):
         output_id = chr(ord(payload_str[0]) - ord("A") + 97)
 
         await state_manager.update_state(relay_id, output_id, state)
+
+        if config.ha.enabled:
+            _publish_ha_light_state(relay_id, output_id, state)
 
     except ValueError as e:
         logger.error("Error processing relay state: %s", e)
@@ -296,3 +301,40 @@ async def handle_root_state(payload_str):
         response = await client.post(url, content=metric_mesh)
         if response.status_code != 204:
             logger.error("Failed to write metric for %s: %s", data["deviceId"], response.text)
+
+
+def _publish_ha_light_state(relay_id: int, output_id: str, state: int) -> None:
+    """Publish the relay output state to the corresponding HA light state topic."""
+    try:
+        from turbacz.ha import topics as T
+
+        outputs = connection_manager.get_outputs()
+        output_info = outputs.get(relay_id, {}).get(output_id)
+        if output_info is None:
+            return
+        _name, section_id, _idx, _auto = output_info
+        area_id = f"s{section_id}"
+        device_id = f"r{relay_id}_{output_id}"
+        ha_topic = T.state_topic("home", area_id, device_id, "light")
+        mqtt.client.publish(ha_topic, "ON" if state else "OFF", qos=1, retain=True)
+    except Exception as exc:
+        logger.error("Failed to publish HA light state for relay %s output %s: %s", relay_id, output_id, exc)
+
+
+async def handle_ha_light_command(topic: str, payload_str: str) -> None:
+    """Forward an ON/OFF command from Home Assistant to the physical relay.
+
+    Expected topic: ``domator/home/s{section_id}/r{relay_id}_{output_id}/light/set``
+    """
+    try:
+        parts = topic.split("/")
+        # parts: ["domator", "home", "s<n>", "r<relay>_<output>", "light", "set"]
+        device_part = parts[3]  # "r{relay_id}_{output_id}"
+        if not device_part.startswith("r"):
+            return
+        relay_str, output_id = device_part[1:].rsplit("_", 1)
+        relay_id = int(relay_str)
+        state = 1 if payload_str.strip().upper() == "ON" else 0
+        mqtt.client.publish(f"/relay/cmd/{relay_id}", f"{output_id.upper()}{state}")
+    except (ValueError, IndexError) as exc:
+        logger.error("HA light command error for topic %s: %s", topic, exc)

@@ -48,6 +48,17 @@ def connect(client, flags, rc, properties):
     mqtt.client.subscribe("/relay/state/+")
     mqtt.client.subscribe("/switch/state/+")
 
+    if config.ha.enabled:
+        try:
+            from turbacz.ha.apply import get_command_topics
+            from turbacz.ha.db import ha_db
+
+            for topic in get_command_topics(ha_db):
+                mqtt.client.subscribe(topic, qos=1)
+                logger.info("Subscribed to HA command topic: %s", topic)
+        except Exception as exc:
+            logger.error("Failed to subscribe to HA command topics: %s", exc)
+
     asyncio.create_task(periodic_check_devices())
 
     logger.info("Connected: %s %s %s %s", client, flags, rc, properties)

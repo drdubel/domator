@@ -38,6 +38,12 @@ class Monitoring(BaseModel):
     sentry_dsn: Optional[str] = None
 
 
+class HASettings(BaseModel):
+    enabled: bool = False
+    discovery_prefix: str = "homeassistant"
+    base_topic: str = "domator"
+
+
 class TurbaczSettings(BaseSettings):
     authorized: set[str] = set()
     jwt_secret: str = ""
@@ -48,6 +54,7 @@ class TurbaczSettings(BaseSettings):
     server: ServerSettings = ServerSettings()
     psql: PSQLSettings = PSQLSettings()
     use_mqtt: bool = True
+    ha: HASettings = HASettings()
 
     model_config = SettingsConfigDict(toml_file="turbacz.toml")
 

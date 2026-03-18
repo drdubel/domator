@@ -25,7 +25,7 @@ import turbacz.auth as auth
 from turbacz.broker import mqtt
 from turbacz.connection_manager import connection_manager, connection_router
 from turbacz.settings import config
-from turbacz.state import state_manager
+from turbacz.state_manager import state_manager
 from turbacz.websocket import ws_manager
 
 logger = logging.getLogger(__name__)

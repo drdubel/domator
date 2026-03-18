@@ -636,7 +636,7 @@ def add_relay(
 
 
 @connection_router.post("/name_output")
-def add_output(
+async def add_output(
     request: Request,
     relay_id: int = Form(...),
     output_id: str = Form(...),

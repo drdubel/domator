@@ -660,8 +660,9 @@ def add_output(
 
             if mqtt.client:
                 apply(mqtt.client, ha_db)
-        except Exception:
-            pass  # HA sync failure must not break the main response
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("HA auto-sync failed after naming output: %s", exc)
 
     return {"status": "Output added"}
 

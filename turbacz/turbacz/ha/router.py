@@ -151,7 +151,7 @@ def get_tree(user=Depends(_require_authenticated_user)):
 
 
 @ha_router.post("/apply", response_model=HAApplyResult)
-def trigger_apply(
+async def trigger_apply(
     user=Depends(_require_authenticated_user),
     mqtt_client=Depends(_get_mqtt_client),
 ):

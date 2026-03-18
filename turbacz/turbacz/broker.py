@@ -50,13 +50,18 @@ def connect(client, flags, rc, properties):
 
     if config.ha.enabled:
         try:
-            from turbacz.ha.apply import get_command_topics
+            from turbacz.ha.apply import apply, get_command_topics
+            from turbacz.ha.db import ha_db
 
             for topic in get_command_topics():
                 mqtt.client.subscribe(topic, qos=1)
                 logger.info("Subscribed to HA command topic: %s", topic)
+
+            # Publish discovery configs for all current named outputs
+            apply(mqtt.client, ha_db)
+            logger.info("Published HA discovery configs on connect")
         except Exception as exc:
-            logger.error("Failed to subscribe to HA command topics: %s", exc)
+            logger.error("Failed to initialise HA on connect: %s", exc)
 
     asyncio.create_task(periodic_check_devices())
 
@@ -265,6 +270,16 @@ async def handle_root_state(payload_str):
     state_manager.mark_switch_online(data["deviceId"], int(time()))
     state_manager.set_firmware_version(data["deviceId"], data["type"], data["firmware"])
     state_manager.set_device_rssi(data["deviceId"], int(data["rssi"]))
+
+    # Re-publish HA discovery when a relay reconnects so HA stays in sync
+    if config.ha.enabled and data["type"] in ("relay8", "relay16"):
+        try:
+            from turbacz.ha.apply import apply
+            from turbacz.ha.db import ha_db
+
+            apply(mqtt.client, ha_db)
+        except Exception as exc:
+            logger.warning("HA apply after relay connect failed: %s", exc)
 
     data["name"] = data["name"].replace(" ", "\\ ")
 

@@ -32,6 +32,16 @@ def _require_authenticated_user(access_token: Optional[str] = Cookie(None)):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
+def _get_mqtt_client():
+    """Return the live MQTT client.  Separated out so tests can override it."""
+    # Deferred import avoids circular imports at startup.
+    from turbacz.broker import mqtt  # noqa: PLC0415
+
+    if not mqtt.client:
+        raise HTTPException(status_code=503, detail="MQTT client not connected.")
+    return mqtt.client
+
+
 # ── Homes ─────────────────────────────────────────────────────────────────────
 
 
@@ -140,18 +150,16 @@ def get_tree(user=Depends(_require_authenticated_user)):
 
 
 @ha_router.post("/apply", response_model=HAApplyResult)
-def trigger_apply(user=Depends(_require_authenticated_user)):
+def trigger_apply(
+    user=Depends(_require_authenticated_user),
+    mqtt_client=Depends(_get_mqtt_client),
+):
     """
     Publish (or clear) retained HA MQTT Discovery configs for all
     capabilities stored in the database.  Idempotent — safe to call
     multiple times.
     """
-    from turbacz.broker import mqtt
-
-    if not mqtt.client:
-        raise HTTPException(status_code=503, detail="MQTT client not connected.")
-
-    result = apply(mqtt.client, ha_db)
+    result = apply(mqtt_client, ha_db)
 
     if result.errors:
         return JSONResponse(status_code=207, content=result.model_dump())

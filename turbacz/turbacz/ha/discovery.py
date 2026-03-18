@@ -4,14 +4,6 @@ from turbacz.ha import topics as T
 from turbacz.ha.models import CapabilityType, HACapability
 
 
-_DEVICE_BLOCK_TEMPLATE = {
-    "ids": ["domator_controller"],
-    "name": "Domator",
-    "mf": "drdubel",
-    "mdl": "Domator",
-}
-
-
 def _device_block(home_id: str, home_name: str) -> dict:
     return {
         "ids": [f"domator_{home_id}"],

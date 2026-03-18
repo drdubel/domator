@@ -6,7 +6,7 @@ import logging
 from turbacz.ha import topics as T
 from turbacz.ha.db import HADatabase
 from turbacz.ha.discovery import build_discovery_payload
-from turbacz.ha.models import HAApplyResult, HACapability
+from turbacz.ha.models import HAApplyResult, HACapability, CapabilityType
 
 logger = logging.getLogger(__name__)
 
@@ -110,11 +110,11 @@ def get_command_topics(db: HADatabase) -> list[str]:
                     topics.append(
                         T.command_topic(home.id, area.id, device.id, cap.capability_type.value)
                     )
-                    if cap.capability_type.value == "cover":
+                    if cap.capability_type == CapabilityType.cover:
                         topics.append(
                             T.cover_set_position_topic(home.id, area.id, device.id)
                         )
-                    elif cap.capability_type.value == "climate":
+                    elif cap.capability_type == CapabilityType.climate:
                         topics.append(
                             T.climate_mode_command_topic(home.id, area.id, device.id)
                         )

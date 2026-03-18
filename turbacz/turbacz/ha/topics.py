@@ -1,4 +1,9 @@
-"""Deterministic topic and unique-ID naming for HA MQTT Discovery."""
+"""Deterministic topic and unique-ID naming for HA MQTT Discovery.
+
+The constants below match the default values in ``HASettings`` (settings.py).
+They are kept here as module-level literals so that topic-related helpers can
+be imported and tested without needing the application config to be loaded.
+"""
 
 HA_DISCOVERY_PREFIX = "homeassistant"
 DOMATOR_BASE = "domator"

@@ -27,7 +27,12 @@ def _connect() -> psycopg.Connection:
 
 
 class HADatabase:
-    """Manages HA config tables and applied-topic tracking in PostgreSQL."""
+    """Manages HA config tables and applied-topic tracking in PostgreSQL.
+
+    Uses a single persistent connection, which matches the pattern already
+    established by ``ConnectionManager`` in this codebase.  For higher
+    concurrency a connection pool (e.g. psycopg.pool) can be introduced later.
+    """
 
     def __init__(self):
         self.conn = _connect()

@@ -4,13 +4,16 @@ from turbacz.ha import topics as T
 from turbacz.ha.models import CapabilityType, HACapability
 
 
-def _device_block(home_id: str, home_name: str) -> dict:
-    return {
+def _device_block(home_id: str, home_name: str, area_name: str | None = None) -> dict:
+    block: dict = {
         "ids": [f"domator_{home_id}"],
         "name": home_name,
         "mf": "drdubel",
         "mdl": "Domator",
     }
+    if area_name:
+        block["suggested_area"] = area_name
+    return block
 
 
 def _availability(home_id: str) -> dict:
@@ -26,6 +29,7 @@ def build_light_payload(
     home_id: str,
     home_name: str,
     area_id: str,
+    area_name: str | None = None,
 ) -> dict:
     uid = T.unique_id(home_id, area_id, cap.device_id, cap.capability_type.value)
     return {
@@ -36,7 +40,7 @@ def build_light_payload(
         "pl_on": "ON",
         "pl_off": "OFF",
         **_availability(home_id),
-        "dev": _device_block(home_id, home_name),
+        "dev": _device_block(home_id, home_name, area_name),
     }
 
 
@@ -45,6 +49,7 @@ def build_cover_payload(
     home_id: str,
     home_name: str,
     area_id: str,
+    area_name: str | None = None,
 ) -> dict:
     uid = T.unique_id(home_id, area_id, cap.device_id, cap.capability_type.value)
     return {
@@ -62,7 +67,7 @@ def build_cover_payload(
         "stat_opening": "opening",
         "stat_closing": "closing",
         **_availability(home_id),
-        "dev": _device_block(home_id, home_name),
+        "dev": _device_block(home_id, home_name, area_name),
     }
 
 
@@ -71,6 +76,7 @@ def build_climate_payload(
     home_id: str,
     home_name: str,
     area_id: str,
+    area_name: str | None = None,
 ) -> dict:
     uid = T.unique_id(home_id, area_id, cap.device_id, cap.capability_type.value)
     return {
@@ -86,7 +92,7 @@ def build_climate_payload(
         "max_temp": 30,
         "temp_step": 0.5,
         **_availability(home_id),
-        "dev": _device_block(home_id, home_name),
+        "dev": _device_block(home_id, home_name, area_name),
     }
 
 
@@ -102,7 +108,8 @@ def build_discovery_payload(
     home_id: str,
     home_name: str,
     area_id: str,
+    area_name: str | None = None,
 ) -> dict:
     """Dispatch to the correct builder based on capability type."""
     builder = _BUILDERS[cap.capability_type]
-    return builder(cap, home_id, home_name, area_id)
+    return builder(cap, home_id, home_name, area_id, area_name)

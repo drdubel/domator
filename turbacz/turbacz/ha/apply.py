@@ -169,7 +169,7 @@ def apply(mqtt_client, db: HADatabase, cm=None) -> HAApplyResult:
                 for cap in device.capabilities:
                     dtopic = _discovery_topic_for_cap(cap, home.id, area.id)
                     try:
-                        payload = build_discovery_payload(cap, home.id, home.name, area.id)
+                        payload = build_discovery_payload(cap, home.id, home.name, area.id, area.name)
                         mqtt_client.publish(dtopic, json.dumps(payload), qos=1, retain=True)
                         db.upsert_applied_topic(dtopic, cap.id)
                         result.published.append(dtopic)

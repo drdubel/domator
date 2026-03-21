@@ -258,7 +258,7 @@ async def upload_firmware(
 
 
 class BlindRequest(BaseModel):
-    blind: str = Field(pattern=r"^b[0-9]+$")
+    blind: str = Field(pattern=r"^r[0-9]+$")
     position: int = Field(ge=0, le=999)
 
 

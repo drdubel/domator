@@ -49,7 +49,9 @@ if (isFirefox) {
 }
 
 const SETTINGS_STORAGE_KEY = 'rcm_settings'
+const AVAILABLE_COLOR_PALETTES = ['midnight', 'forest', 'amber', 'arctic']
 const DEFAULT_SETTINGS = {
+    colorPalette: 'midnight',
     showAutoOffControls: false,
     persistHiddenDevicesOnReload: false,
     showDeviceMetrics: true,
@@ -67,7 +69,17 @@ function loadSettings() {
 
     try {
         const parsed = JSON.parse(raw)
-        return { ...DEFAULT_SETTINGS, ...parsed }
+        const merged = { ...DEFAULT_SETTINGS, ...parsed }
+
+        // Backward compatibility with older palette key.
+        if (merged.colorPalette === 'ember') {
+            merged.colorPalette = 'amber'
+        }
+
+        if (!AVAILABLE_COLOR_PALETTES.includes(merged.colorPalette)) {
+            merged.colorPalette = DEFAULT_SETTINGS.colorPalette
+        }
+        return merged
     } catch (error) {
         console.warn('Failed to parse RCM settings, using defaults', error)
         return { ...DEFAULT_SETTINGS }
@@ -81,11 +93,24 @@ function saveSettings() {
 }
 
 function applySettingsToUI() {
+    const palette = AVAILABLE_COLOR_PALETTES.includes(appSettings.colorPalette)
+        ? appSettings.colorPalette
+        : DEFAULT_SETTINGS.colorPalette
+    document.body.setAttribute('data-color-palette', palette)
+
     document.body.classList.toggle('hide-auto-off-controls', !appSettings.showAutoOffControls)
     document.body.classList.toggle('hide-device-metrics', !appSettings.showDeviceMetrics)
 }
 
 function syncSettingsForm() {
+    const paletteField = document.getElementById('settingsColorPalette')
+    if (paletteField) {
+        const palette = AVAILABLE_COLOR_PALETTES.includes(appSettings.colorPalette)
+            ? appSettings.colorPalette
+            : DEFAULT_SETTINGS.colorPalette
+        paletteField.value = palette
+    }
+
     const fields = {
         settingsShowAutoOffControls: appSettings.showAutoOffControls,
         settingsPersistHiddenDevicesOnReload: appSettings.persistHiddenDevicesOnReload,
@@ -128,7 +153,13 @@ function saveSettingsFromModal() {
         return element ? element.checked : false
     }
 
+    const selectedPaletteField = document.getElementById('settingsColorPalette')
+    const selectedPalette = selectedPaletteField ? selectedPaletteField.value : DEFAULT_SETTINGS.colorPalette
+
     appSettings = {
+        colorPalette: AVAILABLE_COLOR_PALETTES.includes(selectedPalette)
+            ? selectedPalette
+            : DEFAULT_SETTINGS.colorPalette,
         showAutoOffControls: getChecked('settingsShowAutoOffControls'),
         persistHiddenDevicesOnReload: getChecked('settingsPersistHiddenDevicesOnReload'),
         showDeviceMetrics: getChecked('settingsShowDeviceMetrics'),

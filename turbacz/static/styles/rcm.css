@@ -62,29 +62,29 @@ body[data-color-palette="forest"] {
 
 body[data-color-palette="amber"],
 body[data-color-palette="ember"] {
-    --primary-color: #f6b84a;
-    --primary-dark: #db9220;
-    --primary-light: #ffe29a;
-    --secondary-color: #ff8a3d;
-    --success-color: #29c08a;
+    --primary-color: #c8a05e;
+    --primary-dark: #9a7742;
+    --primary-light: #e5cda0;
+    --secondary-color: #b78b54;
+    --success-color: #5ca58a;
     --danger-color: #f43f5e;
     --warning-color: #f59e0b;
-    --bg-primary: #1a1511;
-    --bg-secondary: #25201a;
-    --bg-tertiary: #352b21;
-    --text-primary: #fff7ea;
-    --text-secondary: #f8e3c0;
-    --text-muted: #d9ba83;
-    --border-color: #7f5d32;
-    --header-bg: rgba(37, 32, 26, 0.86);
-    --toolbar-group-bg: rgba(26, 21, 17, 0.52);
-    --toolbar-group-border: rgba(146, 109, 59, 0.6);
-    --zoom-controls-bg: rgba(37, 32, 26, 0.94);
-    --canvas-bg: rgba(37, 32, 26, 0.62);
-    --canvas-dot: rgba(255, 205, 118, 0.16);
-    --modal-overlay-bg: rgba(14, 11, 8, 0.84);
-    --settings-row-bg: rgba(26, 21, 17, 0.56);
-    --settings-row-border: rgba(216, 158, 76, 0.36);
+    --bg-primary: #161412;
+    --bg-secondary: #201d1a;
+    --bg-tertiary: #2d2721;
+    --text-primary: #f4efe6;
+    --text-secondary: #ddd3c1;
+    --text-muted: #b8aa94;
+    --border-color: #5b4e3d;
+    --header-bg: rgba(32, 29, 26, 0.88);
+    --toolbar-group-bg: rgba(22, 20, 18, 0.54);
+    --toolbar-group-border: rgba(108, 92, 70, 0.58);
+    --zoom-controls-bg: rgba(32, 29, 26, 0.94);
+    --canvas-bg: rgba(32, 29, 26, 0.64);
+    --canvas-dot: rgba(197, 170, 124, 0.12);
+    --modal-overlay-bg: rgba(12, 11, 10, 0.85);
+    --settings-row-bg: rgba(22, 20, 18, 0.57);
+    --settings-row-border: rgba(149, 123, 82, 0.32);
 }
 
 body[data-color-palette="arctic"] {

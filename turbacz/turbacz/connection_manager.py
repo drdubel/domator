@@ -636,7 +636,7 @@ def add_relay(
 
 
 @connection_router.post("/name_output")
-def add_output(
+async def add_output(
     request: Request,
     relay_id: int = Form(...),
     output_id: str = Form(...),
@@ -650,6 +650,19 @@ def add_output(
         return {"error": "Unauthorized"}
 
     connection_manager.name_output(relay_id, output_id, output_name, auto_off_seconds)
+
+    # Auto-sync named outputs to Home Assistant if enabled
+    if config.ha.enabled:
+        try:
+            from turbacz.broker import mqtt  # noqa: PLC0415
+            from turbacz.ha.apply import apply
+            from turbacz.ha.db import ha_db
+
+            if mqtt.client:
+                apply(mqtt.client, ha_db)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("HA auto-sync failed after naming output: %s", exc)
 
     return {"status": "Output added"}
 

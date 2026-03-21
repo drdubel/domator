@@ -24,6 +24,7 @@ from starlette.types import ASGIApp
 import turbacz.auth as auth
 from turbacz.broker import mqtt
 from turbacz.connection_manager import connection_manager, connection_router
+from turbacz.ha.router import ha_router
 from turbacz.settings import config
 from turbacz.state_manager import state_manager
 from turbacz.websocket import ws_manager
@@ -78,6 +79,7 @@ def _require_authenticated_user(access_token: Optional[str] = Cookie(None)):
 app.add_api_route("/metrics", metrics, methods=["GET"], dependencies=[Depends(_require_authenticated_user)])
 app.include_router(auth.router)
 app.include_router(connection_router)
+app.include_router(ha_router)
 mqtt.init_app(app)
 
 background_task_started = False

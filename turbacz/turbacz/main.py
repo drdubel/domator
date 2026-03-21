@@ -75,7 +75,7 @@ def _require_authenticated_user(access_token: Optional[str] = Cookie(None)):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
-app.add_api_route("/metrics", metrics, methods=["GET"], dependencies=[Depends(_require_authenticated_user)])
+app.add_api_route("/metrics", metrics, methods=["GET"])
 app.include_router(auth.router)
 app.include_router(connection_router)
 mqtt.init_app(app)
@@ -169,6 +169,9 @@ async def get_temperatures(
         return "connection not working"
 
     water_temperatures = response1.json()["data"]["result"] + response2.json()["data"]["result"]
+
+    if not water_temperatures:
+        return []
 
     result = [
         {

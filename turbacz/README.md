@@ -4,11 +4,11 @@ Stable version of project **Domator**.
 
 ### Installation
 
-1. Install python poetry module with ```pip install poetry```
+1. Install uv with ```pip install uv```
 
 2. Then copy this repository with ```git clone https://github.com/drdubel/domator```
 
-3. Enter ```turbacz``` directory and run ```poetry install```
+3. Enter ```turbacz``` directory and run ```uv sync```
 
 ### Run MQTT Server
 
@@ -46,7 +46,7 @@ client_id = "YOUR_CLIENT_ID"
 client_secret = "YOUR_CLIENT_SECRET"
 ```
 
-3. Run Webapp with ```poetry run turbacz``` from ```turbacz``` directory
+3. Run Webapp with ```uv run turbacz``` from ```turbacz``` directory
 
 4. Open Turbacz on http://127.0.0.1:8000
 #### It should work!

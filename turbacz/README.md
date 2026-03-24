@@ -45,6 +45,7 @@ password = "YOUR_MQTT_PASSWORD"
 client_id = "YOUR_CLIENT_ID"
 client_secret = "YOUR_CLIENT_SECRET"
 allow_insecure_http = false
+redirect_uri = "http://127.0.0.1:8000/auth"
 
 [psql]
 dbname = "turbacz"
@@ -65,6 +66,10 @@ port = 5432
 > allow_insecure_http = true
 > ```
 > Keep this `false` in production.
+>
+> If your app runs behind a reverse proxy/tunnel and you see `invalid_state` or
+> `redirect_uri_mismatch`, set `[oidc].redirect_uri` to the exact callback URL
+> registered in Google OAuth (same scheme/host/port/path, usually `/auth`).
 
 ### PostgreSQL setup (local)
 

@@ -75,7 +75,7 @@ async def websocket_auth(websocket: WebSocket) -> dict | None:
 
 @router.get("/login")
 async def login(request: Request):
-    redirect_uri = request.url_for("auth")
+    redirect_uri = config.oidc.redirect_uri or str(request.url_for("auth"))
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
 

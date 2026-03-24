@@ -83,12 +83,27 @@ async def login(request: Request):
 
 @router.get("/auth")
 async def auth(request: Request):
+    def _format_oauth_error(error: OAuthError) -> str:
+        return f"{error.error}: {error.description}" if error.description else error.error
+
+    def _is_invalid_client(error: OAuthError) -> bool:
+        return error.error == "invalid_client"
+
     try:
         token = await oauth.google.authorize_access_token(request)
 
     except OAuthError as error:
-        details = f"{error.error}: {error.description}" if error.description else error.error
-        return HTMLResponse(f"<h1>{details}</h1>")
+        if not config.oidc.token_endpoint_auth_method and _is_invalid_client(error):
+            for method in ("client_secret_post", "client_secret_basic"):
+                try:
+                    token = await oauth.google.authorize_access_token(request, token_endpoint_auth_method=method)
+                    break
+                except OAuthError:
+                    continue
+            else:
+                return HTMLResponse(f"<h1>{_format_oauth_error(error)}</h1>")
+        else:
+            return HTMLResponse(f"<h1>{_format_oauth_error(error)}</h1>")
 
     user = token.get("userinfo")
 

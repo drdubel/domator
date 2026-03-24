@@ -31,28 +31,22 @@ allow_anonymous false
 
 1. Get Client ID and Client Secret following instructions from https://support.google.com/cloud/answer/6158849?hl=en
 
-2. Create file ```.env``` in ```turbacz/turbacz/data``` directory and insert there:
+2. Create ```turbacz.toml``` file in the ```turbacz``` directory with:
 
-~~~
-GOOGLE_CLIENT_ID=YOUR_CLIENT_ID
-GOOGLE_CLIENT_SECRET=YOUR_CLIENT_SECRET
-~~~
+```toml
+authorized = ["YOUR_AUTHORIZED_EMAIL"]
+jwt_secret = "YOUR_JWT_SECRET"
+session_secret = "YOUR_SESSION_SECRET"
 
-3. Create ```authorized.py``` file in ```turbacz/turbacz/data``` directory with:
+[mqtt]
+password = "YOUR_MQTT_PASSWORD"
 
-~~~
-authorized = [YOUR_AUTHORIZED_EMAILS]
-~~~
+[oidc]
+client_id = "YOUR_CLIENT_ID"
+client_secret = "YOUR_CLIENT_SECRET"
+```
 
-4. Run ```cookies_reset.py``` file from turbacz directory
+3. Run Webapp with ```poetry run turbacz``` from ```turbacz``` directory
 
-5. Create ```secrets.py``` file in ```turbacz/turbacz/data``` directory with:  
-
-~~~
-mqtt_password = "YOUR_MQTT_PASSWORD"
-~~~
-
-6. Run Webapp with ```poetry run uvicorn turbacz.main:app --log-level debug --port 8000 --reload``` from ```turbacz``` directory
-
-7. Open Turbacz on http://127.0.0.1:8000
+4. Open Turbacz on http://127.0.0.1:8000
 #### It should work!

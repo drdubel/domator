@@ -1,0 +1,44 @@
+services:
+  turbacz:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: turbacz
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./turbacz.toml:/app/turbacz.toml:ro
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: turbacz-postgres
+    environment:
+      POSTGRES_DB: turbacz
+      POSTGRES_USER: turbacz
+      POSTGRES_PASSWORD: turbacz
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U turbacz -d turbacz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: turbacz-mosquitto
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./docker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

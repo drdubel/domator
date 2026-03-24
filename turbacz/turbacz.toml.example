@@ -14,6 +14,7 @@ client_id = "YOUR_CLIENT_ID"
 client_secret = "YOUR_CLIENT_SECRET"
 allow_insecure_http = false
 redirect_uri = "http://127.0.0.1:8000/auth"
+token_endpoint_auth_method = "client_secret_post"
 
 [psql]
 dbname = "turbacz"

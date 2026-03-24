@@ -46,6 +46,7 @@ client_id = "YOUR_CLIENT_ID"
 client_secret = "YOUR_CLIENT_SECRET"
 allow_insecure_http = false
 redirect_uri = "http://127.0.0.1:8000/auth"
+token_endpoint_auth_method = "client_secret_post"
 
 [psql]
 dbname = "turbacz"
@@ -70,6 +71,11 @@ port = 5432
 > If your app runs behind a reverse proxy/tunnel and you see `invalid_state` or
 > `redirect_uri_mismatch`, set `[oidc].redirect_uri` to the exact callback URL
 > registered in Google OAuth (same scheme/host/port/path, usually `/auth`).
+>
+> If you see `invalid_client`, verify `client_id` and `client_secret` are from
+> the same OAuth app. Some providers also require
+> `token_endpoint_auth_method = "client_secret_post"` (others use
+> `client_secret_basic`).
 
 ### PostgreSQL setup (local)
 

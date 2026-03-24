@@ -23,13 +23,15 @@ if not JWT_SECRET:
     )
 
 oauth = OAuth()
-oauth.register(
-    config.oidc.provider,
-    client_id=config.oidc.client_id,
-    client_secret=config.oidc.client_secret,
-    server_metadata_url=config.oidc.server_metadata_url,
-    client_kwargs={"scope": "openid email profile"},
-)
+register_kwargs = {
+    "client_id": config.oidc.client_id,
+    "client_secret": config.oidc.client_secret,
+    "server_metadata_url": config.oidc.server_metadata_url,
+    "client_kwargs": {"scope": "openid email profile"},
+}
+if config.oidc.token_endpoint_auth_method:
+    register_kwargs["token_endpoint_auth_method"] = config.oidc.token_endpoint_auth_method
+oauth.register(config.oidc.provider, **register_kwargs)
 
 
 def create_jwt(data: dict) -> str:
@@ -85,7 +87,8 @@ async def auth(request: Request):
         token = await oauth.google.authorize_access_token(request)
 
     except OAuthError as error:
-        return HTMLResponse(f"<h1>{error.error}</h1>")
+        details = f"{error.error}: {error.description}" if error.description else error.error
+        return HTMLResponse(f"<h1>{details}</h1>")
 
     user = token.get("userinfo")
 

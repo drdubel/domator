@@ -9,6 +9,7 @@ class OIDCSettings(BaseModel):
     client_id: str
     client_secret: str
     server_metadata_url: str = "https://accounts.google.com/.well-known/openid-configuration"
+    allow_insecure_http: bool = False
 
 
 class MQTTServerSettings(BaseModel):

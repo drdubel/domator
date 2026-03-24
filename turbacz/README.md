@@ -44,6 +44,7 @@ password = "YOUR_MQTT_PASSWORD"
 [oidc]
 client_id = "YOUR_CLIENT_ID"
 client_secret = "YOUR_CLIENT_SECRET"
+allow_insecure_http = false
 
 [psql]
 dbname = "turbacz"
@@ -57,6 +58,13 @@ port = 5432
 
 4. Open Turbacz on http://127.0.0.1:8000
 #### It should work!
+
+> If you need to run OIDC login over plain HTTP in local development, set:
+> ```toml
+> [oidc]
+> allow_insecure_http = true
+> ```
+> Keep this `false` in production.
 
 ### PostgreSQL setup (local)
 

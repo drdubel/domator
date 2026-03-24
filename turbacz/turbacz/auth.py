@@ -14,6 +14,8 @@ router = APIRouter()
 JWT_ALG = "HS256"
 JWT_EXPIRE_MINUTES = 60 * 24 * 14  # 14 days
 JWT_SECRET = config.jwt_secret
+if config.oidc.allow_insecure_http:
+    os.environ["AUTHLIB_INSECURE_TRANSPORT"] = "1"
 if not JWT_SECRET:
     raise RuntimeError(
         "Missing jwt_secret in turbacz.toml. "

@@ -110,7 +110,7 @@ psql --version
 mosquitto -h
 ```
 
-### Docker setup (app + PostgreSQL + MQTT)
+### Docker setup (app + PostgreSQL + MQTT + Grafana)
 
 From `turbacz` directory:
 
@@ -134,6 +134,7 @@ This starts:
 - `turbacz` web app on `http://127.0.0.1:8000`
 - `postgres` database (`turbacz` / `turbacz`)
 - `mosquitto` MQTT broker on port `1883`
+- `grafana` on `http://127.0.0.1:3000` (default login: `admin` / `admin`)
 
 > Docker MQTT config (`docker/mosquitto.conf`) is intentionally development-only and allows anonymous access.
 > For production, use authenticated MQTT configuration.

@@ -40,5 +40,15 @@ services:
       - ./docker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
     restart: unless-stopped
 
+  grafana:
+    image: grafana/grafana:11.6.1
+    container_name: turbacz-grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    restart: unless-stopped
+
 volumes:
   postgres_data:
+  grafana_data:

@@ -4,11 +4,11 @@ Stable version of project **Domator**.
 
 ### Installation
 
-1. Install python poetry module with ```pip install poetry```
+1. Install uv with ```pip install uv```
 
 2. Then copy this repository with ```git clone https://github.com/drdubel/domator```
 
-3. Enter ```turbacz``` directory and run ```poetry install```
+3. Enter ```turbacz``` directory and run ```uv sync```
 
 ### Run MQTT Server
 
@@ -31,28 +31,112 @@ allow_anonymous false
 
 1. Get Client ID and Client Secret following instructions from https://support.google.com/cloud/answer/6158849?hl=en
 
-2. Create file ```.env``` in ```turbacz/turbacz/data``` directory and insert there:
+2. Create ```turbacz.toml``` file in the ```turbacz``` directory (you can copy ```turbacz.toml.example```) with:
 
-~~~
-GOOGLE_CLIENT_ID=YOUR_CLIENT_ID
-GOOGLE_CLIENT_SECRET=YOUR_CLIENT_SECRET
-~~~
+```toml
+authorized = ["YOUR_AUTHORIZED_EMAIL"]
+jwt_secret = "YOUR_JWT_SECRET"
+session_secret = "YOUR_SESSION_SECRET"
 
-3. Create ```authorized.py``` file in ```turbacz/turbacz/data``` directory with:
+[mqtt]
+password = "YOUR_MQTT_PASSWORD"
 
-~~~
-authorized = [YOUR_AUTHORIZED_EMAILS]
-~~~
+[oidc]
+client_id = "YOUR_CLIENT_ID"
+client_secret = "YOUR_CLIENT_SECRET"
+allow_insecure_http = false
+redirect_uri = "http://127.0.0.1:8000/auth"
+token_endpoint_auth_method = "client_secret_post"
 
-4. Run ```cookies_reset.py``` file from turbacz directory
+[psql]
+dbname = "turbacz"
+user = "turbacz"
+password = "turbacz"
+host = "127.0.0.1"
+port = 5432
+```
 
-5. Create ```secrets.py``` file in ```turbacz/turbacz/data``` directory with:  
+3. Run Webapp with ```uv run turbacz``` from ```turbacz``` directory
 
-~~~
-mqtt_password = "YOUR_MQTT_PASSWORD"
-~~~
-
-6. Run Webapp with ```poetry run uvicorn turbacz.main:app --log-level debug --port 8000 --reload``` from ```turbacz``` directory
-
-7. Open Turbacz on http://127.0.0.1:8000
+4. Open Turbacz on http://127.0.0.1:8000
 #### It should work!
+
+> If you need to run OIDC login over plain HTTP in local development, set:
+> ```toml
+> [oidc]
+> allow_insecure_http = true
+> ```
+> Keep this `false` in production.
+>
+> If your app runs behind a reverse proxy/tunnel and you see `invalid_state` or
+> `redirect_uri_mismatch`, set `[oidc].redirect_uri` to the exact callback URL
+> registered in Google OAuth (same scheme/host/port/path, usually `/auth`).
+>
+> If you see `invalid_client`, verify `client_id` and `client_secret` are from
+> the same OAuth app. Some providers also require
+> `token_endpoint_auth_method = "client_secret_post"` (others use
+> `client_secret_basic`).
+
+### PostgreSQL setup (local)
+
+On Ubuntu:
+
+1. Install PostgreSQL:
+```bash
+sudo apt install postgresql postgresql-contrib
+```
+2. Create user and database:
+```bash
+sudo -u postgres psql -c "CREATE USER turbacz WITH PASSWORD 'turbacz';"
+sudo -u postgres psql -c "CREATE DATABASE turbacz OWNER turbacz;"
+```
+3. Ensure your `turbacz.toml` `[psql]` section points to this database.
+
+### Required components checklist
+
+- [ ] Python 3.14+
+- [ ] uv
+- [ ] `turbacz.toml` with filled `authorized`, `jwt_secret`, `session_secret`
+- [ ] Valid Google OIDC `client_id` and `client_secret`
+- [ ] PostgreSQL database reachable from `[psql]`
+- [ ] MQTT broker reachable from `[mqtt]`
+
+Quick checks:
+
+```bash
+python3 --version
+uv --version
+psql --version
+mosquitto -h
+```
+
+### Docker setup (app + PostgreSQL + MQTT + Grafana + VictoriaMetrics)
+
+From `turbacz` directory:
+
+1. Copy sample config:
+```bash
+cp turbacz.toml.example turbacz.toml
+```
+2. Update `authorized`, `jwt_secret`, `session_secret`, and OIDC values in `turbacz.toml`.
+   Keep `[monitoring].metrics = "http://victoriametrics:8428"` for Docker setup.
+3. Start stack:
+```bash
+docker compose up --build
+```
+4. (Optional, if binding to host from Docker) set:
+```toml
+[server]
+host = "0.0.0.0"
+port = 8000
+```
+
+This starts:
+- `turbacz` web app on `http://127.0.0.1:8000`
+- `postgres` database (`turbacz` / `turbacz`)
+- `mosquitto` MQTT broker on port `1883`
+- `grafana` on `http://127.0.0.1:3000` (default login: `admin` / `admin`)
+- `victoriametrics` on `http://127.0.0.1:8428`
+
+> Docker MQTT config (`docker/mosquitto.conf`) is intentionally development-only and allows anonymous access.
+> For production, use authenticated MQTT configuration.

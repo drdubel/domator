@@ -14,6 +14,8 @@ router = APIRouter()
 JWT_ALG = "HS256"
 JWT_EXPIRE_MINUTES = 60 * 24 * 14  # 14 days
 JWT_SECRET = config.jwt_secret
+if config.oidc.allow_insecure_http:
+    os.environ["AUTHLIB_INSECURE_TRANSPORT"] = "1"
 if not JWT_SECRET:
     raise RuntimeError(
         "Missing jwt_secret in turbacz.toml. "
@@ -21,13 +23,15 @@ if not JWT_SECRET:
     )
 
 oauth = OAuth()
-oauth.register(
-    config.oidc.provider,
-    client_id=config.oidc.client_id,
-    client_secret=config.oidc.client_secret,
-    server_metadata_url=config.oidc.server_metadata_url,
-    client_kwargs={"scope": "openid email profile"},
-)
+register_kwargs = {
+    "client_id": config.oidc.client_id,
+    "client_secret": config.oidc.client_secret,
+    "server_metadata_url": config.oidc.server_metadata_url,
+    "client_kwargs": {"scope": "openid email profile"},
+}
+if config.oidc.token_endpoint_auth_method:
+    register_kwargs["token_endpoint_auth_method"] = config.oidc.token_endpoint_auth_method
+oauth.register(config.oidc.provider, **register_kwargs)
 
 
 def create_jwt(data: dict) -> str:
@@ -73,17 +77,33 @@ async def websocket_auth(websocket: WebSocket) -> dict | None:
 
 @router.get("/login")
 async def login(request: Request):
-    redirect_uri = request.url_for("auth")
+    redirect_uri = config.oidc.redirect_uri or str(request.url_for("auth"))
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
 
 @router.get("/auth")
 async def auth(request: Request):
+    def _format_oauth_error(error: OAuthError) -> str:
+        return f"{error.error}: {error.description}" if error.description else error.error
+
+    def _is_invalid_client(error: OAuthError) -> bool:
+        return error.error == "invalid_client"
+
     try:
         token = await oauth.google.authorize_access_token(request)
 
     except OAuthError as error:
-        return HTMLResponse(f"<h1>{error.error}</h1>")
+        if not config.oidc.token_endpoint_auth_method and _is_invalid_client(error):
+            for method in ("client_secret_post", "client_secret_basic"):
+                try:
+                    token = await oauth.google.authorize_access_token(request, token_endpoint_auth_method=method)
+                    break
+                except OAuthError:
+                    continue
+            else:
+                return HTMLResponse(f"<h1>{_format_oauth_error(error)}</h1>")
+        else:
+            return HTMLResponse(f"<h1>{_format_oauth_error(error)}</h1>")
 
     user = token.get("userinfo")
 

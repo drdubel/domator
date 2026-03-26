@@ -1,0 +1,66 @@
+services:
+  turbacz:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: turbacz
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./turbacz.toml:/app/turbacz.toml:ro
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: turbacz-postgres
+    environment:
+      POSTGRES_DB: turbacz
+      POSTGRES_USER: turbacz
+      POSTGRES_PASSWORD: turbacz
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U turbacz -d turbacz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: turbacz-mosquitto
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./docker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.6.1
+    container_name: turbacz-grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    restart: unless-stopped
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.129.1
+    container_name: turbacz-victoriametrics
+    ports:
+      - "8428:8428"
+    command:
+      - "-storageDataPath=/victoria-metrics-data"
+    volumes:
+      - victoriametrics_data:/victoria-metrics-data
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  grafana_data:
+  victoriametrics_data:

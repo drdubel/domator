@@ -110,7 +110,7 @@ psql --version
 mosquitto -h
 ```
 
-### Docker setup (app + PostgreSQL + MQTT + Grafana)
+### Docker setup (app + PostgreSQL + MQTT + Grafana + VictoriaMetrics)
 
 From `turbacz` directory:
 
@@ -119,6 +119,7 @@ From `turbacz` directory:
 cp turbacz.toml.example turbacz.toml
 ```
 2. Update `authorized`, `jwt_secret`, `session_secret`, and OIDC values in `turbacz.toml`.
+   Keep `[monitoring].metrics = "http://victoriametrics:8428"` for Docker setup.
 3. Start stack:
 ```bash
 docker compose up --build
@@ -135,6 +136,7 @@ This starts:
 - `postgres` database (`turbacz` / `turbacz`)
 - `mosquitto` MQTT broker on port `1883`
 - `grafana` on `http://127.0.0.1:3000` (default login: `admin` / `admin`)
+- `victoriametrics` on `http://127.0.0.1:8428`
 
 > Docker MQTT config (`docker/mosquitto.conf`) is intentionally development-only and allows anonymous access.
 > For production, use authenticated MQTT configuration.

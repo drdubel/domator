@@ -49,6 +49,18 @@ services:
       - grafana_data:/var/lib/grafana
     restart: unless-stopped
 
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.129.1
+    container_name: turbacz-victoriametrics
+    ports:
+      - "8428:8428"
+    command:
+      - "-storageDataPath=/victoria-metrics-data"
+    volumes:
+      - victoriametrics_data:/victoria-metrics-data
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   grafana_data:
+  victoriametrics_data:

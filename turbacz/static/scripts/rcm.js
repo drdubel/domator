@@ -1855,6 +1855,10 @@ async function loadConfiguration() {
         isLoadingConnections = false
         hideLoading()
     }
+
+    clearRootHighlight()
+    highlightRoot()
+    updateOnlineStatus()
 }
 
 function getDemoRelays() {

@@ -174,20 +174,33 @@ void button_task(void* arg) {
                 stats_increment_button_presses();
 
                 char button_char = 'a' + i;
+                uint32_t duration_ms =
+                    current_time - g_button_states[i].press_start_time;
+
                 mesh_app_msg_t msg = {0};
                 msg.src_id = g_device_id;
                 msg.msg_type = MSG_TYPE_BUTTON;
                 msg.data[0] = button_char;
                 msg.data[1] = current_state ? '1' : '0';
-                msg.data_len = 2;
+                if (current_state == 0) {
+                    /* On release: encode long/short press in 3rd byte.
+                     * '1' = long press (≥ LONG_PRESS_THRESHOLD_MS). */
+                    msg.data[2] =
+                        (duration_ms >= LONG_PRESS_THRESHOLD_MS) ? '1' : '0';
+                    msg.data_len = 3;
+                } else {
+                    msg.data_len = 2;
+                }
                 mesh_queue_to_node(&msg, TX_PRIO_NORMAL, NULL);
 
                 ESP_LOGI(TAG,
                          "Sent button '%c' state %d to root. "
-                         "Pressed for %" PRIu32 " ms",
-                         button_char, current_state,
-                         (uint32_t)(current_time -
-                                    g_button_states[i].press_start_time));
+                         "Pressed for %" PRIu32 " ms (%s)",
+                         button_char, current_state, duration_ms,
+                         (current_state == 0 &&
+                          duration_ms >= LONG_PRESS_THRESHOLD_MS)
+                             ? "LONG"
+                             : "short");
             }
 
             g_button_states[i].last_bounce_time = current_time;

@@ -49,7 +49,21 @@ static node_registry_entry_t node_registry[MAX_NODES];
 static int node_count = 0;
 static SemaphoreHandle_t registry_mutex = NULL;
 
+/* Blind pair storage — populated by "blind_pairs" MQTT command. */
+#define MAX_BLIND_PAIRS 32
+typedef struct {
+    uint64_t relay_id;
+    char power_id;
+    char dir_id;
+} blind_pair_t;
+static blind_pair_t g_blind_pairs[MAX_BLIND_PAIRS];
+static int g_blind_pair_count = 0;
+static SemaphoreHandle_t g_blind_pairs_mutex = NULL;
+
 static void route_button_to_relays(uint64_t from_id, char button, int state);
+static void route_blind_press(uint64_t from_id, char button,
+                              bool is_long_press);
+static void parse_json_blind_pairs(cJSON* data);
 static void handle_mqtt_command(const char* topic, int topic_len,
                                 const char* data, int data_len);
 
@@ -142,6 +156,74 @@ static int get_button_type(uint64_t device_id, char button) {
 }
 
 // ====================
+// Blind Pair Helpers
+// ====================
+
+/**
+ * @brief Check whether any routing target of (from_id, button) is a blind pair
+ * output.
+ *
+ * Locks g_connections_mutex and g_blind_pairs_mutex separately to avoid
+ * deadlock.
+ * @param from_id    Source device ID.
+ * @param button     Button character.
+ * @param out_relay_id  Set to the relay ID of the matching blind pair.
+ * @param out_power_id  Set to the power output char of the matching blind pair.
+ * @param out_dir_id    Set to the direction output char of the matching blind
+ * pair.
+ * @return true if a blind pair target was found.
+ */
+static bool button_targets_blind_pair(uint64_t from_id, char button,
+                                      uint64_t* out_relay_id,
+                                      char* out_power_id, char* out_dir_id) {
+    int button_idx = button - 'a';
+    if (button_idx < 0 || button_idx >= MAX_BUTTONS_EXTENDED) return false;
+
+    /* Copy targets out of g_connections while holding the mutex. */
+    uint64_t target_ids[MAX_ROUTES_PER_BUTTON];
+    char target_cmds[MAX_ROUTES_PER_BUTTON];
+    int num_targets = 0;
+
+    if (xSemaphoreTake(g_connections_mutex, pdMS_TO_TICKS(200)) != pdTRUE)
+        return false;
+    for (int i = 0; i < MAX_NODES; i++) {
+        if (g_connections[i].device_id == from_id) {
+            button_route_t* route = &g_connections[i].buttons[button_idx];
+            num_targets = route->num_targets;
+            if (num_targets > MAX_ROUTES_PER_BUTTON)
+                num_targets = MAX_ROUTES_PER_BUTTON;
+            for (int t = 0; t < num_targets; t++) {
+                target_ids[t] = route->targets[t].target_node_id;
+                target_cmds[t] = route->targets[t].relay_command[0];
+            }
+            break;
+        }
+    }
+    xSemaphoreGive(g_connections_mutex);
+
+    if (num_targets == 0) return false;
+
+    /* Check each target against the blind pairs table. */
+    if (xSemaphoreTake(g_blind_pairs_mutex, pdMS_TO_TICKS(200)) != pdTRUE)
+        return false;
+    for (int t = 0; t < num_targets; t++) {
+        for (int p = 0; p < g_blind_pair_count; p++) {
+            if (g_blind_pairs[p].relay_id == target_ids[t] &&
+                (g_blind_pairs[p].power_id == target_cmds[t] ||
+                 g_blind_pairs[p].dir_id == target_cmds[t])) {
+                *out_relay_id = g_blind_pairs[p].relay_id;
+                *out_power_id = g_blind_pairs[p].power_id;
+                *out_dir_id = g_blind_pairs[p].dir_id;
+                xSemaphoreGive(g_blind_pairs_mutex);
+                return true;
+            }
+        }
+    }
+    xSemaphoreGive(g_blind_pairs_mutex);
+    return false;
+}
+
+// ====================
 // Handle Mesh Messages as Root
 // ====================
 
@@ -182,11 +264,48 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
             char button = msg->data[0];
             int state = (msg->data_len > 1) ? msg->data[1] - '0' : -1;
 
-            ESP_LOGI(TAG, "Button '%c' from switch %" PRIu64, button,
-                     msg->src_id);
+            ESP_LOGI(TAG, "Button '%c' from switch %" PRIu64 " (state=%d)",
+                     button, msg->src_id, state);
 
             int button_type = get_button_type(msg->src_id, button);
 
+            /* Check if any routing target is a blind pair output. */
+            uint64_t blind_relay_id = 0;
+            char blind_power_id = 0, blind_dir_id = 0;
+            bool is_blind =
+                button_targets_blind_pair(msg->src_id, button, &blind_relay_id,
+                                          &blind_power_id, &blind_dir_id);
+
+            if (is_blind && button_type == 0) {
+                /* Momentary button connected to a blind pair output.
+                 * The source node encodes long/short in data[2] on release:
+                 *   data[1]='1'       → press   (ignore, act on release)
+                 *   data[1]='0', data[2]='1' → long press  (toggle direction)
+                 *   data[1]='0', data[2]='0' → short press (toggle power)
+                 */
+                if (state == 0) {
+                    bool is_long = (msg->data_len >= 3 && msg->data[2] == '1');
+                    ESP_LOGI(TAG,
+                             "Blind release: device=%" PRIu64
+                             " button='%c' → %s press",
+                             msg->src_id, button, is_long ? "LONG" : "short");
+                    route_blind_press(msg->src_id, button, is_long);
+
+                    /* Publish to MQTT for UI button-highlight feedback. */
+                    if (g_mqtt_connected) {
+                        char topic[64];
+                        snprintf(topic, sizeof(topic), "/switch/state/%" PRIu64,
+                                 msg->src_id);
+                        char payload[2] = {button, '\0'};
+                        esp_mqtt_client_publish(g_mqtt_client, topic, payload,
+                                                1, 1, 0);
+                    }
+                }
+                /* For state==1 (press): do nothing, wait for release. */
+                break;
+            }
+
+            /* Normal (non-blind) button handling. */
             if (button_type == 0 && state == 1) {
                 ESP_LOGI(TAG, "Toggle button '%c' pressed from device %" PRIu64,
                          button, msg->src_id);
@@ -341,6 +460,57 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
                      msg->msg_type);
             break;
     }
+}
+
+// ====================
+// Blind Press Routing
+// ====================
+
+/**
+ * @brief Route a blind pair button press to the appropriate relay output.
+ *
+ * Short press  (<LONG_PRESS_THRESHOLD_MS) → toggle the power output.
+ * Long press   (≥LONG_PRESS_THRESHOLD_MS) → toggle the direction output.
+ *
+ * @param from_id      Source device ID.
+ * @param button       Button character.
+ * @param is_long_press true for long press (direction toggle), false for short.
+ */
+static void route_blind_press(uint64_t from_id, char button,
+                              bool is_long_press) {
+    uint64_t relay_id = 0;
+    char power_id = 0, dir_id = 0;
+
+    if (!button_targets_blind_pair(from_id, button, &relay_id, &power_id,
+                                   &dir_id)) {
+        ESP_LOGW(TAG,
+                 "route_blind_press: no blind pair for device %" PRIu64
+                 " button '%c'",
+                 from_id, button);
+        return;
+    }
+
+    char output_to_toggle = is_long_press ? dir_id : power_id;
+
+    mesh_addr_t dest = {0};
+    if (!registry_find(relay_id, &dest)) {
+        ESP_LOGW(TAG, "route_blind_press: relay %" PRIu64 " not in registry",
+                 relay_id);
+        return;
+    }
+
+    mesh_app_msg_t cmd = {0};
+    cmd.src_id = g_device_id;
+    cmd.msg_type = MSG_TYPE_COMMAND;
+    cmd.data[0] = output_to_toggle;
+    cmd.data_len = 1;
+    mesh_queue_to_node(&cmd, TX_PRIO_NORMAL, &dest);
+
+    ESP_LOGI(TAG,
+             "Blind %s-press: device=%" PRIu64 " btn='%c' → relay=%" PRIu64
+             " output='%c'",
+             is_long_press ? "long" : "short", from_id, button, relay_id,
+             output_to_toggle);
 }
 
 // ====================
@@ -914,12 +1084,67 @@ static void parse_json_auto_off(cJSON* data) {
 }
 
 /**
+ * @brief Parse a "blind_pairs" JSON payload and populate g_blind_pairs.
+ *
+ * Expected format:
+ * @code
+ * { "<relay_id>": [["<power_id>", "<dir_id>"], ...], ... }
+ * @endcode
+ * Each relay can have multiple blind pairs.
+ * @param data cJSON object containing the blind pair map.
+ */
+static void parse_json_blind_pairs(cJSON* data) {
+    if (!data || !cJSON_IsObject(data)) return;
+
+    if (xSemaphoreTake(g_blind_pairs_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+        ESP_LOGE(TAG, "parse_json_blind_pairs: mutex timeout");
+        return;
+    }
+
+    g_blind_pair_count = 0;
+
+    cJSON* relay_item = NULL;
+    cJSON_ArrayForEach(relay_item, data) {
+        if (!relay_item->string || !cJSON_IsArray(relay_item)) continue;
+        uint64_t relay_id = strtoull(relay_item->string, NULL, 10);
+        if (relay_id == 0) continue;
+
+        cJSON* pair = NULL;
+        cJSON_ArrayForEach(pair, relay_item) {
+            if (g_blind_pair_count >= MAX_BLIND_PAIRS) break;
+            if (!cJSON_IsArray(pair) || cJSON_GetArraySize(pair) < 2) continue;
+
+            cJSON* power_item = cJSON_GetArrayItem(pair, 0);
+            cJSON* dir_item = cJSON_GetArrayItem(pair, 1);
+            if (!cJSON_IsString(power_item) || !cJSON_IsString(dir_item))
+                continue;
+            if (!power_item->valuestring[0] || !dir_item->valuestring[0])
+                continue;
+
+            g_blind_pairs[g_blind_pair_count].relay_id = relay_id;
+            g_blind_pairs[g_blind_pair_count].power_id =
+                power_item->valuestring[0];
+            g_blind_pairs[g_blind_pair_count].dir_id = dir_item->valuestring[0];
+            ESP_LOGI(TAG,
+                     "Blind pair [%d]: relay=%" PRIu64 " power='%c' dir='%c'",
+                     g_blind_pair_count, relay_id, power_item->valuestring[0],
+                     dir_item->valuestring[0]);
+            g_blind_pair_count++;
+        }
+    }
+
+    xSemaphoreGive(g_blind_pairs_mutex);
+    ESP_LOGI(TAG, "Loaded %d blind pair(s)", g_blind_pair_count);
+}
+
+/**
  * @brief Dispatch a JSON MQTT command received on /switch/cmd/root.
  *
  * Supported types:
  *  - "connections"  – update the button-to-relay routing table.
  *  - "button_types" – update the toggle/stateful classification per button.
  *  - "auto_off"     – update per-relay output auto-off timeout values.
+ *  - "blind_pairs"  – update blind pair (power/direction output) associations.
  */
 static void handle_json_mqtt_root_command(const char* topic, int topic_len,
                                           const char* data, int data_len) {
@@ -961,6 +1186,14 @@ static void handle_json_mqtt_root_command(const char* topic, int topic_len,
             return;
         }
         parse_json_auto_off(data);
+    } else if (strcmp(msgType->valuestring, "blind_pairs") == 0) {
+        cJSON* data = cJSON_GetObjectItem(json, "data");
+        if (!data) {
+            ESP_LOGE(TAG, "Blind pairs command missing 'data' field");
+            cJSON_Delete(json);
+            return;
+        }
+        parse_json_blind_pairs(data);
     } else {
         ESP_LOGW(TAG, "Unknown JSON command type: %s", msgType->valuestring);
     }
@@ -1210,6 +1443,9 @@ void node_root_start(void) {
 
     if (!registry_mutex) {
         registry_mutex = xSemaphoreCreateMutex();
+    }
+    if (!g_blind_pairs_mutex) {
+        g_blind_pairs_mutex = xSemaphoreCreateMutex();
     }
 
     ESP_LOGI(TAG, "Starting root services...");

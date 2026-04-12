@@ -296,6 +296,22 @@ async def websocket_blinds(websocket: WebSocket):
             websocket,
         )
 
+    # Send current relay output states for all blind pair outputs
+    for pair in relay_pairs:
+        relay_id = pair["relay_id"]
+        for output_id in (pair["power_id"], pair["direction_id"]):
+            state = state_manager.get_state(relay_id, output_id)
+            if state is not None:
+                await ws_manager.send_personal_message(
+                    {
+                        "type": "light_state",
+                        "relay_id": relay_id,
+                        "output_id": output_id,
+                        "state": state,
+                    },
+                    websocket,
+                )
+
     async def receive_command(websocket: WebSocket):
         async for cmd in websocket.iter_json():
             if cmd.get("type") == "relay_blind_control":
@@ -309,10 +325,12 @@ async def websocket_blinds(websocket: WebSocket):
                     continue
 
                 if action == "up":
-                    mqtt.client.publish(f"/relay/cmd/{relay_id}", f"{direction_id}1")
+                    # direction OFF (0) = up
+                    mqtt.client.publish(f"/relay/cmd/{relay_id}", f"{direction_id}0")
                     mqtt.client.publish(f"/relay/cmd/{relay_id}", f"{power_id}1")
                 elif action == "down":
-                    mqtt.client.publish(f"/relay/cmd/{relay_id}", f"{direction_id}0")
+                    # direction ON (1) = down
+                    mqtt.client.publish(f"/relay/cmd/{relay_id}", f"{direction_id}1")
                     mqtt.client.publish(f"/relay/cmd/{relay_id}", f"{power_id}1")
                 elif action == "stop":
                     mqtt.client.publish(f"/relay/cmd/{relay_id}", f"{power_id}0")

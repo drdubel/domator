@@ -4,25 +4,26 @@
 	Requires: common.css
 	============================================ */
 
-/* Flex containers for blinds */
+/* Flex containers for legacy position sliders */
 .flex-containers {
 	display: flex;
 	flex-wrap: wrap;
-	gap: var(--spacing-2xl);
+	gap: var(--spacing-xl);
 	justify-content: center;
 	max-width: 1400px;
-	margin: var(--spacing-2xl) auto 0;
+	margin: var(--spacing-xl) auto 0;
+	padding: 0 var(--spacing-md);
 }
 
 .flex-container {
 	display: flex;
 	flex-direction: column;
 	align-items: center;
-	gap: var(--spacing-md);
+	gap: var(--spacing-sm);
 }
 
 .flex-container>a {
-	font-size: 1rem;
+	font-size: 0.9rem;
 	font-weight: 600;
 	color: var(--text-secondary);
 	text-align: center;
@@ -30,8 +31,8 @@
 }
 
 .flex-container>span {
-	width: 30px;
-	height: 250px;
+	width: 28px;
+	height: 220px;
 }
 
 /* ============================================
@@ -42,12 +43,12 @@
 	background: var(--glass-bg) !important;
 	border: 1px solid var(--glass-border) !important;
 	border-radius: 15px !important;
-	width: 30px !important;
+	width: 28px !important;
 	box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.3);
 }
 
 .ui-slider-handle {
-	background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%) !important;
+	background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%) !important;
 	border: 3px solid rgba(255, 255, 255, 0.9) !important;
 	border-radius: 50% !important;
 	cursor: grab !important;
@@ -77,124 +78,331 @@
 }
 
 /* ============================================
-	RESPONSIVE
+	RELAY BLINDS — card grid
 	============================================ */
 
-@media (max-width: 768px) {
-	.flex-containers {
-		gap: var(--spacing-xl);
-	}
-
-	.flex-container>span {
-		height: 220px;
-		width: 28px;
-	}
-
-	.ui-slider-vertical {
-		width: 28px !important;
-	}
-
-	.ui-slider-handle {
-		width: 24px !important;
-		height: 24px !important;
-		margin-left: -9px !important;
-	}
-}
-
-/* ============================================
-	RELAY BLINDS — up/stop/down card controls
-	============================================ */
-
-.relay-blinds-heading {
-	font-size: 1.1rem;
-	font-weight: 600;
-	color: var(--text-secondary);
-	text-align: center;
-	margin: var(--spacing-2xl) 0 var(--spacing-lg);
-	letter-spacing: 0.04em;
+#relay-blinds-section {
+	max-width: 1400px;
+	margin: var(--spacing-xl) auto var(--spacing-xl);
+	padding: 0 var(--spacing-md);
 }
 
 .relay-blinds-cards {
 	display: flex;
 	flex-wrap: wrap;
-	gap: var(--spacing-xl);
 	justify-content: center;
-	max-width: 1400px;
-	margin: 0 auto var(--spacing-2xl);
+	gap: var(--spacing-md);
 }
+
+/* ============================================
+	Card
+	============================================ */
 
 .relay-blind-card {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: var(--spacing-sm);
 	background: var(--glass-bg);
 	border: 1px solid var(--glass-border);
-	border-radius: 16px;
-	padding: var(--spacing-lg) var(--spacing-xl);
-	min-width: 120px;
-}
-
-.relay-blind-name {
-	font-size: 1rem;
-	font-weight: 600;
-	color: var(--text-primary);
-	text-align: center;
-	white-space: nowrap;
-}
-
-.relay-blind-subname {
-	font-size: 0.72rem;
-	color: var(--text-muted);
-	text-align: center;
-	margin-bottom: var(--spacing-xs, 4px);
-}
-
-.relay-blind-controls {
+	border-radius: 18px;
+	padding: var(--spacing-md);
 	display: flex;
 	flex-direction: column;
-	gap: var(--spacing-xs, 6px);
+	gap: var(--spacing-sm);
+	transition: box-shadow 0.2s, border-color 0.2s;
+	flex: 0 0 200px;
+}
+
+.relay-blind-card:hover {
+	border-color: rgba(102, 126, 234, 0.4);
+	box-shadow: 0 6px 24px rgba(102, 126, 234, 0.1);
+}
+
+/* Header */
+.rblind-header {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+}
+
+.rblind-name-wrap {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-height: 28px;
+}
+
+.rblind-name-text {
+	font-size: 1rem;
+	font-weight: 700;
+	color: var(--text-primary);
+	flex: 1;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	cursor: default;
+}
+
+.rblind-name-input {
+	flex: 1;
+	font-size: 0.9rem;
+	font-weight: 600;
+	color: var(--text-primary);
+	background: rgba(255, 255, 255, 0.08);
+	border: 1px solid rgba(102, 126, 234, 0.5);
+	border-radius: 7px;
+	padding: 3px 7px;
+	outline: none;
+	min-width: 0;
+}
+
+.rblind-name-input:focus {
+	border-color: #667eea;
+	box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
+}
+
+.rblind-edit-btn,
+.rblind-save-btn,
+.rblind-cancel-btn {
+	background: none;
+	border: none;
+	cursor: pointer;
+	border-radius: 5px;
+	width: 22px;
+	height: 22px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 0.8rem;
+	flex-shrink: 0;
+}
+
+.rblind-edit-btn {
+	color: var(--text-muted);
+	opacity: 0;
+	transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+
+.rblind-name-wrap:hover .rblind-edit-btn {
+	opacity: 1;
+}
+
+.rblind-edit-btn:hover {
+	background: rgba(102, 126, 234, 0.15);
+	color: var(--color-primary);
+}
+
+.rblind-save-btn {
+	color: #4ade80;
+	transition: background 0.15s;
+}
+
+.rblind-save-btn:hover {
+	background: rgba(74, 222, 128, 0.15);
+}
+
+.rblind-cancel-btn {
+	color: var(--text-muted);
+	transition: background 0.15s, color 0.15s;
+}
+
+.rblind-cancel-btn:hover {
+	background: rgba(248, 113, 113, 0.15);
+	color: #f87171;
+}
+
+.rblind-subname {
+	font-size: 0.7rem;
+	color: var(--text-muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* ============================================
+	Control buttons
+	============================================ */
+
+.rblind-controls {
+	display: flex;
+	gap: 6px;
 }
 
 .rblind-btn {
-	width: 48px;
-	height: 42px;
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 3px;
 	border: none;
-	border-radius: 10px;
-	font-size: 1.1rem;
+	border-radius: 12px;
+	padding: 10px 4px;
 	cursor: pointer;
-	transition: filter 0.15s, transform 0.1s;
+	transition: filter 0.2s, transform 0.1s, box-shadow 0.2s, opacity 0.2s, background 0.2s;
 	color: #fff;
+	min-height: 56px;
 }
 
-.rblind-btn:active {
-	transform: scale(0.94);
+.rblind-btn-icon {
+	font-size: 1rem;
+	line-height: 1;
 }
 
+.rblind-btn-label {
+	text-transform: uppercase;
+	font-size: 0.6rem;
+	font-weight: 700;
+	letter-spacing: 0.05em;
+}
+
+/* Default colors */
 .rblind-up {
-	background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
+	background: linear-gradient(160deg, #667eea 0%, #5a67d8 100%);
+	box-shadow: 0 3px 8px rgba(102, 126, 234, 0.25);
 }
 
 .rblind-stop {
-	background: linear-gradient(135deg, #64748b 0%, #475569 100%);
-	font-size: 0.85rem;
+	background: linear-gradient(160deg, #64748b 0%, #475569 100%);
+	box-shadow: 0 3px 8px rgba(71, 85, 105, 0.25);
 }
 
 .rblind-down {
-	background: linear-gradient(135deg, var(--color-primary-dark) 0%, #3730a3 100%);
+	background: linear-gradient(160deg, #4f46e5 0%, #3730a3 100%);
+	box-shadow: 0 3px 8px rgba(79, 70, 229, 0.25);
 }
 
 .rblind-btn:hover {
-	filter: brightness(1.15);
+	filter: brightness(1.18);
+	transform: translateY(-1px);
 }
 
-@media (max-width: 480px) {
+.rblind-btn:active {
+	transform: scale(0.93);
+	filter: brightness(0.88);
+	box-shadow: none;
+}
+
+/* ============================================
+	State-based button highlighting
+	  state-up      → moving up   (dir=0, power=1)
+	  state-down    → moving down (dir=1, power=1)
+	  state-stopped → stopped     (power=0)
+	============================================ */
+
+/* Dim non-active buttons */
+.rblind-controls.state-up .rblind-stop,
+.rblind-controls.state-up .rblind-down,
+.rblind-controls.state-down .rblind-up,
+.rblind-controls.state-down .rblind-stop,
+.rblind-controls.state-stopped .rblind-up,
+.rblind-controls.state-stopped .rblind-down {
+	opacity: 0.38;
+	box-shadow: none;
+}
+
+/* Active UP — bright cyan-blue */
+.rblind-controls.state-up .rblind-up {
+	background: linear-gradient(160deg, #22d3ee 0%, #06b6d4 100%);
+	box-shadow: 0 0 14px rgba(6, 182, 212, 0.55);
+	filter: brightness(1.05);
+}
+
+/* Active DOWN — amber/orange */
+.rblind-controls.state-down .rblind-down {
+	background: linear-gradient(160deg, #fb923c 0%, #ea580c 100%);
+	box-shadow: 0 0 14px rgba(234, 88, 12, 0.55);
+	filter: brightness(1.05);
+}
+
+/* Active STOP — green */
+.rblind-controls.state-stopped .rblind-stop {
+	background: linear-gradient(160deg, #34d399 0%, #10b981 100%);
+	box-shadow: 0 0 14px rgba(16, 185, 129, 0.5);
+	filter: brightness(1.05);
+}
+
+/* ============================================
+	RESPONSIVE
+	============================================ */
+
+@media (max-width: 600px) {
+	.relay-blinds-cards {
+		gap: 12px;
+	}
+
+	/* 2 cards per row: each card = (100% - 1 gap) / 2 */
+	.relay-blind-card {
+		flex: 0 0 calc(50% - 6px);
+		padding: var(--spacing-sm);
+		border-radius: 14px;
+	}
+
+	.rblind-btn {
+		min-height: 48px;
+		padding: 8px 3px;
+		border-radius: 10px;
+	}
+
+	.rblind-btn-icon {
+		font-size: 0.9rem;
+	}
+
+	.rblind-btn-label {
+		font-size: 0.55rem;
+	}
+
+	.rblind-name-text {
+		font-size: 0.9rem;
+	}
+}
+
+@media (max-width: 400px) {
+	#relay-blinds-section {
+		padding: 0 8px;
+	}
+
+	.relay-blinds-cards {
+		gap: 8px;
+	}
+
+	.relay-blind-card {
+		flex: 0 0 calc(50% - 4px);
+	}
+
+	.rblind-btn {
+		min-height: 44px;
+		gap: 2px;
+	}
+
+	.rblind-controls {
+		gap: 4px;
+	}
+}
+
+/* Slider responsive */
+@media (max-width: 600px) {
 	.flex-containers {
-		gap: var(--spacing-lg);
+		/* Fixed item width → browser packs evenly.
+		   With width=74px and gap=10px on a ~343px content area:
+		   4 items = 4×74 + 3×10 = 326px  ✓
+		   5 items = 5×74 + 4×10 = 410px  ✗ → wraps → 4+3 for 7 sliders */
+		gap: 10px;
+		align-items: flex-end;
+	}
+
+	.flex-container {
+		width: 74px;
+		flex-shrink: 0;
+	}
+
+	.flex-container>a {
+		font-size: 0.75rem;
+		white-space: normal;
+		line-height: 1.2;
+		text-align: center;
+		width: 100%;
 	}
 
 	.flex-container>span {
-		height: 200px;
+		height: 160px;
 		width: 26px;
 	}
 
@@ -206,9 +414,5 @@
 		width: 22px !important;
 		height: 22px !important;
 		margin-left: -8px !important;
-	}
-
-	.flex-container>a {
-		font-size: 0.9rem;
 	}
 }

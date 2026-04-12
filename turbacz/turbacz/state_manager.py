@@ -38,6 +38,15 @@ class StateManager:
             },
             "/lights/ws/",
         )
+        await ws_manager.broadcast(
+            {
+                "type": "light_state",
+                "relay_id": relay_id,
+                "output_id": output_id,
+                "state": state,
+            },
+            "/blinds/ws/",
+        )
 
     async def send_online_status(self, websocket=None):
         message = {

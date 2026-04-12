@@ -76,9 +76,16 @@ class ConnectionManager:
                     relay_id BIGINT REFERENCES relays(id),
                     output_id_power TEXT NOT NULL,
                     output_id_direction TEXT NOT NULL,
+                    name TEXT NOT NULL DEFAULT '',
                     PRIMARY KEY (relay_id, output_id_power),
                     UNIQUE (relay_id, output_id_direction)
                 );
+                """
+            )
+            cur.execute(
+                """
+                ALTER TABLE blind_pairs
+                ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT '';
                 """
             )
             cur.execute(
@@ -461,31 +468,36 @@ class ConnectionManager:
 
     def get_relay_blind_pairs_with_names(self) -> list:
         """Return blind pairs enriched with relay/output names for the blinds UI."""
-        pairs_raw = self.get_blind_pairs()
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT relay_id, output_id_power, output_id_direction, name FROM blind_pairs;"
+            )
+            rows = cur.fetchall()
+
         relays = self.get_relays()
         outputs = self.get_outputs()
 
         result = []
-        for relay_id, pairs in pairs_raw.items():
+        for relay_id, power_id, dir_id, custom_name in rows:
             relay_id_int = int(relay_id)
             relay_name = relays.get(relay_id_int, ("Unknown",))[0]
             relay_outputs = outputs.get(relay_id_int, {})
 
-            for power_id, dir_id in pairs:
-                def _output_name(oid: str) -> str:
-                    meta = relay_outputs.get(oid)
-                    if isinstance(meta, (list, tuple)):
-                        return meta[0]
-                    return meta or oid
+            def _output_name(oid: str) -> str:
+                meta = relay_outputs.get(oid)
+                if isinstance(meta, (list, tuple)):
+                    return meta[0]
+                return meta or oid
 
-                result.append({
-                    "relay_id": relay_id_int,
-                    "relay_name": relay_name,
-                    "power_id": power_id,
-                    "power_name": _output_name(power_id),
-                    "direction_id": dir_id,
-                    "direction_name": _output_name(dir_id),
-                })
+            result.append({
+                "relay_id": relay_id_int,
+                "name": custom_name or relay_name,
+                "relay_name": relay_name,
+                "power_id": power_id,
+                "power_name": _output_name(power_id),
+                "direction_id": dir_id,
+                "direction_name": _output_name(dir_id),
+            })
 
         return result
 
@@ -533,6 +545,17 @@ class ConnectionManager:
             result[relay_id].append([power_id, dir_id])
 
         return result
+
+    def rename_blind_pair(self, relay_id: int, output_id_power: str, name: str):
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE blind_pairs SET name = %s
+                WHERE relay_id = %s AND output_id_power = %s;
+                """,
+                (name, relay_id, output_id_power),
+            )
+        self.conn.commit()
 
     def add_section(self, section_name: str):
         with self.conn.cursor() as cur:
@@ -1017,6 +1040,23 @@ def remove_blind_pair(
 
     connection_manager.remove_blind_pair(relay_id, output_id)
     return {"status": "Blind pair removed"}
+
+
+@connection_router.post("/rename_blind_pair")
+def rename_blind_pair(
+    request: Request,
+    relay_id: int = Form(...),
+    output_id_power: str = Form(...),
+    name: str = Form(...),
+    access_token: Optional[str] = Cookie(None),
+):
+    user = auth.get_current_user(access_token)
+
+    if not user:
+        return {"error": "Unauthorized"}
+
+    connection_manager.rename_blind_pair(relay_id, output_id_power, name.strip())
+    return {"status": "Blind pair renamed"}
 
 
 connection_manager = ConnectionManager()

@@ -101,6 +101,93 @@
 	}
 }
 
+/* ============================================
+	RELAY BLINDS — up/stop/down card controls
+	============================================ */
+
+.relay-blinds-heading {
+	font-size: 1.1rem;
+	font-weight: 600;
+	color: var(--text-secondary);
+	text-align: center;
+	margin: var(--spacing-2xl) 0 var(--spacing-lg);
+	letter-spacing: 0.04em;
+}
+
+.relay-blinds-cards {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--spacing-xl);
+	justify-content: center;
+	max-width: 1400px;
+	margin: 0 auto var(--spacing-2xl);
+}
+
+.relay-blind-card {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: var(--spacing-sm);
+	background: var(--glass-bg);
+	border: 1px solid var(--glass-border);
+	border-radius: 16px;
+	padding: var(--spacing-lg) var(--spacing-xl);
+	min-width: 120px;
+}
+
+.relay-blind-name {
+	font-size: 1rem;
+	font-weight: 600;
+	color: var(--text-primary);
+	text-align: center;
+	white-space: nowrap;
+}
+
+.relay-blind-subname {
+	font-size: 0.72rem;
+	color: var(--text-muted);
+	text-align: center;
+	margin-bottom: var(--spacing-xs, 4px);
+}
+
+.relay-blind-controls {
+	display: flex;
+	flex-direction: column;
+	gap: var(--spacing-xs, 6px);
+}
+
+.rblind-btn {
+	width: 48px;
+	height: 42px;
+	border: none;
+	border-radius: 10px;
+	font-size: 1.1rem;
+	cursor: pointer;
+	transition: filter 0.15s, transform 0.1s;
+	color: #fff;
+}
+
+.rblind-btn:active {
+	transform: scale(0.94);
+}
+
+.rblind-up {
+	background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
+}
+
+.rblind-stop {
+	background: linear-gradient(135deg, #64748b 0%, #475569 100%);
+	font-size: 0.85rem;
+}
+
+.rblind-down {
+	background: linear-gradient(135deg, var(--color-primary-dark) 0%, #3730a3 100%);
+}
+
+.rblind-btn:hover {
+	filter: brightness(1.15);
+}
+
 @media (max-width: 480px) {
 	.flex-containers {
 		gap: var(--spacing-lg);

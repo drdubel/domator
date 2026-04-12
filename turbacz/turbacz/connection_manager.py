@@ -72,6 +72,17 @@ class ConnectionManager:
             )
             cur.execute(
                 """
+                CREATE TABLE IF NOT EXISTS blind_pairs (
+                    relay_id BIGINT REFERENCES relays(id),
+                    output_id_power TEXT NOT NULL,
+                    output_id_direction TEXT NOT NULL,
+                    PRIMARY KEY (relay_id, output_id_power),
+                    UNIQUE (relay_id, output_id_direction)
+                );
+                """
+            )
+            cur.execute(
+                """
                 CREATE TABLE IF NOT EXISTS switches (
                     id BIGINT PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -423,6 +434,105 @@ class ConnectionManager:
         if not row:
             return 0
         return max(int(row[0] or 0), 0)
+
+    def get_all_connections_for_mesh(self) -> dict:
+        """Like get_all_connections but excludes any connection whose output is part of a blind pair.
+        These are handled server-side so the ESP32 mesh doesn't route them autonomously."""
+        all_connections = self.get_all_connections()
+        blind_pairs = self.get_blind_pairs()
+
+        blind_outputs: set[tuple] = set()
+        for relay_id, pairs in blind_pairs.items():
+            for power_id, dir_id in pairs:
+                blind_outputs.add((int(relay_id), power_id))
+                blind_outputs.add((int(relay_id), dir_id))
+
+        filtered: dict = {}
+        for switch_id, buttons in all_connections.items():
+            filtered_buttons: dict = {}
+            for button_id, targets in buttons.items():
+                kept = [(r, o) for r, o in targets if (int(r), o) not in blind_outputs]
+                if kept:
+                    filtered_buttons[button_id] = kept
+            if filtered_buttons:
+                filtered[switch_id] = filtered_buttons
+
+        return filtered
+
+    def get_relay_blind_pairs_with_names(self) -> list:
+        """Return blind pairs enriched with relay/output names for the blinds UI."""
+        pairs_raw = self.get_blind_pairs()
+        relays = self.get_relays()
+        outputs = self.get_outputs()
+
+        result = []
+        for relay_id, pairs in pairs_raw.items():
+            relay_id_int = int(relay_id)
+            relay_name = relays.get(relay_id_int, ("Unknown",))[0]
+            relay_outputs = outputs.get(relay_id_int, {})
+
+            for power_id, dir_id in pairs:
+                def _output_name(oid: str) -> str:
+                    meta = relay_outputs.get(oid)
+                    if isinstance(meta, (list, tuple)):
+                        return meta[0]
+                    return meta or oid
+
+                result.append({
+                    "relay_id": relay_id_int,
+                    "relay_name": relay_name,
+                    "power_id": power_id,
+                    "power_name": _output_name(power_id),
+                    "direction_id": dir_id,
+                    "direction_name": _output_name(dir_id),
+                })
+
+        return result
+
+    def add_blind_pair(self, relay_id: int, output_id_power: str, output_id_direction: str):
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM blind_pairs
+                WHERE relay_id = %s
+                  AND (output_id_power IN (%s, %s) OR output_id_direction IN (%s, %s));
+                """,
+                (relay_id, output_id_power, output_id_direction, output_id_power, output_id_direction),
+            )
+            cur.execute(
+                """
+                INSERT INTO blind_pairs (relay_id, output_id_power, output_id_direction)
+                VALUES (%s, %s, %s);
+                """,
+                (relay_id, output_id_power, output_id_direction),
+            )
+
+        self.conn.commit()
+
+    def remove_blind_pair(self, relay_id: int, output_id: str):
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM blind_pairs
+                WHERE relay_id = %s AND (output_id_power = %s OR output_id_direction = %s);
+                """,
+                (relay_id, output_id, output_id),
+            )
+
+        self.conn.commit()
+
+    def get_blind_pairs(self) -> dict:
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT relay_id, output_id_power, output_id_direction FROM blind_pairs;")
+            rows = cur.fetchall()
+
+        result: dict[int, list] = {}
+        for relay_id, power_id, dir_id in rows:
+            if relay_id not in result:
+                result[relay_id] = []
+            result[relay_id].append([power_id, dir_id])
+
+        return result
 
     def add_section(self, section_name: str):
         with self.conn.cursor() as cur:
@@ -858,6 +968,55 @@ def remove_button(
 
     connection_manager.remove_button(button_id)
     return {"status": "Button removed"}
+
+
+@connection_router.get("/get_blind_pairs")
+def get_blind_pairs(
+    request: Request,
+    access_token: Optional[str] = Cookie(None),
+):
+    user = auth.get_current_user(access_token)
+
+    if not user:
+        return {"error": "Unauthorized"}
+
+    return JSONResponse(content=connection_manager.get_blind_pairs())
+
+
+@connection_router.post("/add_blind_pair")
+def add_blind_pair(
+    request: Request,
+    relay_id: int = Form(...),
+    output_id_power: str = Form(...),
+    output_id_direction: str = Form(...),
+    access_token: Optional[str] = Cookie(None),
+):
+    user = auth.get_current_user(access_token)
+
+    if not user:
+        return {"error": "Unauthorized"}
+
+    if output_id_power == output_id_direction:
+        return {"error": "Power and direction outputs must be different"}
+
+    connection_manager.add_blind_pair(relay_id, output_id_power, output_id_direction)
+    return {"status": "Blind pair added"}
+
+
+@connection_router.post("/remove_blind_pair")
+def remove_blind_pair(
+    request: Request,
+    relay_id: int = Form(...),
+    output_id: str = Form(...),
+    access_token: Optional[str] = Cookie(None),
+):
+    user = auth.get_current_user(access_token)
+
+    if not user:
+        return {"error": "Unauthorized"}
+
+    connection_manager.remove_blind_pair(relay_id, output_id)
+    return {"status": "Blind pair removed"}
 
 
 connection_manager = ConnectionManager()

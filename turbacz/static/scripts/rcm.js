@@ -39,7 +39,13 @@ const State = {
     buttonTypes: {},
 
     // Hidden buttons: Set of 'switchId-buttonId'
-    hiddenButtons: new Set()
+    hiddenButtons: new Set(),
+
+    // Blind pairs: relay_id (as string) -> [[power_id, direction_id], ...]
+    blindPairs: {},
+
+    // Blind linking mode source: {relayId, outputId} or null
+    blindLinkSource: null
 }
 
 // Browser detection for performance optimizations
@@ -1765,12 +1771,13 @@ async function loadConfiguration() {
     hiddenButtons = loadHiddenButtons()
 
     try {
-        const [relaysData, outputsData, switchesData, connectionsData, buttonTypesData] = await Promise.all([
+        const [relaysData, outputsData, switchesData, connectionsData, buttonTypesData, blindPairsData] = await Promise.all([
             fetchAPI('/lights/get_relays'),
             fetchAPI('/lights/get_outputs'),
             fetchAPI('/lights/get_switches'),
             fetchAPI('/lights/get_connections'),
-            fetchAPI('/lights/get_all_buttons')
+            fetchAPI('/lights/get_all_buttons'),
+            fetchAPI('/lights/get_blind_pairs')
         ])
 
         const relays_config = relaysData || getDemoRelays()
@@ -1783,6 +1790,10 @@ async function loadConfiguration() {
             buttonTypes = buttonTypesData
             console.log('Loaded button types from API:', buttonTypes)
         }
+
+        // Load blind pairs
+        State.blindPairs = blindPairsData || {}
+        State.blindLinkSource = null
 
         // create relays (centered on canvas by default)
         let relayX = 25000, relayY = 25000
@@ -2326,34 +2337,73 @@ function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
     relayDiv.style.top = `${savedPos.y}px`
     relayDiv.style.zIndex = '100'
 
-    let outputsHTML = ''
-    for (let i = 1; i <= outputsCount; i++) {
-        const outputId = String.fromCharCode(96 + i)
-        const outputMetaRaw = outputs[outputId] || [`Output ${i}`, 1, i - 1, 0]
-        const outputMeta = parseOutputMeta(outputMetaRaw, `Output ${i}`)
+    // Build pairMap for this relay: outputId -> {role, partner}
+    const pairMap = {}
+    const relayPairs = State.blindPairs[String(relayId)] || State.blindPairs[relayId] || []
+    relayPairs.forEach(([powerId, dirId]) => {
+        pairMap[powerId] = { role: 'power', partner: dirId }
+        pairMap[dirId] = { role: 'direction', partner: powerId }
+    })
+
+    function buildOutputItemHTML(outputId, extraBadgeHTML = '', extraClass = '') {
+        const idx = outputId.charCodeAt(0) - 96
+        const outputMetaRaw = outputs[outputId] || [`Output ${idx}`, 1, idx - 1, 0]
+        const outputMeta = parseOutputMeta(outputMetaRaw, `Output ${idx}`)
         const outputName = outputMeta.name
         const autoOffSeconds = outputMeta.autoOffSeconds
+        return `
+            <div class="output-item ${extraClass}" id="relay-${relayId}-output-${outputId}">
+                <span><img class="item-icon light-bulb-${relayId}-${outputId}" src="/static/data/img/off.png" alt="switch" style="cursor: pointer;"></span>
+                <span class="output-name output-name-${relayId}-${outputId}" style="cursor: pointer;">${outputName}</span>
+                ${extraBadgeHTML}
+                <span class="output-auto-off-badge" id="relay-${relayId}-auto-off-badge-${outputId}" title="${autoOffSeconds > 0 ? `Turns off after ${autoOffSeconds}s` : ''}">${formatAutoOffBadge(autoOffSeconds)}</span>
+                <div class="output-inline-controls" title="Auto-off delay">
+                    <span class="output-inline-icon">⏱</span>
+                    <input
+                        type="range"
+                        class="auto-off-slider"
+                        id="relay-${relayId}-auto-off-slider-${outputId}"
+                        min="0"
+                        max="${AUTO_OFF_MAX_SECONDS}"
+                        step="${AUTO_OFF_STEP_SECONDS}"
+                        value="${autoOffSeconds}"
+                    >
+                    <span class="auto-off-value" id="relay-${relayId}-auto-off-value-${outputId}" title="${autoOffSeconds > 0 ? `Auto off after ${autoOffSeconds}s` : 'Auto off disabled'}">${formatAutoOff(autoOffSeconds)}</span>
+                </div>
+            </div>`
+    }
 
-        outputsHTML += `
-                    <div class="output-item" id="relay-${relayId}-output-${String.fromCharCode(96 + i)}">
-                        <span><img class="item-icon light-bulb-${relayId}-${String.fromCharCode(96 + i)}" src="/static/data/img/off.png" alt="switch" style="cursor: pointer;"></span>
-                        <span class="output-name output-name-${relayId}-${String.fromCharCode(96 + i)}" style="cursor: pointer;">${outputName}</span>
-                        <span class="output-auto-off-badge" id="relay-${relayId}-auto-off-badge-${outputId}" title="${autoOffSeconds > 0 ? `Turns off after ${autoOffSeconds}s` : ''}">${formatAutoOffBadge(autoOffSeconds)}</span>
-                        <div class="output-inline-controls" title="Auto-off delay">
-                            <span class="output-inline-icon">⏱</span>
-                            <input
-                                type="range"
-                                class="auto-off-slider"
-                                id="relay-${relayId}-auto-off-slider-${outputId}"
-                                min="0"
-                                max="${AUTO_OFF_MAX_SECONDS}"
-                                step="${AUTO_OFF_STEP_SECONDS}"
-                                value="${autoOffSeconds}"
-                            >
-                            <span class="auto-off-value" id="relay-${relayId}-auto-off-value-${outputId}" title="${autoOffSeconds > 0 ? `Auto off after ${autoOffSeconds}s` : 'Auto off disabled'}">${formatAutoOff(autoOffSeconds)}</span>
+    let outputsHTML = ''
+    const renderedOutputs = new Set()
+
+    for (let i = 1; i <= outputsCount; i++) {
+        const outputId = String.fromCharCode(96 + i)
+        if (renderedOutputs.has(outputId)) continue
+
+        const pairInfo = pairMap[outputId]
+
+        if (pairInfo && pairInfo.role === 'power') {
+            const dirId = pairInfo.partner
+            renderedOutputs.add(dirId)
+            outputsHTML += `
+                <div class="blind-pair-group">
+                    <div class="blind-pair-header">
+                        <span>🪟 Roller Blind</span>
+                        <div style="display:flex;gap:0.3rem;">
+                            <button class="blind-swap-btn" onclick="event.stopPropagation(); swapBlindPair(${relayId}, '${outputId}', '${dirId}')" title="Swap power and direction roles">⇅ Swap</button>
+                            <button class="blind-unlink-btn" onclick="event.stopPropagation(); removeBlindPair(${relayId}, '${outputId}')" title="Unlink blind pair">✕ Unlink</button>
                         </div>
                     </div>
-                `
+                    ${buildOutputItemHTML(outputId, '<span class="blind-role-badge">Power ⏻</span>')}
+                    <div class="blind-pair-connector">🪟</div>
+                    ${buildOutputItemHTML(dirId, '<span class="blind-role-badge">Direction ↕</span>')}
+                </div>`
+        } else if (!pairInfo) {
+            // Unpaired output — add a link button
+            const linkBtn = `<button class="blind-link-btn" onclick="event.stopPropagation(); startBlindLink(${relayId}, '${outputId}')" title="Link as roller blind">🔗 Link</button>`
+            outputsHTML += buildOutputItemHTML(outputId, linkBtn)
+        }
+        // direction outputs are rendered inside their pair group above
     }
 
     const isOnline = online_relays.has(relayId)
@@ -2398,6 +2448,17 @@ function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
     // Add click and touch handlers for light bulbs and output names
     for (let i = 1; i <= outputsCount; i++) {
         const outputId = String.fromCharCode(96 + i)
+
+        // Intercept clicks on linking-target outputs to complete the blind pair
+        const outputItemEl = relayDiv.querySelector(`#relay-${relayId}-output-${outputId}`)
+        if (outputItemEl) {
+            outputItemEl.addEventListener('click', (e) => {
+                if (State.blindLinkSource && outputItemEl.classList.contains('blind-linking-target')) {
+                    e.stopPropagation()
+                    completeBlindLink(relayId, outputId)
+                }
+            }, true)
+        }
 
         // Light bulb toggle
         const bulbElement = relayDiv.querySelector(`.light-bulb-${relayId}-${outputId}`)
@@ -2749,6 +2810,115 @@ function changeSwitchState(relay_id, output_id) {
         pendingClicks.delete(`${relay_id}-${output_id}`)
     }, 2000)
 }
+
+// ========== BLIND PAIR LINKING ==========
+
+function startBlindLink(relayId, outputId) {
+    if (State.blindLinkSource) {
+        // Already in linking mode — clicking the same source cancels
+        if (State.blindLinkSource.relayId === relayId && State.blindLinkSource.outputId === outputId) {
+            cancelBlindLink()
+            return
+        }
+        // Clicking a different unpaired output on the same relay completes the pair
+        if (State.blindLinkSource.relayId === relayId) {
+            completeBlindLink(relayId, outputId)
+            return
+        }
+        cancelBlindLink()
+    }
+
+    State.blindLinkSource = { relayId, outputId }
+
+    // Highlight the source output
+    const sourceEl = document.getElementById(`relay-${relayId}-output-${outputId}`)
+    if (sourceEl) sourceEl.classList.add('blind-linking-source')
+
+    // Highlight available targets on the same relay (unpaired outputs, not the source)
+    const relayEl = document.getElementById(`relay-${relayId}`)
+    if (relayEl) {
+        relayEl.querySelectorAll('.output-item').forEach(el => {
+            if (el.id !== `relay-${relayId}-output-${outputId}` && !el.closest('.blind-pair-group')) {
+                el.classList.add('blind-linking-target')
+            }
+        })
+    }
+
+    showToast('Click another output to link as roller blind (Escape to cancel)')
+}
+
+function cancelBlindLink() {
+    if (!State.blindLinkSource) return
+    const { relayId, outputId } = State.blindLinkSource
+    State.blindLinkSource = null
+
+    const sourceEl = document.getElementById(`relay-${relayId}-output-${outputId}`)
+    if (sourceEl) sourceEl.classList.remove('blind-linking-source')
+
+    const relayEl = document.getElementById(`relay-${relayId}`)
+    if (relayEl) {
+        relayEl.querySelectorAll('.blind-linking-target').forEach(el => el.classList.remove('blind-linking-target'))
+    }
+}
+
+async function completeBlindLink(relayId, directionOutputId) {
+    if (!State.blindLinkSource || State.blindLinkSource.relayId !== relayId) return
+
+    const powerOutputId = State.blindLinkSource.outputId
+    cancelBlindLink()
+
+    const result = await postForm('/lights/add_blind_pair', {
+        relay_id: relayId,
+        output_id_power: powerOutputId,
+        output_id_direction: directionOutputId
+    }, false)
+
+    if (result === null) {
+        showToast('Failed to link blind pair', true)
+        return
+    }
+
+    showToast('Roller blind pair linked')
+    loadConfiguration()
+}
+
+async function swapBlindPair(relayId, currentPowerId, currentDirId) {
+    const result = await postForm('/lights/add_blind_pair', {
+        relay_id: relayId,
+        output_id_power: currentDirId,
+        output_id_direction: currentPowerId
+    }, false)
+
+    if (result === null) {
+        showToast('Failed to swap blind pair roles', true)
+        return
+    }
+
+    showToast('Blind pair roles swapped')
+    loadConfiguration()
+}
+
+async function removeBlindPair(relayId, outputId) {
+    const result = await postForm('/lights/remove_blind_pair', {
+        relay_id: relayId,
+        output_id: outputId
+    }, false)
+
+    if (result === null) {
+        showToast('Failed to unlink blind pair', true)
+        return
+    }
+
+    showToast('Roller blind pair unlinked')
+    loadConfiguration()
+}
+
+// Cancel blind link mode on Escape key
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && State.blindLinkSource) {
+        cancelBlindLink()
+    }
+})
 
 function updateLightUI(relay_id, output_id, state) {
     console.log('Updating UI for', `relay-${relay_id}-output-${output_id}`, 'to', state)

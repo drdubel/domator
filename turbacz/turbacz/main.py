@@ -288,8 +288,38 @@ async def websocket_blinds(websocket: WebSocket):
 
     mqtt.publish("/blind/cmd", "S")
 
+    # Send relay blind pairs to the newly connected client
+    relay_pairs = connection_manager.get_relay_blind_pairs_with_names()
+    if relay_pairs:
+        await ws_manager.send_personal_message(
+            {"type": "relay_blinds", "pairs": relay_pairs},
+            websocket,
+        )
+
     async def receive_command(websocket: WebSocket):
         async for cmd in websocket.iter_json():
+            if cmd.get("type") == "relay_blind_control":
+                try:
+                    relay_id = int(cmd["relay_id"])
+                    power_id = str(cmd["power_id"])
+                    direction_id = str(cmd["direction_id"])
+                    action = str(cmd["action"])
+                except (KeyError, ValueError) as err:
+                    logger.error("Invalid relay_blind_control: %s %s", cmd, err)
+                    continue
+
+                if action == "up":
+                    mqtt.client.publish(f"/relay/cmd/{relay_id}", f"{direction_id}1")
+                    mqtt.client.publish(f"/relay/cmd/{relay_id}", f"{power_id}1")
+                elif action == "down":
+                    mqtt.client.publish(f"/relay/cmd/{relay_id}", f"{direction_id}0")
+                    mqtt.client.publish(f"/relay/cmd/{relay_id}", f"{power_id}1")
+                elif action == "stop":
+                    mqtt.client.publish(f"/relay/cmd/{relay_id}", f"{power_id}0")
+                else:
+                    logger.warning("Unknown blind action: %s", action)
+                continue
+
             try:
                 req = BlindRequest.model_validate(cmd)
             except ValidationError as err:
@@ -476,10 +506,14 @@ async def websocket_rcm(websocket: WebSocket):
 
             if cmd.get("type") == "update":
                 connections = connection_manager.get_all_connections()
-
                 mqtt.client.publish(
                     "/switch/cmd/root",
                     json.dumps({"type": "connections", "data": connections}),
+                )
+                blind_pairs = connection_manager.get_blind_pairs()
+                mqtt.client.publish(
+                    "/switch/cmd/root",
+                    json.dumps({"type": "blind_pairs", "data": blind_pairs}),
                 )
                 publish_relay_auto_off_config()
                 await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")

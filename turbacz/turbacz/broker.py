@@ -132,32 +132,34 @@ async def handle_relay_state(payload_str, topic):
 async def handle_switch_state(payload_str, topic):
     """
     Process switch state payload from /switch/state/+ topic.
+
+    Payload formats (from firmware):
+      - Numeric payload: ping time in ms
+      - Single char, e.g. 'a': toggle button press event
+      - Two chars, e.g. 'a1' (pressed) or 'a0' (released): stateful button event
+
+    Long-press detection for blind pairs is handled by the ESP32 root node firmware.
     """
     try:
         switch_id = int(topic.split("/")[-1])
 
-        if payload_str[0].isalpha():
-            button_id = payload_str[0]
-
-            logger.debug("Switch ID: %s, Button ID: %s", switch_id, button_id)  # Debug log
-
-            await ws_manager.broadcast(
-                {
-                    "type": "switch_state",
-                    "switch_id": switch_id,
-                    "button_id": button_id,
-                },
-                "/rcm/ws/",
-            )
-
-        else:
+        if not payload_str or not payload_str[0].isalpha():
+            # Numeric payload = ping time
             ping_time = int(payload_str)
-
-            logger.debug("Switch ID: %s, Ping Time: %d ms", switch_id, ping_time)  # Debug log
-
+            logger.debug("Switch ID: %s, Ping Time: %d ms", switch_id, ping_time)
             state_manager.update_device_ping(switch_id, ping_time)
+            return
 
-    except ValueError as e:
+        button_id = payload_str[0].lower()
+
+        logger.debug("Switch ID: %s, Button ID: %s", switch_id, button_id)
+
+        await ws_manager.broadcast(
+            {"type": "switch_state", "switch_id": switch_id, "button_id": button_id},
+            "/rcm/ws/",
+        )
+
+    except (ValueError, IndexError) as e:
         logger.error("Error processing switch state: %s", e)
 
 
@@ -183,6 +185,8 @@ async def handle_root_state(payload_str):
         logger.debug("Connections: %s", connections)  # Debug log
 
         mqtt.client.publish("/switch/cmd/root", json.dumps({"type": "connections", "data": connections}))
+        blind_pairs = connection_manager.get_blind_pairs()
+        mqtt.client.publish("/switch/cmd/root", json.dumps({"type": "blind_pairs", "data": blind_pairs}))
         mqtt.client.publish(
             "/switch/cmd/root", json.dumps({"type": "button_types", "data": connection_manager.get_all_buttons()})
         )

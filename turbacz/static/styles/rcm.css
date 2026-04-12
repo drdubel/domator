@@ -1338,3 +1338,147 @@ body.hide-device-metrics .signal-icon {
     background: rgba(239, 68, 68, 0.15);
     color: #fca5a5;
 }
+
+/* ========== BLIND PAIR STYLES ========== */
+
+.blind-pair-group {
+    position: relative;
+    border-left: 3px solid #2dd4bf;
+    border-radius: 12px;
+    margin: 0.5rem 0;
+    padding: 0 0 0 4px;
+}
+
+.blind-pair-group::before,
+.blind-pair-group::after {
+    content: '';
+    position: absolute;
+    left: -3px;
+    width: 10px;
+    height: 3px;
+    background: #2dd4bf;
+    border-radius: 1px;
+}
+
+.blind-pair-group::before {
+    top: 0;
+}
+
+.blind-pair-group::after {
+    bottom: 0;
+}
+
+.blind-pair-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.2rem 0.5rem 0.1rem 0.5rem;
+    font-size: 0.7rem;
+    color: #2dd4bf;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+}
+
+.blind-pair-connector {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    padding: 1px 0.5rem;
+    font-size: 0.85rem;
+    color: #2dd4bf;
+}
+
+.blind-pair-connector::before,
+.blind-pair-connector::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: rgba(45, 212, 191, 0.4);
+}
+
+.blind-role-badge {
+    font-size: 0.65rem;
+    color: #2dd4bf;
+    font-weight: 700;
+    background: rgba(45, 212, 191, 0.12);
+    border: 1px solid rgba(45, 212, 191, 0.35);
+    border-radius: 4px;
+    padding: 1px 5px;
+    white-space: nowrap;
+    margin-left: 0.25rem;
+    flex-shrink: 0;
+}
+
+.blind-pair-group .output-item {
+    background: linear-gradient(135deg, rgba(45, 212, 191, 0.12) 0%, rgba(20, 184, 166, 0.12) 100%);
+    border-color: rgba(45, 212, 191, 0.3);
+    margin: 0.2rem 0;
+}
+
+.blind-pair-group .output-item:hover {
+    background: linear-gradient(135deg, rgba(45, 212, 191, 0.22) 0%, rgba(20, 184, 166, 0.22) 100%);
+    transform: translateX(-3px);
+    border-color: #2dd4bf;
+}
+
+.blind-unlink-btn,
+.blind-swap-btn {
+    background: none;
+    border: none;
+    color: rgba(45, 212, 191, 0.55);
+    cursor: pointer;
+    font-size: 0.68rem;
+    padding: 1px 5px;
+    border-radius: 4px;
+    transition: color 0.15s;
+    white-space: nowrap;
+}
+
+.blind-unlink-btn:hover {
+    color: #f87171;
+}
+
+.blind-swap-btn:hover {
+    color: #2dd4bf;
+}
+
+/* Link button — visible on output hover */
+.blind-link-btn {
+    display: none;
+    background: rgba(45, 212, 191, 0.15);
+    border: 1px solid rgba(45, 212, 191, 0.4);
+    color: #2dd4bf;
+    border-radius: 6px;
+    padding: 2px 7px;
+    font-size: 0.68rem;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: background 0.15s;
+}
+
+.output-item:hover .blind-link-btn {
+    display: inline-block;
+}
+
+.blind-link-btn:hover {
+    background: rgba(45, 212, 191, 0.3);
+}
+
+/* Linking-mode source output */
+.output-item.blind-linking-source {
+    border-color: #2dd4bf !important;
+    box-shadow: 0 0 0 2px rgba(45, 212, 191, 0.3);
+}
+
+/* Linking-mode target outputs */
+.output-item.blind-linking-target {
+    border-color: rgba(45, 212, 191, 0.6) !important;
+    background: linear-gradient(135deg, rgba(45, 212, 191, 0.15) 0%, rgba(20, 184, 166, 0.15) 100%) !important;
+    cursor: pointer;
+}
+
+.output-item.blind-linking-target .blind-link-btn {
+    display: inline-block;
+}

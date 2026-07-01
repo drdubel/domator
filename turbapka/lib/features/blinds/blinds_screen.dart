@@ -20,7 +20,13 @@ class BlindsScreen extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        if (blinds.legacyBlinds.isNotEmpty) ...[
+          Text('Legacy Blinds', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 12),
+          _LegacyBlindsSection(blinds: blinds.legacyBlinds, onChangeEnd: blinds.setLegacyPosition),
+        ],
         if (blinds.pairs.isNotEmpty) ...[
+          const SizedBox(height: 8),
           Text('Blinds', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 12),
           for (final pair in blinds.pairs)
@@ -30,12 +36,6 @@ class BlindsScreen extends StatelessWidget {
               onDown: () => blinds.down(pair),
               onStop: () => blinds.stop(pair),
             ),
-        ],
-        if (blinds.legacyBlinds.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Text('Legacy Blinds', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 12),
-          _LegacyBlindsSection(blinds: blinds.legacyBlinds, onChangeEnd: blinds.setLegacyPosition),
         ],
       ],
     );

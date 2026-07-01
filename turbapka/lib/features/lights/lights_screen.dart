@@ -50,21 +50,101 @@ class _SectionCard extends StatelessWidget {
           children: [
             Text(section.name, style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 16),
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: outputs.length,
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3,
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 12,
-                childAspectRatio: 1,
-              ),
-              itemBuilder: (context, i) => _LightTile(output: outputs[i], onTap: () => onToggle(outputs[i])),
+            _FlexWrapGrid(
+              minTileWidth: 100,
+              spacing: 12,
+              children: [
+                for (final output in outputs) _LightTile(output: output, onTap: () => onToggle(output)),
+              ],
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Lays out square tiles in balanced rows, similar in spirit to the webapp's
+/// CSS `display: flex; flex-wrap: wrap` with `flex: 1 1 minTileWidth`: rows
+/// stretch their tiles to fill the full row width. Unlike plain flex-wrap
+/// (which greedily fills each row and leaves a sparse final row), items are
+/// distributed as evenly as possible across rows — e.g. 7 items at a max of
+/// 3 per row become [3, 2, 2], not [3, 3, 1] — so no row looks emptier than
+/// the others.
+class _FlexWrapGrid extends StatelessWidget {
+  final List<Widget> children;
+  final double minTileWidth;
+  final double spacing;
+
+  const _FlexWrapGrid({required this.children, required this.minTileWidth, required this.spacing});
+
+  @override
+  Widget build(BuildContext context) {
+    if (children.isEmpty) return const SizedBox.shrink();
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxWidth = constraints.maxWidth;
+        final maxPerRow = ((maxWidth + spacing) / (minTileWidth + spacing)).floor().clamp(1, children.length);
+        final rows = _balancedRows(children, maxPerRow);
+        // Fixed height for every row, based on the widest row (fewest items),
+        // so tile height never grows just because a row has wider tiles.
+        final tileHeight = (maxWidth - spacing * (maxPerRow - 1)) / maxPerRow;
+
+        return Column(
+          children: [
+            for (var i = 0; i < rows.length; i++) ...[
+              if (i > 0) SizedBox(height: spacing),
+              _TileRow(tiles: rows[i], spacing: spacing, tileHeight: tileHeight),
+            ],
+          ],
+        );
+      },
+    );
+  }
+
+  /// Splits [items] into the fewest rows that fit within [maxPerRow] each,
+  /// distributing the count across those rows as evenly as possible.
+  static List<List<Widget>> _balancedRows(List<Widget> items, int maxPerRow) {
+    final rowCount = (items.length / maxPerRow).ceil();
+    final base = items.length ~/ rowCount;
+    final remainder = items.length % rowCount;
+
+    final rows = <List<Widget>>[];
+    var index = 0;
+    for (var r = 0; r < rowCount; r++) {
+      // Distribute the remainder one-per-row so sizes differ by at most one.
+      final rowSize = base + (r < remainder ? 1 : 0);
+      rows.add(items.sublist(index, index + rowSize));
+      index += rowSize;
+    }
+
+    return rows;
+  }
+}
+
+class _TileRow extends StatelessWidget {
+  final List<Widget> tiles;
+  final double spacing;
+  final double tileHeight;
+
+  const _TileRow({required this.tiles, required this.spacing, required this.tileHeight});
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final tileWidth = (constraints.maxWidth - spacing * (tiles.length - 1)) / tiles.length;
+
+        return Row(
+          children: [
+            for (var i = 0; i < tiles.length; i++) ...[
+              if (i > 0) SizedBox(width: spacing),
+              SizedBox(width: tileWidth, height: tileHeight, child: tiles[i]),
+            ],
+          ],
+        );
+      },
     );
   }
 }

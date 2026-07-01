@@ -1,0 +1,31 @@
+authorized = ["YOUR_AUTHORIZED_EMAIL"]
+jwt_secret = "CHANGE_ME_TO_A_LONG_RANDOM_SECRET"
+session_secret = "CHANGE_ME_TO_A_LONG_RANDOM_SECRET"
+use_mqtt = true
+
+[mqtt]
+host = "mosquitto"
+port = 1883
+username = "turbacz"
+password = "turbacz"
+
+[oidc]
+client_id = "YOUR_CLIENT_ID"
+client_secret = "YOUR_CLIENT_SECRET"
+allow_insecure_http = false
+redirect_uri = "http://127.0.0.1:8000/auth"
+token_endpoint_auth_method = "client_secret_post"
+
+[psql]
+dbname = "turbacz"
+user = "turbacz"
+password = "turbacz"
+host = "postgres"
+port = 5432
+
+[server]
+host = "0.0.0.0"
+port = 8000
+
+[monitoring]
+metrics = "http://victoriametrics:8428"

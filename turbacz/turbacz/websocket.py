@@ -42,7 +42,7 @@ class ConnectionManager:
                     ConnectionResetError,
                 ) as err:
                     self.disconnect(connection)
-                    logger.warning(
+                    logger.debug(
                         "removing closed connection %s (%s)", connection, str(err)
                     )
 

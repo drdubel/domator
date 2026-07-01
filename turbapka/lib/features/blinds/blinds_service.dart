@@ -5,13 +5,16 @@ import 'blinds_models.dart';
 
 /// Talks to `/blinds/ws`, mirroring `static/scripts/blinds.js`'s protocol.
 ///
-/// Only the relay-blind-pair protocol is implemented; the legacy single-motor
-/// slider protocol (`{"blind": "r<N>", ...}`) has been superseded and is
-/// intentionally not supported here.
+/// Two independent blind systems share this one connection: relay blind pairs
+/// (typed messages) and legacy single-motor blinds (untyped messages,
+/// identified by a "blind" key instead of a "type" key).
 class BlindsService extends ChangeNotifier {
   final WsClient _ws;
 
   List<BlindPair> pairs = [];
+  final List<LegacyBlind> legacyBlinds = [
+    for (final (id, name) in legacyBlindDefinitions) LegacyBlind(id: id, name: name),
+  ];
 
   BlindsService(String token) : _ws = WsClient(path: '/blinds/ws', token: token) {
     _ws.messages.listen(_handleMessage);
@@ -19,12 +22,37 @@ class BlindsService extends ChangeNotifier {
   }
 
   void _handleMessage(Map<String, dynamic> msg) {
-    switch (msg['type']) {
-      case 'relay_blinds':
-        _applyRelayBlinds(msg);
-      case 'light_state':
-        _applyLightState(msg);
+    if (msg.containsKey('type')) {
+      switch (msg['type']) {
+        case 'relay_blinds':
+          _applyRelayBlinds(msg);
+        case 'light_state':
+          _applyLightState(msg);
+      }
+      return;
     }
+
+    if (msg.containsKey('blind')) {
+      _applyLegacyPosition(msg);
+    }
+  }
+
+  void _applyLegacyPosition(Map<String, dynamic> msg) {
+    final id = msg['blind'] as String;
+    // The backend sends this as a numeric string (see broker.py's
+    // handle_blind_position), not a JSON number, so parse leniently.
+    final position = int.tryParse('${msg['current_position']}');
+    if (position == null) return;
+
+    for (final blind in legacyBlinds) {
+      if (blind.id == id) blind.position = position;
+    }
+
+    notifyListeners();
+  }
+
+  void setLegacyPosition(LegacyBlind blind, int position) {
+    _ws.send({'blind': blind.id, 'position': position});
   }
 
   void _applyRelayBlinds(Map<String, dynamic> msg) {

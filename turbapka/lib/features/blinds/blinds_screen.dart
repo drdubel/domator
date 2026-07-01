@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/theme.dart';
 import 'blinds_models.dart';
 import 'blinds_service.dart';
 
@@ -11,22 +13,31 @@ class BlindsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final blinds = context.watch<BlindsService>();
 
-    if (blinds.pairs.isEmpty) {
+    if (blinds.pairs.isEmpty && blinds.legacyBlinds.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    return ListView.builder(
-      padding: const EdgeInsets.all(12),
-      itemCount: blinds.pairs.length,
-      itemBuilder: (context, index) {
-        final pair = blinds.pairs[index];
-        return _BlindCard(
-          pair: pair,
-          onUp: () => blinds.up(pair),
-          onDown: () => blinds.down(pair),
-          onStop: () => blinds.stop(pair),
-        );
-      },
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        if (blinds.pairs.isNotEmpty) ...[
+          Text('Blinds', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 12),
+          for (final pair in blinds.pairs)
+            _BlindCard(
+              pair: pair,
+              onUp: () => blinds.up(pair),
+              onDown: () => blinds.down(pair),
+              onStop: () => blinds.stop(pair),
+            ),
+        ],
+        if (blinds.legacyBlinds.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text('Legacy Blinds', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 12),
+          _LegacyBlindsSection(blinds: blinds.legacyBlinds, onChangeEnd: blinds.setLegacyPosition),
+        ],
+      ],
     );
   }
 }
@@ -46,36 +57,69 @@ class _BlindCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: GlassCard(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(pair.name, style: Theme.of(context).textTheme.titleMedium),
-            Text(pair.relayName, style: Theme.of(context).textTheme.bodySmall),
-            const SizedBox(height: 8),
+            Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    gradient: const LinearGradient(
+                      colors: [AppColors.primary, AppColors.accentPink],
+                    ),
+                  ),
+                  child: const Icon(Icons.blinds_closed_rounded, color: Colors.white, size: 20),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(pair.name, style: Theme.of(context).textTheme.titleMedium),
+                      Text(pair.relayName, style: Theme.of(context).textTheme.bodySmall),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                _ControlButton(
-                  icon: Icons.arrow_upward,
-                  label: 'Up',
-                  active: pair.motionState == BlindMotionState.movingUp,
-                  onPressed: onUp,
+                Expanded(
+                  child: GradientActionButton(
+                    kind: ActionButtonKind.up,
+                    icon: Icons.arrow_upward,
+                    label: 'Up',
+                    active: pair.motionState == BlindMotionState.movingUp,
+                    onPressed: onUp,
+                  ),
                 ),
-                _ControlButton(
-                  icon: Icons.stop,
-                  label: 'Stop',
-                  active: pair.motionState == BlindMotionState.stopped,
-                  onPressed: onStop,
+                const SizedBox(width: 8),
+                Expanded(
+                  child: GradientActionButton(
+                    kind: ActionButtonKind.stop,
+                    icon: Icons.stop,
+                    label: 'Stop',
+                    active: pair.motionState == BlindMotionState.stopped,
+                    onPressed: onStop,
+                  ),
                 ),
-                _ControlButton(
-                  icon: Icons.arrow_downward,
-                  label: 'Down',
-                  active: pair.motionState == BlindMotionState.movingDown,
-                  onPressed: onDown,
+                const SizedBox(width: 8),
+                Expanded(
+                  child: GradientActionButton(
+                    kind: ActionButtonKind.down,
+                    icon: Icons.arrow_downward,
+                    label: 'Down',
+                    active: pair.motionState == BlindMotionState.movingDown,
+                    onPressed: onDown,
+                  ),
                 ),
               ],
             ),
@@ -86,30 +130,88 @@ class _BlindCard extends StatelessWidget {
   }
 }
 
-class _ControlButton extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final bool active;
-  final VoidCallback onPressed;
+class _LegacyBlindsSection extends StatelessWidget {
+  final List<LegacyBlind> blinds;
+  final void Function(LegacyBlind, int) onChangeEnd;
 
-  const _ControlButton({
-    required this.icon,
-    required this.label,
-    required this.active,
-    required this.onPressed,
-  });
+  const _LegacyBlindsSection({required this.blinds, required this.onChangeEnd});
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        IconButton.filledTonal(
-          isSelected: active,
-          icon: Icon(icon),
-          onPressed: onPressed,
+    return GlassCard(
+      child: Wrap(
+        spacing: 4,
+        runSpacing: 16,
+        alignment: WrapAlignment.spaceEvenly,
+        children: [
+          for (final blind in blinds)
+            SizedBox(
+              width: 76,
+              child: Column(
+                children: [
+                  _VerticalPositionSlider(
+                    blind: blind,
+                    onChangeEnd: (position) => onChangeEnd(blind, position),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    blind.name,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.manrope(
+                      color: AppColors.textSecondary,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Vertical drag slider for a legacy blind's position: 0 at the top, growing
+/// downward. Sends only on drag-release (not per drag-tick).
+class _VerticalPositionSlider extends StatefulWidget {
+  final LegacyBlind blind;
+  final void Function(int position) onChangeEnd;
+
+  const _VerticalPositionSlider({required this.blind, required this.onChangeEnd});
+
+  @override
+  State<_VerticalPositionSlider> createState() => _VerticalPositionSliderState();
+}
+
+class _VerticalPositionSliderState extends State<_VerticalPositionSlider> {
+  // Local drag value while actively dragging, so the slider doesn't jump if a
+  // broadcast for another blind arrives mid-drag. Null = follow server state.
+  double? _dragValue;
+
+  @override
+  Widget build(BuildContext context) {
+    final backendPosition = widget.blind.position ?? 0;
+    final sliderValue = _dragValue ?? backendPosition.toDouble();
+
+    return SizedBox(
+      height: 180,
+      width: 32,
+      child: RotatedBox(
+        quarterTurns: 1,
+        child: Slider(
+          value: sliderValue,
+          min: 0,
+          max: 999,
+          onChanged: (v) => setState(() => _dragValue = v),
+          onChangeEnd: (v) {
+            widget.onChangeEnd(v.round());
+            setState(() => _dragValue = null);
+          },
         ),
-        Text(label, style: Theme.of(context).textTheme.labelSmall),
-      ],
+      ),
     );
   }
 }

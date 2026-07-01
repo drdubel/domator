@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import 'core/auth/auth_gate.dart';
 import 'core/auth/auth_service.dart';
+import 'core/theme.dart';
 import 'shared/widgets/home_screen.dart';
 
 void main() {
@@ -31,7 +32,9 @@ class _TurbaczAppState extends State<TurbaczApp> {
       value: _authService,
       child: MaterialApp(
         title: 'Turbacz',
-        theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo), useMaterial3: true),
+        theme: buildAppTheme(),
+        themeMode: ThemeMode.dark,
+        builder: (context, child) => AmbientBackground(child: child!),
         home: const AuthGate(home: HomeScreen()),
       ),
     );

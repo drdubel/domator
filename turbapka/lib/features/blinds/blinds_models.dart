@@ -33,3 +33,27 @@ class BlindPair {
 }
 
 enum BlindMotionState { unknown, stopped, movingUp, movingDown }
+
+/// A legacy single-motor blind, addressed by a hardcoded id ("r1".."r7").
+///
+/// Mirrors the webapp's hardcoded list in static/blinds.html — the backend
+/// has no discovery API for these names/ids, so they are hardcoded here too.
+class LegacyBlind {
+  final String id;
+  final String name;
+
+  /// Raw backend position, 0-999. Null until the first status update arrives.
+  int? position;
+
+  LegacyBlind({required this.id, required this.name, this.position});
+}
+
+const legacyBlindDefinitions = <(String id, String name)>[
+  ('r1', 'Sypialnia R'),
+  ('r2', 'Salon 1'),
+  ('r3', 'Salon 2'),
+  ('r4', 'Salon 3'),
+  ('r5', 'Salon 4'),
+  ('r6', 'Sypialnia G'),
+  ('r7', 'Sypialnia Zo'),
+];

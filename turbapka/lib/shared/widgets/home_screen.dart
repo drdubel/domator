@@ -36,6 +36,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ChangeNotifierProvider(create: (_) => HeatingService(token, HeatingHistoryApi(ApiClient(token)))),
       ],
       child: Scaffold(
+        backgroundColor: Colors.transparent,
         appBar: AppBar(title: Text(_titleFor(_index))),
         body: IndexedStack(
           index: _index,
@@ -45,9 +46,9 @@ class _HomeScreenState extends State<HomeScreen> {
           selectedIndex: _index,
           onDestinationSelected: (i) => setState(() => _index = i),
           destinations: const [
-            NavigationDestination(icon: Icon(Icons.lightbulb_outline), label: 'Lights'),
-            NavigationDestination(icon: Icon(Icons.blinds), label: 'Blinds'),
-            NavigationDestination(icon: Icon(Icons.thermostat), label: 'Heating'),
+            NavigationDestination(icon: Icon(Icons.wb_incandescent_outlined), label: 'Lights'),
+            NavigationDestination(icon: Icon(Icons.blinds_closed_outlined), label: 'Blinds'),
+            NavigationDestination(icon: Icon(Icons.device_thermostat_outlined), label: 'Heating'),
           ],
         ),
       ),

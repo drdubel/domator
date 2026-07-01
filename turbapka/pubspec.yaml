@@ -12,6 +12,7 @@ dependencies:
     sdk: flutter
 
   cupertino_icons: ^1.0.8
+  google_fonts: ^6.2.1
   provider: ^6.1.2
   web_socket_channel: ^3.0.1
   http: ^1.2.2
@@ -24,6 +25,14 @@ dev_dependencies:
     sdk: flutter
 
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.3
 
 flutter:
   uses-material-design: true
+
+flutter_launcher_icons:
+  android: true
+  image_path: "../turbacz/static/favicon.ico"
+  min_sdk_android: 21
+  adaptive_icon_background: "#0B0F1A"
+  adaptive_icon_foreground: "../turbacz/static/favicon.ico"

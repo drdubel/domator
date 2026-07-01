@@ -51,8 +51,8 @@ class _SectionCard extends StatelessWidget {
             Text(section.name, style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 16),
             _FlexWrapGrid(
-              minTileWidth: 100,
-              spacing: 12,
+              minTileWidth: 76,
+              spacing: 10,
               children: [
                 for (final output in outputs) _LightTile(output: output, onTap: () => onToggle(output)),
               ],
@@ -183,16 +183,16 @@ class _LightTile extends StatelessWidget {
                 : null,
           ),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 4),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Icon(
                   isOn ? Icons.wb_incandescent_rounded : Icons.wb_incandescent_outlined,
                   color: isOn ? Colors.white : AppColors.textMuted,
-                  size: 26,
+                  size: 24,
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 7),
                 Text(
                   output.name,
                   textAlign: TextAlign.center,
@@ -201,7 +201,7 @@ class _LightTile extends StatelessWidget {
                   style: GoogleFonts.manrope(
                     color: isOn ? Colors.white : AppColors.textSecondary,
                     fontWeight: FontWeight.w700,
-                    fontSize: 11,
+                    fontSize: 10,
                   ),
                 ),
               ],

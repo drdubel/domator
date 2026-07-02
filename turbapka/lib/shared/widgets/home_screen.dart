@@ -10,6 +10,7 @@ import '../../features/heating/heating_screen.dart';
 import '../../features/heating/heating_service.dart';
 import '../../features/lights/lights_screen.dart';
 import '../../features/lights/lights_service.dart';
+import 'ui_scale_sheet.dart';
 
 /// Authenticated home: bottom-navigation between Lights, Blinds and Heating.
 ///
@@ -24,6 +25,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _index = 0;
+  bool _reorderMode = false;
 
   @override
   Widget build(BuildContext context) {
@@ -37,10 +39,29 @@ class _HomeScreenState extends State<HomeScreen> {
       ],
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        appBar: AppBar(title: Text(_titleFor(_index))),
+        appBar: AppBar(
+          title: Text(_titleFor(_index)),
+          actions: [
+            if (_index == 0)
+              IconButton(
+                icon: Icon(_reorderMode ? Icons.check : Icons.edit_outlined),
+                tooltip: _reorderMode ? 'Done reordering' : 'Reorder',
+                onPressed: () => setState(() => _reorderMode = !_reorderMode),
+              ),
+            IconButton(
+              icon: const Icon(Icons.tune),
+              tooltip: 'Interface size',
+              onPressed: () => showUiScaleSheet(context),
+            ),
+          ],
+        ),
         body: IndexedStack(
           index: _index,
-          children: const [LightsScreen(), BlindsScreen(), HeatingScreen()],
+          children: [
+            LightsScreen(reorderMode: _reorderMode),
+            const BlindsScreen(),
+            const HeatingScreen(),
+          ],
         ),
         bottomNavigationBar: NavigationBar(
           selectedIndex: _index,

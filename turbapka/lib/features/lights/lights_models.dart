@@ -5,7 +5,8 @@ class LightOutput {
   final int relayId;
   final String outputId;
   final String name;
-  final int sectionId;
+  int sectionId;
+  int outputIdx;
   bool isOn;
 
   LightOutput({
@@ -13,6 +14,7 @@ class LightOutput {
     required this.outputId,
     required this.name,
     required this.sectionId,
+    this.outputIdx = 0,
     this.isOn = false,
   });
 

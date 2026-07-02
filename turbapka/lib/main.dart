@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'core/auth/auth_gate.dart';
 import 'core/auth/auth_service.dart';
 import 'core/theme.dart';
+import 'core/ui_scale/ui_scale_service.dart';
 import 'shared/widgets/home_screen.dart';
 
 void main() {
@@ -19,22 +20,33 @@ class TurbaczApp extends StatefulWidget {
 
 class _TurbaczAppState extends State<TurbaczApp> {
   final _authService = AuthService();
+  final _uiScaleService = UiScaleService();
 
   @override
   void initState() {
     super.initState();
     _authService.loadStoredToken();
+    _uiScaleService.load();
   }
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider.value(
-      value: _authService,
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider.value(value: _authService),
+        ChangeNotifierProvider.value(value: _uiScaleService),
+      ],
       child: MaterialApp(
         title: 'Turbacz',
         theme: buildAppTheme(),
         themeMode: ThemeMode.dark,
-        builder: (context, child) => AmbientBackground(child: child!),
+        builder: (context, child) {
+          final uiScale = context.watch<UiScaleService>().scale;
+          return MediaQuery(
+            data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(uiScale)),
+            child: AmbientBackground(child: child!),
+          );
+        },
         home: const AuthGate(home: HomeScreen()),
       ),
     );

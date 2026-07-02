@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
+
+import 'ui_scale/ui_scale_service.dart';
 
 /// Dark glassmorphism dashboard palette: deep-gray backgrounds, vibrant
 /// gradient accents, translucent "glass" surfaces.
@@ -186,14 +189,16 @@ class AmbientBackground extends StatelessWidget {
 /// Translucent "glass" container: blurred backdrop, subtle border, soft glow.
 class GlassCard extends StatelessWidget {
   final Widget child;
-  final EdgeInsetsGeometry padding;
+  final EdgeInsetsGeometry? padding;
 
-  const GlassCard({super.key, required this.child, this.padding = const EdgeInsets.all(18)});
+  const GlassCard({super.key, required this.child, this.padding});
 
   @override
   Widget build(BuildContext context) {
+    final scale = context.watch<UiScaleService>().scale;
+
     return Container(
-      padding: padding,
+      padding: padding ?? EdgeInsets.all(18 * scale),
       decoration: BoxDecoration(
         color: AppColors.glassBg,
         borderRadius: BorderRadius.circular(24),
@@ -242,6 +247,7 @@ class GradientActionButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (start, end) = active ? _activeGradient : _inactiveGradient;
+    final scale = context.watch<UiScaleService>().scale;
 
     return Opacity(
       opacity: active ? 1.0 : AppColors.inactiveOpacity,
@@ -264,7 +270,7 @@ class GradientActionButton extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(icon, color: Colors.white, size: 20),
+                Icon(icon, color: Colors.white, size: 20 * scale),
                 const SizedBox(height: 4),
                 Text(
                   label,

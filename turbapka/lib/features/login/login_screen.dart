@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/auth/auth_service.dart';
 import '../../core/theme.dart';
+import '../server_setup/server_setup_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -15,6 +16,14 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   bool _loading = false;
   String? _error;
+
+  void _changeServer() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ServerSetupScreen(onConfigured: () => Navigator.of(context).pop()),
+      ),
+    );
+  }
 
   Future<void> _login() async {
     setState(() {
@@ -74,6 +83,11 @@ class _LoginScreenState extends State<LoginScreen> {
                       ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                       : const Icon(Icons.login),
                   label: const Text('Sign in with Google'),
+                ),
+                const SizedBox(height: 12),
+                TextButton(
+                  onPressed: _loading ? null : _changeServer,
+                  child: const Text('Change server'),
                 ),
               ],
             ),

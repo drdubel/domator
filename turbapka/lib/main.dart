@@ -3,11 +3,14 @@ import 'package:provider/provider.dart';
 
 import 'core/auth/auth_gate.dart';
 import 'core/auth/auth_service.dart';
+import 'core/config.dart';
 import 'core/theme.dart';
 import 'core/ui_scale/ui_scale_service.dart';
 import 'shared/widgets/home_screen.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await AppConfig.load();
   runApp(const TurbaczApp());
 }
 

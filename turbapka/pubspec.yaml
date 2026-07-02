@@ -2,7 +2,7 @@ name: turbapka
 description: "Android companion app for Turbacz home automation."
 publish_to: 'none'
 
-version: 1.0.0+1
+version: 1.0.1+2
 
 environment:
   sdk: ^3.12.2

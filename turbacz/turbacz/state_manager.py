@@ -10,7 +10,7 @@ class StateManager:
         self._online_relays: dict[int, int] = {}
         self._online_switches: dict[int, int] = {}
         self._devices_rssi: dict[int, int] = {}
-        self._firmware_versions: dict[int, str] = {}
+        self._firmware_versions: dict[int, int] = {}
         self._up_to_date_devices: dict[int, bool] = {}
         self._up_to_date_firmware_versions: dict[str, int] = {}
         self._ping_times: dict[int, list[int]] = {}
@@ -74,12 +74,12 @@ class StateManager:
         self._ping_times[device_id].append(ping_time)
         self._ping_times[device_id] = self._ping_times[device_id][-5:]
 
-    def get_device_ping(self, device_id: int) -> int | None:
+    def get_device_ping(self, device_id: int) -> float | None:
         if device_id in self._ping_times and self._ping_times[device_id]:
             return sum(self._ping_times[device_id]) / len(self._ping_times[device_id])
         return None
 
-    def get_all_device_pings(self) -> dict[int, int]:
+    def get_all_device_pings(self) -> dict[int, float | None]:
         return {device_id: self.get_device_ping(device_id) for device_id in self._ping_times}
 
     def get_device_rssi(self, device_id: int) -> int | None:

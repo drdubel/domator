@@ -1,7 +1,7 @@
 from typing import Optional
 
 from pydantic import BaseModel
-from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, TomlConfigSettingsSource, SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict, TomlConfigSettingsSource
 
 
 class OIDCSettings(BaseModel):

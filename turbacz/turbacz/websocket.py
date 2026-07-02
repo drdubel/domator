@@ -26,9 +26,7 @@ class ConnectionManager:
         try:
             await websocket.send_json(message)
         except (WebSocketDisconnect, RuntimeError, ConnectionResetError) as err:
-            logger.warning(
-                "Error sending personal message to %s: %s", websocket, err.args[0]
-            )
+            logger.warning("Error sending personal message to %s: %s", websocket, err.args[0])
 
     async def broadcast(self, message: Any, app: Any):
         for connection in tuple(self.active_connections):
@@ -42,9 +40,7 @@ class ConnectionManager:
                     ConnectionResetError,
                 ) as err:
                     self.disconnect(connection)
-                    logger.warning(
-                        "removing closed connection %s (%s)", connection, str(err)
-                    )
+                    logger.warning("removing closed connection %s (%s)", connection, str(err))
 
 
 ws_manager = ConnectionManager()

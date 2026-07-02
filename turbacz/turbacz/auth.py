@@ -17,10 +17,7 @@ JWT_SECRET = config.jwt_secret
 if config.oidc.allow_insecure_http:
     os.environ["AUTHLIB_INSECURE_TRANSPORT"] = "1"
 if not JWT_SECRET:
-    raise RuntimeError(
-        "Missing jwt_secret in turbacz.toml. "
-        "Set jwt_secret to a stable value before starting the app."
-    )
+    raise RuntimeError("Missing jwt_secret in turbacz.toml. Set jwt_secret to a stable value before starting the app.")
 
 oauth = OAuth()
 register_kwargs = {

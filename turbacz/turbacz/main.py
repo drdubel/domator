@@ -146,7 +146,6 @@ async def get_temperatures(
     start: int = Query(..., ge=0),
     end: int = Query(..., ge=0),
     step: int = Query(..., gt=0, le=3600),
-    user: dict = Depends(_require_authenticated_user),
 ):
     async with httpx.AsyncClient() as client:
         response1 = await client.get(

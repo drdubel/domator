@@ -469,9 +469,7 @@ class ConnectionManager:
     def get_relay_blind_pairs_with_names(self) -> list:
         """Return blind pairs enriched with relay/output names for the blinds UI."""
         with self.conn.cursor() as cur:
-            cur.execute(
-                "SELECT relay_id, output_id_power, output_id_direction, name FROM blind_pairs;"
-            )
+            cur.execute("SELECT relay_id, output_id_power, output_id_direction, name FROM blind_pairs;")
             rows = cur.fetchall()
 
         relays = self.get_relays()
@@ -489,15 +487,17 @@ class ConnectionManager:
                     return meta[0]
                 return meta or oid
 
-            result.append({
-                "relay_id": relay_id_int,
-                "name": custom_name or relay_name,
-                "relay_name": relay_name,
-                "power_id": power_id,
-                "power_name": _output_name(power_id),
-                "direction_id": dir_id,
-                "direction_name": _output_name(dir_id),
-            })
+            result.append(
+                {
+                    "relay_id": relay_id_int,
+                    "name": custom_name or relay_name,
+                    "relay_name": relay_name,
+                    "power_id": power_id,
+                    "power_name": _output_name(power_id),
+                    "direction_id": dir_id,
+                    "direction_name": _output_name(dir_id),
+                }
+            )
 
         return result
 
@@ -981,6 +981,7 @@ def remove_switch(
 @connection_router.post("/remove_button")
 def remove_button(
     request: Request,
+    switch_id: int = Form(...),
     button_id: str = Form(...),
     access_token: Optional[str] = Cookie(None),
 ):
@@ -989,7 +990,7 @@ def remove_button(
     if not user:
         return {"error": "Unauthorized"}
 
-    connection_manager.remove_button(button_id)
+    connection_manager.remove_button(switch_id, button_id)
     return {"status": "Button removed"}
 
 

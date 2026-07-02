@@ -17,10 +17,7 @@ JWT_SECRET = config.jwt_secret
 if config.oidc.allow_insecure_http:
     os.environ["AUTHLIB_INSECURE_TRANSPORT"] = "1"
 if not JWT_SECRET:
-    raise RuntimeError(
-        "Missing jwt_secret in turbacz.toml. "
-        "Set jwt_secret to a stable value before starting the app."
-    )
+    raise RuntimeError("Missing jwt_secret in turbacz.toml. Set jwt_secret to a stable value before starting the app.")
 
 oauth = OAuth()
 register_kwargs = {
@@ -62,8 +59,15 @@ def get_current_user(access_token: str | None) -> dict | None:
     return verify_jwt(access_token)
 
 
+def bearer_token_from_header(authorization: str | None) -> str | None:
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+
+    return authorization.removeprefix("Bearer ")
+
+
 async def websocket_auth(websocket: WebSocket) -> dict | None:
-    token = websocket.cookies.get("access_token")
+    token = websocket.cookies.get("access_token") or websocket.query_params.get("token")
 
     if not token:
         return None
@@ -76,7 +80,9 @@ async def websocket_auth(websocket: WebSocket) -> dict | None:
 
 
 @router.get("/login")
-async def login(request: Request):
+async def login(request: Request, client: Optional[str] = None):
+    request.session["mobile_login"] = client == "mobile"
+
     redirect_uri = config.oidc.redirect_uri or str(request.url_for("auth"))
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
@@ -106,6 +112,7 @@ async def auth(request: Request):
             return HTMLResponse(f"<h1>{_format_oauth_error(error)}</h1>")
 
     user = token.get("userinfo")
+    is_mobile_login = request.session.pop("mobile_login", False)
 
     if user and user["email"] in config.authorized:
         jwt_token = create_jwt(
@@ -114,6 +121,9 @@ async def auth(request: Request):
                 "name": user.get("name"),
             }
         )
+
+        if is_mobile_login:
+            return RedirectResponse(url=f"turbacz://auth-callback?token={jwt_token}")
 
         response = RedirectResponse(url="/auto")
         response.set_cookie(
@@ -127,6 +137,9 @@ async def auth(request: Request):
         )
 
         return response
+
+    if is_mobile_login:
+        return RedirectResponse(url="turbacz://auth-callback?error=unauthorized")
 
     return RedirectResponse(url="/")
 

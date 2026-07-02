@@ -1,0 +1,40 @@
+name: Build Turbapka APK
+
+on:
+  push:
+    tags:
+      - "turbapka-v*"
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: turbapka
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - run: flutter pub get
+
+      - run: flutter build apk --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: turbapka-release-apk
+          path: turbapka/build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/turbapka-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: turbapka/build/app/outputs/flutter-apk/app-release.apk

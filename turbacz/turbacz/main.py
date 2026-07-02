@@ -10,7 +10,7 @@ import httpx
 import sentry_sdk
 from aioprometheus.asgi.middleware import MetricsMiddleware
 from aioprometheus.asgi.starlette import metrics
-from fastapi import Cookie, Depends, FastAPI, File, HTTPException, Query, Response, UploadFile, WebSocket
+from fastapi import Cookie, Depends, FastAPI, File, Header, HTTPException, Query, Response, UploadFile, WebSocket
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
@@ -69,8 +69,12 @@ app.add_middleware(SessionMiddleware, secret_key=session_secret)
 app.add_middleware(MetricsMiddleware)
 
 
-def _require_authenticated_user(access_token: Optional[str] = Cookie(None)):
-    user = auth.get_current_user(access_token)
+def _require_authenticated_user(
+    access_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+):
+    token = access_token or auth.bearer_token_from_header(authorization)
+    user = auth.get_current_user(token)
     if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
@@ -142,7 +146,6 @@ async def get_temperatures(
     start: int = Query(..., ge=0),
     end: int = Query(..., ge=0),
     step: int = Query(..., gt=0, le=3600),
-    user: dict = Depends(_require_authenticated_user),
 ):
     async with httpx.AsyncClient() as client:
         response1 = await client.get(

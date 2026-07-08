@@ -1,66 +1,65 @@
 services:
   turbacz:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: turbacz
-    depends_on:
-      postgres:
-        condition: service_healthy
-      mosquitto:
-        condition: service_started
+    build: .
     ports:
       - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_started
+      mosquitto:
+        condition: service_started
+      victoriametrics:
+        condition: service_started
+    environment:
+      - TURBACZ_CONFIG_PATH=/app/turbacz.toml
     volumes:
-      - ./turbacz.toml:/app/turbacz.toml:ro
+      - ./turbacz.toml:/app/turbacz.toml
     restart: unless-stopped
 
   postgres:
-    image: postgres:17-alpine
-    container_name: turbacz-postgres
+    image: postgres:16
     environment:
       POSTGRES_DB: turbacz
       POSTGRES_USER: turbacz
       POSTGRES_PASSWORD: turbacz
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U turbacz -d turbacz"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
     restart: unless-stopped
 
   mosquitto:
-    image: eclipse-mosquitto:2
-    container_name: turbacz-mosquitto
+    image: eclipse-mosquitto:2.0
     ports:
       - "1883:1883"
+      - "9883:9883"
     volumes:
-      - ./docker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - mosquitto_data:/mosquitto/data
     restart: unless-stopped
 
   grafana:
-    image: grafana/grafana:11.6.1
-    container_name: turbacz-grafana
+    image: grafana/grafana:latest
     ports:
       - "3000:3000"
+    depends_on:
+      victoriametrics:
+        condition: service_started
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_USER=admin
     volumes:
       - grafana_data:/var/lib/grafana
     restart: unless-stopped
 
   victoriametrics:
-    image: victoriametrics/victoria-metrics:v1.129.1
-    container_name: turbacz-victoriametrics
+    image: victoriametrics/victoria-metrics:latest
     ports:
       - "8428:8428"
-    command:
-      - "-storageDataPath=/victoria-metrics-data"
     volumes:
-      - victoriametrics_data:/victoria-metrics-data
+      - victoriametrics_data:/victoriametrics_data
     restart: unless-stopped
 
 volumes:
   postgres_data:
+  mosquitto_data:
   grafana_data:
   victoriametrics_data:

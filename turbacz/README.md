@@ -112,8 +112,22 @@ mosquitto -h
 
 ### Docker setup (app + PostgreSQL + MQTT + Grafana + VictoriaMetrics)
 
-From `turbacz` directory:
+The recommended way to run the entire system is through the unified Docker setup:
 
+1. Run the project setup script:
+   ```bash
+   cd ..
+   ./setup.sh
+   ```
+
+2. Follow the prompts to enter your authorized email
+
+3. Start stack:
+   ```bash
+   docker compose up --build
+   ```
+
+Alternatively, from `turbacz` directory (deprecated approach):
 1. Copy sample config:
 ```bash
 cp turbacz.toml.example turbacz.toml
@@ -123,12 +137,6 @@ cp turbacz.toml.example turbacz.toml
 3. Start stack:
 ```bash
 docker compose up --build
-```
-4. (Optional, if binding to host from Docker) set:
-```toml
-[server]
-host = "0.0.0.0"
-port = 8000
 ```
 
 This starts:

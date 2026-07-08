@@ -50,3 +50,28 @@ Most day-to-day work happens in one of two places:
 Firmware changes are scoped to the relevant subdirectory under
 [uc/](uc/) or [higromaramu/](higromaramu/), each with its own
 `platformio.ini`.
+
+## Docker Setup (One-Command Deployment)
+
+You can now run the entire Domator system with a single command:
+
+1. Navigate to the turbacz directory:
+   ```bash
+   cd turbacz
+   ```
+
+2. Run the setup script:
+   ```bash
+   ./setup.sh
+   ```
+
+3. Follow the prompts to enter your authorized email address
+
+4. Start the system:
+   ```bash
+   docker compose up
+   ```
+
+This will launch all services (backend, PostgreSQL, MQTT, Grafana, VictoriaMetrics) with a single command.
+
+The system will be accessible at http://localhost:8000

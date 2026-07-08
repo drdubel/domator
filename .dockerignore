@@ -1,0 +1,11 @@
+.DS_Store
+.git
+.gitignore
+README.md
+*.md
+.env
+*.toml
+__pycache__
+*.pyc
+__pycache__
+*.egg-info

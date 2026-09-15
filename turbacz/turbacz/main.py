@@ -599,7 +599,12 @@ def start():
 
     logging.basicConfig(level=logging.INFO)
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    uvicorn.run(app, host=config.server.host, port=config.server.port)
+    uvicorn.run(
+        app,
+        host=config.server.host,
+        port=config.server.port,
+        forwarded_allow_ips=config.server.forwarded_allow_ips,
+    )
 
 
 if __name__ == "__main__":

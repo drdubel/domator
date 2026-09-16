@@ -26,6 +26,10 @@ port = 5432
 [server]
 host = "0.0.0.0"
 port = 8000
+# Set when running behind a reverse proxy, to the proxy's source IP as seen by
+# this container, so X-Forwarded-Proto/For are trusted. "*" trusts any peer --
+# only safe when nothing but the proxy can reach this port.
+# forwarded_allow_ips = "*"
 
 [monitoring]
 metrics = "http://victoriametrics:8428"

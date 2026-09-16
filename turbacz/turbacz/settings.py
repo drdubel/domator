@@ -24,6 +24,7 @@ class MQTTServerSettings(BaseModel):
 class ServerSettings(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8000
+    forwarded_allow_ips: Optional[str] = None
 
 
 class PSQLSettings(BaseModel):

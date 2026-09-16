@@ -48,6 +48,7 @@ class CustomRequestSizeMiddleware(BaseHTTPMiddleware):
 
 
 MAX_REQUEST_SIZE = 10_000_000
+METRICS_TIMEOUT = 5.0
 
 if config.monitoring.sentry_dsn is not None:
     sentry_sdk.init(
@@ -147,26 +148,31 @@ async def get_temperatures(
     end: int = Query(..., ge=0),
     step: int = Query(..., gt=0, le=3600),
 ):
-    async with httpx.AsyncClient() as client:
-        response1 = await client.get(
-            f"{config.monitoring.metrics}/api/v1/query_range",
-            params={
-                "start": start,
-                "end": end,
-                "query": "water_temperature",
-                "step": step,
-            },
-        )
+    try:
+        async with httpx.AsyncClient(timeout=METRICS_TIMEOUT) as client:
+            response1 = await client.get(
+                f"{config.monitoring.metrics}/api/v1/query_range",
+                params={
+                    "start": start,
+                    "end": end,
+                    "query": "water_temperature",
+                    "step": step,
+                },
+            )
 
-        response2 = await client.get(
-            f"{config.monitoring.metrics}/api/v1/query_range",
-            params={
-                "start": start,
-                "end": end,
-                "query": "pid_target",
-                "step": step,
-            },
-        )
+            response2 = await client.get(
+                f"{config.monitoring.metrics}/api/v1/query_range",
+                params={
+                    "start": start,
+                    "end": end,
+                    "query": "pid_target",
+                    "step": step,
+                },
+            )
+
+    except httpx.HTTPError as e:
+        logger.warning("Metrics backend unreachable, returning empty temperature series: %s", e)
+        return []
 
     if response1.status_code != 200 or response2.status_code != 200:
         return "connection not working"

@@ -20,4 +20,3 @@ connections.json
 *.bin
 *.egg-info
 turbacz.toml
-.DS_STORE

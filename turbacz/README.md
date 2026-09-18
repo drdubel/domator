@@ -92,12 +92,38 @@ sudo -u postgres psql -c "CREATE DATABASE turbacz OWNER turbacz;"
 ```
 3. Ensure your `turbacz.toml` `[psql]` section points to this database.
 
+### Firmware / OTA
+
+Uploaded OTA images are **not** public files. They embed the WiFi password and
+the MQTT credentials that are compiled into the firmware, so serving them from
+`static/` would publish those credentials to anyone who guessed the URL.
+
+- Upload: `POST /upload/{switch,relay}`, logged-in session only. The image must
+  start with the ESP application magic byte (`0xE9`); anything else is rejected.
+- Download: `GET /firmware/{switch,relay}.bin`, which requires either a
+  logged-in session or the `X-Firmware-Token` header matching
+  `[firmware].token`.
+- Images live in `[firmware].directory` (default `firmware/`, a Docker volume),
+  never under `static/`. On startup the app moves any image left behind by an
+  older version out of `static/data/` automatically.
+
+Set `[firmware].token` in `turbacz.toml` and the same value as
+`CONFIG_OTA_TOKEN` in `uc/buttonsMeshIDF` (`idf.py menuconfig` → Domator Mesh).
+`setup.sh` generates the token and prints it. An empty token blocks device
+downloads entirely rather than allowing all of them.
+
+> Because these credentials are compiled into the image, anyone who obtains a
+> firmware binary obtains the WiFi and MQTT passwords. Treat a leaked image as
+> a full credential compromise: rotate the WiFi password, the mesh AP password
+> and the broker passwords, then reflash.
+
 ### Required components checklist
 
 - [ ] Python 3.14+
 - [ ] uv
 - [ ] `turbacz.toml` with filled `authorized`, `jwt_secret`, `session_secret`
 - [ ] Valid Google OIDC `client_id` and `client_secret`
+- [ ] `[firmware].token` set, matching `CONFIG_OTA_TOKEN` in the firmware
 - [ ] PostgreSQL database reachable from `[psql]`
 - [ ] MQTT broker reachable from `[mqtt]`
 

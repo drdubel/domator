@@ -34,6 +34,16 @@ port = 8000
 [monitoring]
 metrics = "http://victoriametrics:8428"
 
+[firmware]
+# Where uploaded OTA images are kept. Deliberately outside static/: these
+# binaries embed the WiFi and MQTT credentials, so they must not be servable
+# anonymously. They are handed out by GET /firmware/<device>.bin.
+directory = "firmware"
+# Shared secret the devices send in the X-Firmware-Token header. Must match
+# CONFIG_OTA_TOKEN in uc/buttonsMeshIDF. Generate with: openssl rand -hex 32
+# Leaving this empty blocks device downloads entirely.
+token = ""
+
 [ha]
 # Publish lights, blinds, the heating loop and wall-button events to Home
 # Assistant over MQTT Discovery. Home Assistant must use the same broker.

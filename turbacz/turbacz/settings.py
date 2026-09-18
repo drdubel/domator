@@ -42,6 +42,21 @@ class Monitoring(BaseModel):
     sentry_dsn: Optional[str] = None
 
 
+class FirmwareSettings(BaseModel):
+    """OTA images served to the microcontrollers.
+
+    These binaries embed WiFi and MQTT credentials, so they must never sit
+    under the public ``static/`` mount. They live in their own directory and
+    are handed out only to a logged-in browser session or to a device that
+    presents ``token`` in the ``X-Firmware-Token`` header.
+    """
+
+    directory: str = "firmware"
+    # Empty means devices cannot download at all -- deny by default, so a
+    # missing config value can never reopen anonymous access.
+    token: str = ""
+
+
 class HASettings(BaseModel):
     """Home Assistant MQTT Discovery bridge."""
 
@@ -61,6 +76,7 @@ class TurbaczSettings(BaseSettings):
     server: ServerSettings = ServerSettings()
     psql: PSQLSettings = PSQLSettings()
     ha: HASettings = HASettings()
+    firmware: FirmwareSettings = FirmwareSettings()
     use_mqtt: bool = True
 
     model_config = SettingsConfigDict(toml_file="turbacz.toml")

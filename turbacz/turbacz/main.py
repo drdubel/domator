@@ -22,7 +22,7 @@ from fastapi import (
     UploadFile,
     WebSocket,
 )
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -62,6 +62,45 @@ class CustomRequestSizeMiddleware(BaseHTTPMiddleware):
 
 MAX_REQUEST_SIZE = 10_000_000
 METRICS_TIMEOUT = 5.0
+
+# Firmware images embed WiFi and MQTT credentials, so they are kept out of the
+# public static/ mount and served only by download_firmware() below.
+FIRMWARE_DIR = Path(config.firmware.directory)
+FIRMWARE_DEVICES = ("switch", "relay")
+LEGACY_FIRMWARE_DIR = Path("static/data")
+
+
+def _migrate_legacy_firmware() -> None:
+    """Move pre-existing images out of the public static/ tree.
+
+    Older builds wrote uploads to ``static/data/<device>/firmware.bin``, which
+    StaticFiles served to anyone. Changing the upload path alone would leave
+    those files exposed on an already-running deployment, so lift them on
+    startup and delete the public copy.
+    """
+    for device in FIRMWARE_DEVICES:
+        legacy = LEGACY_FIRMWARE_DIR / device / "firmware.bin"
+        if not legacy.is_file():
+            continue
+
+        target = FIRMWARE_DIR / f"{device}.bin"
+        try:
+            FIRMWARE_DIR.mkdir(parents=True, exist_ok=True)
+            if target.exists():
+                legacy.unlink()
+            else:
+                legacy.replace(target)
+
+            legacy.parent.rmdir()
+            logger.warning(
+                "Moved %s out of the public static/ tree; it was downloadable without authentication.",
+                legacy,
+            )
+        except OSError as e:
+            logger.error("Could not relocate legacy firmware %s: %s", legacy, e)
+
+
+_migrate_legacy_firmware()
 
 if config.monitoring.sentry_dsn is not None:
     sentry_sdk.init(
@@ -248,38 +287,98 @@ async def rcm_page(request: Request, access_token: Optional[str] = Cookie(None))
     return Response(content=data, media_type="text/html")
 
 
+def _firmware_path(device: str) -> Path:
+    return FIRMWARE_DIR / f"{device}.bin"
+
+
+def _device_token_ok(presented: Optional[str]) -> bool:
+    """Constant-time check of the device OTA token.
+
+    An unset config token means no device may download, rather than every
+    device may -- a blank value must never be a skeleton key.
+    """
+    expected = config.firmware.token
+    if not expected or not presented:
+        return False
+
+    return secrets.compare_digest(presented, expected)
+
+
 @app.post("/upload/{device}")
 async def upload_firmware(
     request: Request,
     device: str,
     file: UploadFile = File(...),
     access_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
 ):
-    user = auth.get_current_user(access_token)
-
-    if not user:
-        return RedirectResponse(url="/")
+    # Responses here are returned, never raised: custom_http_exception_handler
+    # rewrites every HTTPException into a 200 HTML page, which would tell the
+    # uploader that a rejected upload succeeded.
+    token = access_token or auth.bearer_token_from_header(authorization)
+    if not auth.get_current_user(token):
+        return JSONResponse({"status": "error", "reason": "unauthorized"}, status_code=401)
 
     logger.debug("Uploading firmware for device: %s", device)
 
-    if device not in ["switch", "relay"]:
+    if device not in FIRMWARE_DEVICES:
         return JSONResponse({"status": "error", "reason": "unknown device"}, status_code=400)
 
     try:
-        save_path = Path(f"static/data/{device}/firmware.bin")
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-
         contents = await file.read()
 
-        with open(save_path, "wb") as buffer:
-            buffer.write(contents)
+        # ESP-IDF application images start with the 0xE9 magic byte. Refusing
+        # anything else keeps a stray upload from being flashed onto a device.
+        if not contents.startswith(b"\xe9"):
+            return JSONResponse(
+                {"status": "error", "reason": "not an ESP firmware image"},
+                status_code=400,
+            )
 
-        logger.info(f"Successfully saved {len(contents)} bytes to {save_path}")
+        save_path = _firmware_path(device)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write to a sibling and rename, so a device downloading right now
+        # never reads a half-written image.
+        tmp_path = save_path.with_suffix(".bin.part")
+        tmp_path.write_bytes(contents)
+        tmp_path.replace(save_path)
+
+        logger.info("Successfully saved %d bytes to %s", len(contents), save_path)
         return JSONResponse({"status": "ok", "device": device, "size": len(contents)})
 
     except Exception as e:
         logger.error(f"Error uploading firmware: {e}", exc_info=True)
         return JSONResponse({"status": "error", "reason": str(e)}, status_code=500)
+
+
+@app.get("/firmware/{device}.bin")
+async def download_firmware(
+    device: str,
+    access_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+    x_firmware_token: Optional[str] = Header(None),
+):
+    """Serve an OTA image to a device or to a logged-in browser session.
+
+    These binaries carry compiled-in WiFi and MQTT credentials, so this route
+    exists precisely so that they are not reachable anonymously. As above,
+    error responses are returned rather than raised -- esp_https_ota would
+    otherwise be handed a 200 HTML page and try to flash it.
+    """
+    if device not in FIRMWARE_DEVICES:
+        return JSONResponse({"detail": "unknown device"}, status_code=404)
+
+    token = access_token or auth.bearer_token_from_header(authorization)
+    if not (_device_token_ok(x_firmware_token) or auth.get_current_user(token)):
+        logger.warning("Rejected unauthenticated firmware download for %s", device)
+        return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+
+    path = _firmware_path(device)
+    if not path.is_file():
+        return JSONResponse({"detail": "no firmware uploaded for this device"}, status_code=404)
+
+    return FileResponse(path, media_type="application/octet-stream", filename=f"{device}.bin")
 
 
 class BlindRequest(BaseModel):

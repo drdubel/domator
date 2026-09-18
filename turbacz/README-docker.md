@@ -41,5 +41,6 @@ The setup creates:
 ## Notes
 
 - For full functionality, you'll need to configure Google OIDC credentials in the generated `turbacz.toml` file after first startup
-- The MQTT broker allows anonymous access for development (not suitable for production)
+- The MQTT broker requires authentication (`allow_anonymous false`); `setup.sh` generates `mosquitto.passwd`
+- Uploaded OTA firmware is kept out of `static/` and served only through the authenticated `/firmware/<device>.bin` route
 - All data is persisted through docker volumes

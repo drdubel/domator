@@ -17,6 +17,9 @@ chrobacz
 turbacz_app
 turbacz/wifiLightButton/plain_passwords
 connections.json
+# Uploaded OTA images. They embed WiFi/MQTT credentials and are served only
+# through the authenticated /firmware/<device>.bin route -- never commit them.
+turbacz/firmware/
 *.bin
 *.egg-info
 turbacz.toml

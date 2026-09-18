@@ -30,6 +30,11 @@ SESSION_SECRET=$(openssl rand -base64 32)
 # Generate MQTT password
 MQTT_PASSWORD=$(openssl rand -base64 32)
 
+# Token the microcontrollers present (X-Firmware-Token) to download OTA
+# images. Those images contain WiFi and MQTT credentials, so the download
+# endpoint is never anonymous. Must match CONFIG_OTA_TOKEN in the firmware.
+FIRMWARE_TOKEN=$(openssl rand -hex 32)
+
 # Home Assistant connects to the same broker as its own user, restricted by
 # mosquitto.acl to the homeassistant/ and domator/ trees.
 HA_MQTT_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=')
@@ -68,11 +73,23 @@ port = 8000
 [monitoring]
 metrics = "http://victoriametrics:8428"
 
+[firmware]
+directory = "firmware"
+token = "$FIRMWARE_TOKEN"
+
 [ha]
 enabled = $HA_ENABLED
 EOF
 
 echo "Configuration file created successfully!"
+echo ""
+echo "=============================================================="
+echo " Firmware OTA token -- set this as CONFIG_OTA_TOKEN in"
+echo " uc/buttonsMeshIDF (idf.py menuconfig -> Domator Mesh) before"
+echo " flashing, or the devices cannot download updates:"
+echo ""
+echo "   $FIRMWARE_TOKEN"
+echo "=============================================================="
 echo ""
 # ---------------------------------------------------------------------------
 # Broker credentials

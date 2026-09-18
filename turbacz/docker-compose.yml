@@ -41,6 +41,21 @@ services:
       - mosquitto_data:/mosquitto/data
     restart: unless-stopped
 
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    ports:
+      - "8123:8123"
+    depends_on:
+      mosquitto:
+        condition: service_started
+    volumes:
+      - ./homeassistant:/config
+      - /etc/localtime:/etc/localtime:ro
+    # Bridge networking keeps "mosquitto" resolvable by service name. Switch to
+    # network_mode: host (and drop ports/volumes' localtime) only if you later
+    # need mDNS/SSDP discovery of non-Domator devices on the LAN.
+    restart: unless-stopped
+
   grafana:
     image: grafana/grafana:latest
     ports:

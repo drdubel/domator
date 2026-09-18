@@ -1,0 +1,27 @@
+# Home Assistant configuration.
+#
+# Domator devices (lights, blinds, the heating loop and wall buttons) arrive
+# automatically over MQTT Discovery -- there is nothing to declare here.
+#
+# One-time setup: Settings -> Devices & Services -> Add Integration -> MQTT
+#   Broker:   mosquitto        (the compose service name, not an IP)
+#   Port:     1883
+#   Username/password: only if you have enabled them in mosquitto.passwd
+#
+# See docs/home_assistant.md
+
+default_config:
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+
+# Uncomment when serving Home Assistant through the reverse proxy.
+# Without this, HA answers every proxied request with 400 Bad Request.
+# HA needs explicit addresses or CIDRs here -- unlike uvicorn it will not
+# accept "*".
+# http:
+#   use_x_forwarded_for: true
+#   trusted_proxies:
+#     - 172.16.0.0/12     # docker bridge networks
+#     - 192.168.42.0/24   # your LAN / reverse proxy

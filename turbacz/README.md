@@ -145,6 +145,7 @@ This starts:
 - `mosquitto` MQTT broker on port `1883`
 - `grafana` on `http://127.0.0.1:3000` (default login: `admin` / `admin`)
 - `victoriametrics` on `http://127.0.0.1:8428`
+- `homeassistant` on `http://127.0.0.1:8123`
 
 > The Docker MQTT broker (`mosquitto.conf`) requires authentication. `setup.sh` generates
 > `mosquitto.passwd` from the credentials your firmware already uses; the broker will not
@@ -153,7 +154,11 @@ This starts:
 
 ### Home Assistant
 
-Turbacz can publish lights, blinds, the heating loop and wall-button events to Home Assistant
-over MQTT Discovery. Enable it with `[ha] enabled = true` in `turbacz.toml` (or answer yes in
-`setup.sh`) and add the MQTT integration in Home Assistant. See
+Home Assistant ships with the Docker stack. Turbacz publishes lights, blinds, the heating loop
+and wall-button events to it over MQTT Discovery, so entities appear automatically -- no custom
+component, no YAML.
+
+Enable it with `[ha] enabled = true` in `turbacz.toml` (or answer yes in `setup.sh`), run
+`docker compose up -d --build turbacz homeassistant`, then add the MQTT integration in Home
+Assistant with broker `mosquitto` port `1883`. See
 [docs/home_assistant.md](../docs/home_assistant.md).

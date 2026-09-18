@@ -49,4 +49,10 @@ build-backend = "setuptools.build_meta"
 dev = [
     "ruff>=0.14.10",
     "ty>=0.0.7",
+    "pytest>=8.3.0",
+    "pytest-asyncio>=1.0.0",
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

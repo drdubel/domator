@@ -42,6 +42,15 @@ class Monitoring(BaseModel):
     sentry_dsn: Optional[str] = None
 
 
+class HASettings(BaseModel):
+    """Home Assistant MQTT Discovery bridge."""
+
+    enabled: bool = False
+    discovery_prefix: str = "homeassistant"
+    base_topic: str = "domator"
+    resync_interval: int = 60
+
+
 class TurbaczSettings(BaseSettings):
     authorized: set[str] = set()
     jwt_secret: str = ""
@@ -51,6 +60,7 @@ class TurbaczSettings(BaseSettings):
     monitoring: Monitoring = Monitoring()
     server: ServerSettings = ServerSettings()
     psql: PSQLSettings = PSQLSettings()
+    ha: HASettings = HASettings()
     use_mqtt: bool = True
 
     model_config = SettingsConfigDict(toml_file="turbacz.toml")

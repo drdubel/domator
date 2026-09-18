@@ -36,6 +36,8 @@ services:
       - "9883:9883"
     volumes:
       - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./mosquitto.acl:/mosquitto/config/mosquitto.acl
+      - ./mosquitto.passwd:/mosquitto/config/mosquitto.passwd
       - mosquitto_data:/mosquitto/data
     restart: unless-stopped
 

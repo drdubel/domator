@@ -10,6 +10,16 @@ from turbacz.settings import config
 connection_router = APIRouter(prefix="/lights")
 
 
+def _ha_resync() -> None:
+    """Nudge the Home Assistant bridge after a registry edit.
+
+    Imported lazily because turbacz.ha.bridge reads this module.
+    """
+    from turbacz.ha.bridge import ha_bridge
+
+    ha_bridge.schedule_resync()
+
+
 class ConnectionManager:
     def __init__(self):
         self.rootId: Optional[int] = None
@@ -115,6 +125,17 @@ class ConnectionManager:
                     button_id TEXT,
                     type INT NOT NULL DEFAULT 0,
                     PRIMARY KEY (switch_id, button_id)
+                );
+                """
+            )
+            # Bookkeeping for the Home Assistant discovery bridge: which
+            # retained discovery topics we have published, so entities that
+            # disappear from the registry can be cleared even across restarts.
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ha_applied_topics (
+                    topic TEXT PRIMARY KEY,
+                    uid TEXT NOT NULL
                 );
                 """
             )
@@ -442,17 +463,26 @@ class ConnectionManager:
             return 0
         return max(int(row[0] or 0), 0)
 
+    def get_blind_pair_outputs(self) -> set[tuple[int, str]]:
+        """Every (relay_id, output_id) that is one leg of a blind pair.
+
+        Used to keep blind legs from being treated as ordinary outputs: the
+        mesh must not route them autonomously, and Home Assistant must not see
+        them as lights alongside the cover they belong to.
+        """
+        blind_outputs: set[tuple[int, str]] = set()
+        for relay_id, pairs in self.get_blind_pairs().items():
+            for power_id, dir_id in pairs:
+                blind_outputs.add((int(relay_id), power_id))
+                blind_outputs.add((int(relay_id), dir_id))
+
+        return blind_outputs
+
     def get_all_connections_for_mesh(self) -> dict:
         """Like get_all_connections but excludes any connection whose output is part of a blind pair.
         These are handled server-side so the ESP32 mesh doesn't route them autonomously."""
         all_connections = self.get_all_connections()
-        blind_pairs = self.get_blind_pairs()
-
-        blind_outputs: set[tuple] = set()
-        for relay_id, pairs in blind_pairs.items():
-            for power_id, dir_id in pairs:
-                blind_outputs.add((int(relay_id), power_id))
-                blind_outputs.add((int(relay_id), dir_id))
+        blind_outputs = self.get_blind_pair_outputs()
 
         filtered: dict = {}
         for switch_id, buttons in all_connections.items():
@@ -600,6 +630,34 @@ class ConnectionManager:
                     """,
                 (section_id,),
             )
+
+        self.conn.commit()
+
+    # -- Home Assistant discovery bookkeeping ---------------------------------
+
+    def get_applied_topics(self) -> dict[str, str]:
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT topic, uid FROM ha_applied_topics;")
+            rows = cur.fetchall()
+
+        return {row[0]: row[1] for row in rows}
+
+    def upsert_applied_topic(self, topic: str, uid: str):
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO ha_applied_topics (topic, uid)
+                VALUES (%s, %s)
+                ON CONFLICT (topic) DO UPDATE SET uid = EXCLUDED.uid;
+                """,
+                (topic, uid),
+            )
+
+        self.conn.commit()
+
+    def delete_applied_topic(self, topic: str):
+        with self.conn.cursor() as cur:
+            cur.execute("DELETE FROM ha_applied_topics WHERE topic = %s;", (topic,))
 
         self.conn.commit()
 
@@ -784,6 +842,7 @@ def add_output(
 
     connection_manager.name_output(relay_id, output_id, output_name, auto_off_seconds)
 
+    _ha_resync()
     return {"status": "Output added"}
 
 
@@ -1024,6 +1083,7 @@ def add_blind_pair(
         return {"error": "Power and direction outputs must be different"}
 
     connection_manager.add_blind_pair(relay_id, output_id_power, output_id_direction)
+    _ha_resync()
     return {"status": "Blind pair added"}
 
 
@@ -1040,6 +1100,7 @@ def remove_blind_pair(
         return {"error": "Unauthorized"}
 
     connection_manager.remove_blind_pair(relay_id, output_id)
+    _ha_resync()
     return {"status": "Blind pair removed"}
 
 

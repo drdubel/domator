@@ -10,7 +10,18 @@ import httpx
 import sentry_sdk
 from aioprometheus.asgi.middleware import MetricsMiddleware
 from aioprometheus.asgi.starlette import metrics
-from fastapi import Cookie, Depends, FastAPI, File, Header, HTTPException, Query, Response, UploadFile, WebSocket
+from fastapi import (
+    Cookie,
+    Depends,
+    FastAPI,
+    File,
+    Header,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+    WebSocket,
+)
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
@@ -22,8 +33,10 @@ from starlette.responses import HTMLResponse, RedirectResponse
 from starlette.types import ASGIApp
 
 import turbacz.auth as auth
-from turbacz.broker import mqtt
+import turbacz.broker  # noqa: F401  -- registers the MQTT on_connect/on_message handlers
 from turbacz.connection_manager import connection_manager, connection_router
+from turbacz.ha.bridge import ha_bridge
+from turbacz.mqtt_client import mqtt, publish_blind_action
 from turbacz.settings import config
 from turbacz.state_manager import state_manager
 from turbacz.websocket import ws_manager
@@ -295,7 +308,7 @@ async def websocket_blinds(websocket: WebSocket):
 
     await ws_manager.connect(websocket)
 
-    mqtt.publish("/blind/cmd", "S")
+    mqtt.client.publish("/blind/cmd", "S")
 
     # Send relay blind pairs to the newly connected client
     relay_pairs = connection_manager.get_relay_blind_pairs_with_names()
@@ -333,17 +346,7 @@ async def websocket_blinds(websocket: WebSocket):
                     logger.error("Invalid relay_blind_control: %s %s", cmd, err)
                     continue
 
-                if action == "up":
-                    # direction OFF (0) = up
-                    mqtt.client.publish(f"/relay/cmd/{relay_id}", f"{direction_id}0")
-                    mqtt.client.publish(f"/relay/cmd/{relay_id}", f"{power_id}1")
-                elif action == "down":
-                    # direction ON (1) = down
-                    mqtt.client.publish(f"/relay/cmd/{relay_id}", f"{direction_id}1")
-                    mqtt.client.publish(f"/relay/cmd/{relay_id}", f"{power_id}1")
-                elif action == "stop":
-                    mqtt.client.publish(f"/relay/cmd/{relay_id}", f"{power_id}0")
-                else:
+                if not publish_blind_action(mqtt.client, relay_id, power_id, direction_id, action):
                     logger.warning("Unknown blind action: %s", action)
                 continue
 
@@ -429,6 +432,7 @@ async def websocket_lights(websocket: WebSocket):
 
             if cmd.get("type") == "change_section":
                 connection_manager.change_output_section(int(cmd["relay_id"]), cmd["output_id"], int(cmd["section"]))
+                ha_bridge.schedule_resync()
                 await ws_manager.broadcast(
                     {
                         "type": "configuration",

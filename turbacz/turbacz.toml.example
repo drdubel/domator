@@ -33,3 +33,14 @@ port = 8000
 
 [monitoring]
 metrics = "http://victoriametrics:8428"
+
+[ha]
+# Publish lights, blinds, the heating loop and wall-button events to Home
+# Assistant over MQTT Discovery. Home Assistant must use the same broker.
+# See docs/home_assistant.md
+enabled = false
+# discovery_prefix = "homeassistant"
+# base_topic = "domator"
+# How often (seconds) to re-derive entities from the registry. The apply pass
+# is a diff, so a run with no changes publishes nothing.
+# resync_interval = 60

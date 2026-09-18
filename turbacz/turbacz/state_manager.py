@@ -1,6 +1,7 @@
 from time import time
 
 from turbacz.connection_manager import connection_manager
+from turbacz.ha.bridge import ha_bridge
 from turbacz.websocket import ws_manager
 
 
@@ -47,6 +48,7 @@ class StateManager:
             },
             "/blinds/ws/",
         )
+        await ha_bridge.on_relay_state(relay_id, output_id, state)
 
     async def send_online_status(self, websocket=None):
         message = {
@@ -111,6 +113,9 @@ class StateManager:
 
     def mark_relay_online(self, relay_id: int, timestamp: int):
         self._online_relays[relay_id] = timestamp
+
+    def is_relay_online(self, relay_id: int) -> bool:
+        return relay_id in self._online_relays
 
     async def check_relays_if_online(self):
         to_remove = []

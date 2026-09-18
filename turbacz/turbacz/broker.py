@@ -5,10 +5,11 @@ from time import time
 
 import httpx
 import namer
-from fastapi_mqtt import FastMQTT, MQTTConfig
 
 import turbacz.metrics as metrics
 from turbacz.connection_manager import connection_manager
+from turbacz.ha.bridge import ha_bridge
+from turbacz.mqtt_client import mqtt
 from turbacz.settings import config
 from turbacz.state_manager import state_manager
 from turbacz.websocket import ws_manager
@@ -16,17 +17,6 @@ from turbacz.websocket import ws_manager
 logger = logging.getLogger(__name__)
 
 METRICS_TIMEOUT = 5.0
-
-
-mqtt_config = MQTTConfig(
-    host=config.mqtt.host,
-    port=config.mqtt.port,
-    keepalive=60,
-    username=config.mqtt.username,
-    password=config.mqtt.password,
-)
-
-mqtt = FastMQTT(config=mqtt_config)
 
 
 async def periodic_check_devices(interval: int = 15):
@@ -39,6 +29,9 @@ async def periodic_check_devices(interval: int = 15):
         except Exception as e:
             print(f"Error checking relays/switches: {e}")
 
+        for relay_id in ha_bridge.relay_ids:
+            ha_bridge.publish_relay_availability(relay_id, state_manager.is_relay_online(relay_id))
+
         await state_manager.send_online_status()
         await asyncio.sleep(interval)
 
@@ -49,6 +42,11 @@ def connect(client, flags, rc, properties):
     mqtt.client.subscribe("/heating/metrics")
     mqtt.client.subscribe("/relay/state/+")
     mqtt.client.subscribe("/switch/state/+")
+
+    if config.ha.enabled:
+        for topic in ha_bridge.command_subscriptions():
+            mqtt.client.subscribe(topic)
+        asyncio.create_task(ha_bridge.resync_loop())
 
     asyncio.create_task(periodic_check_devices())
 
@@ -62,6 +60,10 @@ async def message(client, topic, payload, qos, properties):
     """
 
     payload_str = payload.decode()
+
+    if config.ha.enabled and topic.startswith(f"{config.ha.base_topic}/"):
+        await ha_bridge.handle_command(topic, payload_str)
+        return
 
     if topic == "/heating/metrics":
         await handle_heating_metrics(payload_str)
@@ -98,6 +100,7 @@ async def handle_heating_metrics(payload_str):
             metrics.pid_multiplier.set({"multiplier": multiplier}, data[multiplier])
 
         await ws_manager.broadcast(data, "/heating/ws/")
+        await ha_bridge.on_heating_metrics(data)
 
     except (json.JSONDecodeError, KeyError) as e:
         logger.error("Error processing heating metrics: %s", e)
@@ -160,6 +163,11 @@ async def handle_switch_state(payload_str, topic):
             {"type": "switch_state", "switch_id": switch_id, "button_id": button_id},
             "/rcm/ws/",
         )
+
+        # Stateful (type 1) buttons report both edges as 'a1'/'a0'; toggle
+        # buttons send a bare 'a', which is always a press.
+        event_type = "release" if len(payload_str) > 1 and payload_str[1] == "0" else "press"
+        await ha_bridge.on_button_event(switch_id, button_id, event_type)
 
     except (ValueError, IndexError) as e:
         logger.error("Error processing switch state: %s", e)
@@ -253,6 +261,7 @@ async def handle_root_state(payload_str):
 
     state_manager.mark_relay_online(data["deviceId"], int(time()))
     state_manager.mark_switch_online(data["deviceId"], int(time()))
+    ha_bridge.publish_relay_availability(data["deviceId"], True)
     state_manager.set_firmware_version(data["deviceId"], data["type"], data["firmware"])
     state_manager.set_device_rssi(data["deviceId"], int(data["rssi"]))
 

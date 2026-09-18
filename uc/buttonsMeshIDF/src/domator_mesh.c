@@ -316,10 +316,32 @@ void app_main(void) {
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
         ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        // Only the default partition is erased here. The credentials live in
+        // their own "creds" partition precisely so that this cannot wipe them.
         ESP_ERROR_CHECK(nvs_flash_erase());
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+
+    // Settings come from NVS, never from the binary. Load them before WiFi,
+    // the mesh or MQTT are touched -- all three read from here.
+    ret = credentials_load();
+    if (ret != ESP_OK) {
+        // Stop rather than fall back: there are no compiled-in defaults, and
+        // a device that joined some default network would be worse than one
+        // that visibly refuses to start. Loop instead of rebooting so the
+        // reason stays readable on the serial console.
+        while (true) {
+            ESP_LOGE(TAG,
+                     "No credentials in NVS (%s). This device has not been "
+                     "provisioned -- connect it by cable and run "
+                     "provisioning/provision.sh (see provisioning/README.md).",
+                     esp_err_to_name(ret));
+            vTaskDelay(pdMS_TO_TICKS(10000));
+        }
+    }
+
+    credentials_log_summary();
 
     generate_device_id();
     build_time_to_unix(FW_BUILD_TIME);

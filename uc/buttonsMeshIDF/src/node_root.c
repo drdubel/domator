@@ -1482,7 +1482,8 @@ void mqtt_init(void) {
 
     // Build complete MQTT broker URI
     char broker_uri[128];
-    const char* url = CONFIG_MQTT_BROKER_URI;
+    const domator_credentials_t* creds = credentials_get();
+    const char* url = creds->mqtt_uri;
 
     // Check if URL already includes port
     if (strstr(url, "mqtt://") != NULL && strchr(url + 7, ':') == NULL) {
@@ -1507,8 +1508,8 @@ void mqtt_init(void) {
     esp_mqtt_client_config_t mqtt_cfg = {
         .broker.address.uri = broker_uri,
         .credentials.client_id = g_mqtt_client_id,
-        .credentials.username = CONFIG_MQTT_USER,
-        .credentials.authentication.password = CONFIG_MQTT_PASSWORD,
+        .credentials.username = creds->mqtt_user,
+        .credentials.authentication.password = creds->mqtt_pass,
         .buffer.size = 4096,
         .buffer.out_size = 4096,
         .session.last_will =

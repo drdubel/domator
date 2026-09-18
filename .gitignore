@@ -12,6 +12,12 @@ secrets*
 heating_chart.json
 .pio
 credentials*
+# ...but the mesh firmware's credentials module is source code, not secrets:
+# it is the thing that reads the values out of NVS at boot. Likewise the
+# provisioning template, which ships placeholders only.
+!uc/buttonsMeshIDF/src/credentials.c
+!uc/buttonsMeshIDF/src/credentials.h
+!uc/buttonsMeshIDF/provisioning/credentials.csv.example
 kiczora
 chrobacz
 turbacz_app

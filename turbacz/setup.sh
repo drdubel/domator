@@ -109,10 +109,14 @@ else
     echo "Setting up broker credentials."
     echo "These must match what is compiled into your firmware."
     echo ""
+    # No default here on purpose: a password baked into this script is a
+    # password published to everyone who clones the repository.
     echo "Mesh root password (uc/buttonsMeshIDF, CONFIG_MQTT_PASSWORD)"
-    echo "  press enter to use the value currently in sdkconfig.esp32-turbacz:"
-    read -p "> " MESH_PASSWORD
-    MESH_PASSWORD=${MESH_PASSWORD:-nptxVn75zbetksJADRcDSKDW4H2574AH}
+    echo "  must match sdkconfig.<target> -- copy it from there:"
+    while [ -z "${MESH_PASSWORD:-}" ]; do
+        read -r -p "> " MESH_PASSWORD
+        [ -z "$MESH_PASSWORD" ] && echo "  Required. Read it out of your sdkconfig and paste it here."
+    done
 
     echo "Heating controller password (uc/heating, credentials.h) -- blank to skip:"
     read -p "> " HEATING_PASSWORD

@@ -1,3 +1,4 @@
+import html
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -90,7 +91,14 @@ async def login(request: Request, client: Optional[str] = None):
 @router.get("/auth")
 async def auth(request: Request):
     def _format_oauth_error(error: OAuthError) -> str:
-        return f"{error.error}: {error.description}" if error.description else error.error
+        # error/description come straight from the query string and are attacker
+        # controlled, so they must be escaped before being put in the response.
+        code = html.escape(str(error.error or "unknown_error"))
+
+        if not error.description:
+            return code
+
+        return f"{code}: {html.escape(str(error.description))}"
 
     def _is_invalid_client(error: OAuthError) -> bool:
         return error.error == "invalid_client"

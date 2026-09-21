@@ -2053,7 +2053,7 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
                     </div>
                 </div>
                 <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
-                    <div class="device-name device-name-switch-${switchId}" style="flex: 1; margin-bottom: 0; cursor: pointer;">${switchName}</div>
+                    <div class="device-name device-name-switch-${switchId}" style="flex: 1; margin-bottom: 0; cursor: pointer;">${escapeHtml(switchName)}</div>
                     <span class="ping-time ping-time-switch-${switchId}" title="${pingTitleSwitch}" style="font-size: 0.85rem; color: #94a3b8; white-space: nowrap;">${pingTextSwitch}</span>
                     <span class="signal-icon signal-icon-switch-${switchId}" title="${rssiTitleSwitch}">${getRssiIcon(rssiSwitch)}</span>
                     <button class="color-btn" onclick="event.stopPropagation(); showColorPicker(${switchId})" title="Change Color">🎨</button>
@@ -2354,7 +2354,7 @@ function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
         return `
             <div class="output-item ${extraClass}" id="relay-${relayId}-output-${outputId}">
                 <span><img class="item-icon light-bulb-${relayId}-${outputId}" src="/static/data/img/off.png" alt="switch" style="cursor: pointer;"></span>
-                <span class="output-name output-name-${relayId}-${outputId}" style="cursor: pointer;">${outputName}</span>
+                <span class="output-name output-name-${relayId}-${outputId}" style="cursor: pointer;">${escapeHtml(outputName)}</span>
                 ${extraBadgeHTML}
                 <span class="output-auto-off-badge" id="relay-${relayId}-auto-off-badge-${outputId}" title="${autoOffSeconds > 0 ? `Turns off after ${autoOffSeconds}s` : ''}">${formatAutoOffBadge(autoOffSeconds)}</span>
                 <div class="output-inline-controls" title="Auto-off delay">
@@ -2436,7 +2436,7 @@ function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
                     </div>
                 </div>
                 <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
-                    <div class="device-name device-name-relay-${relayId}" style="flex: 1; margin-bottom: 0; cursor: pointer;">${relayName}</div>
+                    <div class="device-name device-name-relay-${relayId}" style="flex: 1; margin-bottom: 0; cursor: pointer;">${escapeHtml(relayName)}</div>
                     <span class="ping-time ping-time-relay-${relayId}" title="${pingTitleRelay}" style="font-size: 0.85rem; color: #94a3b8; white-space: nowrap;">${pingTextRelay}</span>
                     <span class="signal-icon signal-icon-relay-${relayId}" title="${rssiTitleRelay}">${getRssiIcon(rssiRelay)}</span>
                 </div>

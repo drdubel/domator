@@ -223,9 +223,3 @@ function sendRelayBlindControl(pair, action) {
 		action: action
 	}))
 }
-
-function escapeHtml(str) {
-	var d = document.createElement('div')
-	d.appendChild(document.createTextNode(str))
-	return d.innerHTML
-}

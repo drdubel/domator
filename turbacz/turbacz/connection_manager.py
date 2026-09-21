@@ -20,6 +20,20 @@ def _ha_resync() -> None:
     ha_bridge.schedule_resync()
 
 
+MAX_NAME_LENGTH = 64
+
+
+def _invalid_name(name: str) -> bool:
+    """Reject names that are empty, over-long, or carry HTML metacharacters.
+
+    The panel escapes names on render; this is defence in depth so a hostile
+    name never reaches the database in the first place.
+    """
+    stripped = name.strip()
+
+    return not stripped or len(stripped) > MAX_NAME_LENGTH or "<" in stripped or ">" in stripped
+
+
 class ConnectionManager:
     def __init__(self):
         self.rootId: Optional[int] = None
@@ -821,6 +835,9 @@ def add_relay(
     if not user:
         return {"error": "Unauthorized"}
 
+    if _invalid_name(relay_name):
+        return {"error": "Invalid name"}
+
     connection_manager.add_relay(relay_id, relay_name, outputs)
 
     return {"status": "Relay added"}
@@ -839,6 +856,9 @@ def add_output(
 
     if not user:
         return {"error": "Unauthorized"}
+
+    if _invalid_name(output_name):
+        return {"error": "Invalid name"}
 
     connection_manager.name_output(relay_id, output_id, output_name, auto_off_seconds)
 
@@ -859,6 +879,9 @@ def rename_relay(
     if not user:
         return {"error": "Unauthorized"}
 
+    if _invalid_name(relay_name):
+        return {"error": "Invalid name"}
+
     connection_manager.rename_relay(relay_id, relay_name, outputs)
 
     return {"status": "Relay renamed"}
@@ -877,6 +900,9 @@ def rename_switch(
     if not user:
         return {"error": "Unauthorized"}
 
+    if _invalid_name(switch_name):
+        return {"error": "Invalid name"}
+
     connection_manager.rename_switch(switch_id, switch_name, buttons)
 
     return {"status": "Switch renamed"}
@@ -894,6 +920,9 @@ def add_switch(
 
     if not user:
         return {"error": "Unauthorized"}
+
+    if _invalid_name(switch_name):
+        return {"error": "Invalid name"}
 
     connection_manager.add_switch(switch_id, switch_name, buttons)
 
@@ -1116,6 +1145,9 @@ def rename_blind_pair(
 
     if not user:
         return {"error": "Unauthorized"}
+
+    if _invalid_name(name):
+        return {"error": "Invalid name"}
 
     connection_manager.rename_blind_pair(relay_id, output_id_power, name.strip())
     return {"status": "Blind pair renamed"}

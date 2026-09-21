@@ -212,3 +212,15 @@ function closeNav() {
 	if (main) main.style.marginLeft = "0"
 	if (btn) btn.style.visibility = "visible"
 }
+
+/**
+ * Escape a value for safe interpolation into an HTML string
+ * @param {*} str - Value to escape (null/undefined become "")
+ * @returns {string} HTML-escaped text
+ */
+function escapeHtml(str) {
+	if (str === null || str === undefined) return ""
+	var d = document.createElement('div')
+	d.appendChild(document.createTextNode(String(str)))
+	return d.innerHTML
+}

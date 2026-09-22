@@ -1,6 +1,10 @@
 services:
   turbacz:
-    build: .
+    build:
+      context: .
+      # On Linux, set TURBACZ_BUILD_NETWORK=host if host DNS works but build
+      # DNS fails. See README-docker.md for diagnosis and a persistent fix.
+      network: ${TURBACZ_BUILD_NETWORK:-default}
     ports:
       - "8000:8000"
     depends_on:
@@ -18,6 +22,7 @@ services:
       # binaries (which embed WiFi/MQTT credentials) survive restarts without
       # ever being reachable through the public static mount.
       - firmware_data:/app/firmware
+    # These DNS servers apply to the running service, not Dockerfile RUN steps.
     dns:
       - 1.1.1.1
       - 8.8.8.8

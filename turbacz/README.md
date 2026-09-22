@@ -138,6 +138,9 @@ mosquitto -h
 
 ### Docker setup (app + PostgreSQL + MQTT + Grafana + VictoriaMetrics)
 
+For `uv sync` DNS failures during image builds on Armbian / Orange Pi, see the
+[Docker troubleshooting guide](README-docker.md#troubleshooting-dependency-downloads-on-armbian--orange-pi).
+
 The recommended way to run the entire system is through the unified Docker setup:
 
 1. Run the project setup script:

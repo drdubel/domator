@@ -24,7 +24,7 @@ COPY docker-entrypoint.sh ./docker-entrypoint.sh
 
 RUN chmod +x /app/docker-entrypoint.sh \
     && uv sync --frozen --no-dev \
-    && uv pip install --python /app/.venv/bin/python "psycopg[binary]==3.3.2"
+    && uv pip install --python /app/.venv/bin/python "psycopg[binary]==3.3.6"
 
 EXPOSE 8000
 

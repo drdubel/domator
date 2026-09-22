@@ -191,6 +191,12 @@ and provisions Grafana with the **Domator / Host performance** dashboard. Open
 `http://127.0.0.1:3000` after starting the stack. The first useful rate graphs
 appear after two scrapes (about 30 seconds).
 
+Grafana is pinned to a tested patch release instead of the moving `latest`
+tag. Its embedded SQLite database uses write-ahead logging and lock retries so
+Grafana 13's concurrent background services cannot turn a brief database lock
+into an HTTP-server shutdown. The named `grafana_data` volume is retained
+across container recreation.
+
 There is an important scope distinction:
 
 - A native `uv run turbacz` process reports the actual FreeBSD, Linux/Armbian,

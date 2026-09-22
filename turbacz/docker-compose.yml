@@ -61,7 +61,10 @@ services:
     restart: unless-stopped
 
   grafana:
-    image: grafana/grafana:latest
+    # Keep upgrades deliberate: a moving `latest` tag can run database
+    # migrations merely because the stack was recreated. 13.2.2 is the
+    # current patched 13.2 release used by this dashboard.
+    image: grafana/grafana:13.2.2
     ports:
       - "3000:3000"
     depends_on:
@@ -70,6 +73,17 @@ services:
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_SECURITY_ADMIN_USER=admin
+      # Grafana 13's unified-storage workers perform concurrent reads and
+      # writes. SQLite's default rollback journal and zero query retries can
+      # turn a transient lock into a full HTTP-server shutdown. WAL permits
+      # concurrent readers, while retries absorb short writer contention.
+      - GF_DATABASE_WAL=true
+      - GF_DATABASE_QUERY_RETRIES=10
+      - GF_DATABASE_TRANSACTION_RETRIES=10
+      # This installation uses only built-in panels. Avoid background plugin
+      # downloads/updates competing for the SQLite database during startup.
+      - GF_PLUGINS_PREINSTALL_DISABLED=true
+      - GF_PLUGINS_PREINSTALL_AUTO_UPDATE=false
     volumes:
       - grafana_data:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro

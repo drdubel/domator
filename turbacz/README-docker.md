@@ -28,6 +28,7 @@ This project now supports a streamlined Docker-based deployment that allows runn
 - Mosquitto MQTT broker
 - Grafana dashboard (http://localhost:3000) - default login: admin/admin
 - VictoriaMetrics monitoring
+- Automatic 15-second scraping and a provisioned **Domator / Host performance** dashboard
 
 The system will be accessible at http://localhost:8000
 
@@ -44,3 +45,6 @@ The setup creates:
 - The MQTT broker requires authentication (`allow_anonymous false`); `setup.sh` generates `mosquitto.passwd`
 - Uploaded OTA firmware is kept out of `static/` and served only through the authenticated `/firmware/<device>.bin` route
 - All data is persisted through docker volumes
+- Host metrics need no root access. In this Docker setup they describe the
+  container-visible environment and carry `scope="container"`; run Turbacz
+  directly on the machine for physical-host disk and OS namespace metrics.

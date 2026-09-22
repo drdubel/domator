@@ -173,6 +173,45 @@ This starts:
 - `victoriametrics` on `http://127.0.0.1:8428`
 - `homeassistant` on `http://127.0.0.1:8123`
 
+#### Host performance monitoring
+
+Turbacz exports CPU utilization and time, load averages, memory and swap,
+filesystem usage, disk and network throughput, uptime, optional hardware
+temperatures, and its own process usage in Prometheus format at `/metrics`.
+It uses the cross-platform `psutil` APIs and requires no root privileges. The
+collector is enabled by default; disable it with:
+
+```toml
+[monitoring]
+collect_host_metrics = false
+```
+
+The Docker stack configures VictoriaMetrics to scrape Turbacz every 15 seconds
+and provisions Grafana with the **Domator / Host performance** dashboard. Open
+`http://127.0.0.1:3000` after starting the stack. The first useful rate graphs
+appear after two scrapes (about 30 seconds).
+
+There is an important scope distinction:
+
+- A native `uv run turbacz` process reports the actual FreeBSD, Linux/Armbian,
+  macOS, or Windows host as an unprivileged user. The default
+  `host_metrics_scope = "auto"` resolves to `host` outside common containers;
+  set it explicitly if the service sandbox hides container markers.
+- A containerized process reports what its container namespace exposes. The
+  supplied Docker configuration labels this as `scope="container"`; disk and
+  process values in particular must not be interpreted as whole-host values.
+  For accurate physical-host metrics without privileged containers, run
+  Turbacz natively on that host and point the scraper at its port.
+
+Temperature sensors are best-effort because many operating systems and boards
+do not expose them to an unprivileged user. Their panel remains empty when the
+API is unavailable; all other dashboard panels continue to work.
+
+To scrape a native Turbacz instance from a separate VictoriaMetrics install,
+copy `monitoring/prometheus.yml` and replace `turbacz:8000` with the machine's
+reachable address. The same endpoint works with Prometheus or any other
+Prometheus-compatible collector.
+
 > The Docker MQTT broker (`mosquitto.conf`) requires authentication. `setup.sh` generates
 > `mosquitto.passwd` from the credentials your firmware already uses; the broker will not
 > start without it, so run `./setup.sh` before `docker compose up`.

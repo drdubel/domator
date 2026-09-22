@@ -72,6 +72,8 @@ port = 8000
 
 [monitoring]
 metrics = "http://victoriametrics:8428"
+collect_host_metrics = true
+host_metrics_scope = "container"
 
 [firmware]
 directory = "firmware"

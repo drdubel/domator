@@ -40,6 +40,11 @@ class Monitoring(BaseModel):
     metrics: str = "http://127.0.0.1:8428"
     labels: dict[str, str] = {}
     sentry_dsn: Optional[str] = None
+    collect_host_metrics: bool = True
+    # "auto" detects common containers; it can be overridden with "host" or
+    # "container". The label prevents container-visible values being mistaken
+    # for physical-host measurements in Grafana.
+    host_metrics_scope: str = "auto"
 
 
 class FirmwareSettings(BaseModel):

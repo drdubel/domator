@@ -72,14 +72,20 @@ services:
       - GF_SECURITY_ADMIN_USER=admin
     volumes:
       - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     restart: unless-stopped
 
   victoriametrics:
     image: victoriametrics/victoria-metrics:latest
+    command:
+      - -storageDataPath=/victoriametrics_data
+      - -promscrape.config=/etc/victoriametrics/prometheus.yml
     ports:
       - "8428:8428"
     volumes:
       - victoriametrics_data:/victoriametrics_data
+      - ./monitoring/prometheus.yml:/etc/victoriametrics/prometheus.yml:ro
     restart: unless-stopped
 
 volumes:

@@ -33,6 +33,12 @@ port = 8000
 
 [monitoring]
 metrics = "http://victoriametrics:8428"
+# Export CPU, load, memory, disk, network, temperature (when the OS exposes
+# it), and Turbacz process metrics at /metrics. No root access is required.
+collect_host_metrics = true
+# Use "host" for a native install. The Docker setup uses "container" because
+# filesystem and namespace values visible to the app belong to its container.
+host_metrics_scope = "container"
 # Optional. The same public DSN configures both server-side and browser error
 # reporting. Leave unset to disable Sentry without loading its browser SDK.
 # sentry_dsn = "https://PUBLIC_KEY@YOUR_SENTRY_HOST/PROJECT_ID"

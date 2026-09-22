@@ -9,7 +9,7 @@ from typing import Callable, Optional
 import httpx
 import sentry_sdk
 from aioprometheus.asgi.middleware import MetricsMiddleware
-from aioprometheus.asgi.starlette import metrics
+from aioprometheus.asgi.starlette import metrics as render_metrics
 from fastapi import (
     Cookie,
     Depends,
@@ -37,6 +37,7 @@ import turbacz.broker  # noqa: F401  -- registers the MQTT on_connect/on_message
 from turbacz.connection_manager import connection_manager, connection_router
 from turbacz.ha.bridge import ha_bridge
 from turbacz.mqtt_client import mqtt, publish_blind_action
+from turbacz.metrics import collect_host_metrics
 from turbacz.settings import config
 from turbacz.state_manager import state_manager
 from turbacz.websocket import ws_manager
@@ -132,7 +133,15 @@ def _require_authenticated_user(
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
-app.add_api_route("/metrics", metrics, methods=["GET"])
+@app.get("/metrics", include_in_schema=False)
+async def prometheus_metrics(request: Request):
+    if config.monitoring.collect_host_metrics:
+        # Filesystem accounting can touch slow/network mounts. Keep a scrape
+        # from stalling unrelated FastAPI requests.
+        await asyncio.to_thread(collect_host_metrics)
+    return await render_metrics(request)
+
+
 app.include_router(auth.router)
 app.include_router(connection_router)
 mqtt.init_app(app)

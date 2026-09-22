@@ -139,6 +139,17 @@ mqtt.init_app(app)
 
 background_task_started = False
 
+
+@app.get("/sentry-config.js", include_in_schema=False)
+async def sentry_browser_config():
+    """Expose the public Sentry DSN without baking it into static assets."""
+    return Response(
+        content=f"window.SENTRY_DSN = {json.dumps(config.monitoring.sentry_dsn)};\n",
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 app.mount("/static", StaticFiles(directory="./static", html=True), name="static")
 
 

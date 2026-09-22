@@ -34,8 +34,10 @@ class WebSocketManager {
 		this.endpoint = endpoint
 		this.onMessage = onMessage
 		this.reconnectTimeout = null
+		this.connectionTimeout = null
 		this.reconnectDelay = 1000
 		this.maxReconnectDelay = 30000
+		this.connectionTimeoutMs = 10000
 		this.isReconnecting = false
 		this.onOpenCallback = null
 		this.onCloseCallback = null
@@ -72,10 +74,21 @@ class WebSocketManager {
 		if (this.isReconnecting) return
 		this.isReconnecting = true
 
-		console.log('Connecting WebSocket...')
-		this.ws = new WebSocket(`wss://${window.location.host}${this.endpoint}${this.wsId}`)
+		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+		const url = `${protocol}//${window.location.host}${this.endpoint}${this.wsId}`
+		const socket = new WebSocket(url)
+		this.ws = socket
 
-		this.ws.onopen = () => {
+		console.log(`Connecting WebSocket to ${url}...`)
+		this.connectionTimeout = setTimeout(() => {
+			if (this.ws === socket && socket.readyState === WebSocket.CONNECTING) {
+				console.warn(`WebSocket handshake timed out after ${this.connectionTimeoutMs}ms`)
+				socket.close()
+			}
+		}, this.connectionTimeoutMs)
+
+		socket.onopen = () => {
+			this.clearConnectionTimeout()
 			console.log('WebSocket connected!')
 			this.isReconnecting = false
 			this.reconnectDelay = 1000
@@ -84,21 +97,22 @@ class WebSocketManager {
 			}
 		}
 
-		this.ws.onmessage = (event) => {
+		socket.onmessage = (event) => {
 			if (this.onMessage) {
 				this.onMessage(event)
 			}
 		}
 
-		this.ws.onerror = (error) => {
+		socket.onerror = (error) => {
 			console.error('WebSocket error:', error)
 			if (this.onErrorCallback) {
 				this.onErrorCallback(error)
 			}
 		}
 
-		this.ws.onclose = (event) => {
-			console.log('WebSocket disconnected')
+		socket.onclose = (event) => {
+			this.clearConnectionTimeout()
+			console.log(`WebSocket disconnected (code=${event.code}, reason=${event.reason || 'none'})`)
 			this.isReconnecting = false
 
 			if (this.reconnectTimeout) {
@@ -114,6 +128,13 @@ class WebSocketManager {
 			if (this.onCloseCallback) {
 				this.onCloseCallback(event)
 			}
+		}
+	}
+
+	clearConnectionTimeout() {
+		if (this.connectionTimeout) {
+			clearTimeout(this.connectionTimeout)
+			this.connectionTimeout = null
 		}
 	}
 

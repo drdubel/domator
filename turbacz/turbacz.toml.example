@@ -33,6 +33,9 @@ port = 8000
 
 [monitoring]
 metrics = "http://victoriametrics:8428"
+# Optional. The same public DSN configures both server-side and browser error
+# reporting. Leave unset to disable Sentry without loading its browser SDK.
+# sentry_dsn = "https://PUBLIC_KEY@YOUR_SENTRY_HOST/PROJECT_ID"
 
 [firmware]
 # Where uploaded OTA images are kept. Deliberately outside static/: these

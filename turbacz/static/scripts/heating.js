@@ -3,44 +3,20 @@ Chart.defaults.color = '#cbd5e0'
 Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif'
 Chart.defaults.font.size = 13
 
+const heatingSeries = new HeatingSeries()
+function renderTemperatureSeries() {
+    heatingSeries.datasets().forEach((values, index) => { chart.data.datasets[index].data = values })
+    chart.update('none')
+}
+
 // Initialize WebSocket manager
 var wsManager = new WebSocketManager('/heating/ws/', function (event) {
 	try {
 		var msg = JSON.parse(event.data)
 		console.log('WebSocket data received:', msg)
 
-		const date = new Date()
-
-		let year = date.getFullYear()
-		let month = date.getMonth() + 1
-		let day = date.getDate()
-		let hour = date.getHours()
-		let minute = date.getMinutes()
-		let second = date.getSeconds()
-		year = ('0000' + year).slice(-4)
-		month = ('00' + month).slice(-2)
-		day = ('00' + day).slice(-2)
-		hour = ('00' + hour).slice(-2)
-		minute = ('00' + minute).slice(-2)
-		second = ('00' + second).slice(-2)
-		let currentDate = `${year}-${month}-${day} ${hour}:${minute}:${second}`
-
-		// Update chart data
-		chart.data.labels.push(currentDate)
-		chart.data.datasets[0].data.push(msg["cold"])
-		chart.data.datasets[1].data.push(msg["mixed"])
-		chart.data.datasets[2].data.push(msg["hot"])
-		chart.data.datasets[3].data.push(msg["target"])
-
-		// Limit chart data points to last 50 to prevent performance issues
-		if (chart.data.labels.length > 50) {
-			chart.data.labels.shift()
-			chart.data.datasets.forEach(dataset => {
-				dataset.data.shift()
-			})
-		}
-
-		chart.update('none') // Update without animation for better performance
+        heatingSeries.merge([{ ...msg, timestamp: msg.timestamp ?? Date.now() / 1000 }], true)
+        renderTemperatureSeries()
 
 		// Update ALL display fields from the WebSocket message
 		for (let id in msg) {
@@ -135,43 +111,18 @@ const startParam = Math.floor(oneHourAgo.getTime() / 1000)
 const endParam = Math.floor(now.getTime() / 1000)
 
 
-fetch(`https://${window.location.hostname}/api/temperatures?start=${startParam}&end=${endParam}&step=1`)
-	.then(response => response.json())
-	.then(data => {
-		// data is expected to be a list of dicts with keys: cold, mixed, hot, target, timestamp
-		console.log('Chart data loaded:', data)
-		const labels = data.map(item => {
-			const date = new Date(item.timestamp * 1000)
-			let year = date.getFullYear()
-			let month = date.getMonth() + 1
-			let day = date.getDate()
-			let hour = date.getHours()
-			let minute = date.getMinutes()
-			let second = date.getSeconds()
-			year = ('0000' + year).slice(-4)
-			month = ('00' + month).slice(-2)
-			day = ('00' + day).slice(-2)
-			hour = ('00' + hour).slice(-2)
-			minute = ('00' + minute).slice(-2)
-			second = ('00' + second).slice(-2)
+apiFetch(`/api/temperatures?start=${startParam}&end=${endParam}&step=${heatingSeries.stepSeconds}`)
+    .then(response => {
+        if (!response.ok) throw new Error(`History request failed: ${response.status}`)
+        return response.json()
+    })
+    .then(samples => {
+        if (!Array.isArray(samples)) throw new Error('Invalid history response')
+        heatingSeries.merge(samples)
+        renderTemperatureSeries()
+    })
+    .catch(error => console.error('Error loading chart data:', error))
 
-			return `${year}-${month}-${day} ${hour}:${minute}:${second}`
-		})
-		const cold = data.map(item => item.cold)
-		const mixed = data.map(item => item.mixed)
-		const hot = data.map(item => item.hot)
-		const target = data.map(item => item.target)
-
-		chart.data.labels = labels
-		chart.data.datasets[0].data = cold
-		chart.data.datasets[1].data = mixed
-		chart.data.datasets[2].data = hot
-		chart.data.datasets[3].data = target
-		chart.update()
-	})
-	.catch(error => {
-		console.error('Error loading chart data:', error)
-	})
 
 const ctx = document.getElementById('myChart')
 var chart = new Chart(ctx, {
@@ -225,6 +176,7 @@ var chart = new Chart(ctx, {
 		},
 		scales: {
 			x: {
+                type: 'linear',
 				grid: {
 					display: true,
 					color: 'rgba(255, 255, 255, 0.08)',
@@ -232,6 +184,7 @@ var chart = new Chart(ctx, {
 				},
 				ticks: {
 					color: '#a0aec0',
+                    callback: value => new Date(value).toLocaleTimeString(),
 					maxRotation: 45,
 					minRotation: 45,
 					font: {

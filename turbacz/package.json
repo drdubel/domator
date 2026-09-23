@@ -1,0 +1,6 @@
+{
+  "name": "turbacz-browser-tests",
+  "private": true,
+  "scripts": { "test": "node --test tests/browser/*.test.cjs" },
+  "devDependencies": { "jsdom": "27.4.0" }
+}

@@ -1,3 +1,40 @@
+// Fetch CSRF tokens only from this origin; never attach them to third parties.
+let csrfTokenPromise = null
+async function apiFetch(input, options = {}) {
+    const url = new URL(input, window.location.href)
+    const method = (options.method || 'GET').toUpperCase()
+    const headers = new Headers(options.headers || {})
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+        if (url.origin !== window.location.origin) throw new Error('Cross-origin mutation rejected')
+        if (!csrfTokenPromise) {
+            csrfTokenPromise = window.fetch('/csrf-token', { credentials: 'same-origin', cache: 'no-store' })
+                .then(response => {
+                    if (!response.ok) throw new Error('Session expired; please sign in again')
+                    return response.json()
+                }).then(data => data.token).catch(error => { csrfTokenPromise = null; throw error })
+        }
+        headers.set('X-CSRF-Token', await csrfTokenPromise)
+    }
+    const response = await window.fetch(url, { ...options, headers, credentials: 'same-origin' })
+    if (response.status === 401) {
+        window.location.assign('/')
+        throw new Error('Session expired; please sign in again')
+    }
+    return response
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('a[href="/logout"]').forEach(link => {
+        link.addEventListener('click', async event => {
+            event.preventDefault()
+            try {
+                const response = await apiFetch('/logout', { method: 'POST' })
+                if (response.ok) window.location.assign('/')
+            } catch (error) { window.location.assign('/') }
+        })
+    })
+})
+
 // ============================================
 // COMMON UTILITIES - Turbacz
 // Shared functions used across multiple pages
@@ -98,6 +135,7 @@ class WebSocketManager {
 		}
 
 		socket.onmessage = (event) => {
+			if (JSON.parse(event.data).type === 'pong') return
 			if (this.onMessage) {
 				this.onMessage(event)
 			}
@@ -178,6 +216,8 @@ class WebSocketManager {
 			if (!this.ws || this.ws.readyState === WebSocket.CLOSED) {
 				console.log('WebSocket closed, reconnecting...')
 				this.connect()
+			} else if (this.isConnected()) {
+				this.send(JSON.stringify({ type: 'ping' }))
 			}
 		}, interval)
 	}
@@ -243,5 +283,5 @@ function escapeHtml(str) {
 	if (str === null || str === undefined) return ""
 	var d = document.createElement('div')
 	d.appendChild(document.createTextNode(String(str)))
-	return d.innerHTML
+	return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 }

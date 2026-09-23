@@ -1,11 +1,13 @@
+from threading import RLock
 from typing import Optional
 
 import psycopg
-from fastapi import APIRouter, Cookie, Form, Request
-from fastapi.responses import JSONResponse
-
 import turbacz.auth as auth
+from fastapi import APIRouter, Cookie, Form, HTTPException, Request
+from fastapi.responses import JSONResponse
+from turbacz.database import serialized_manager
 from turbacz.settings import config
+from turbacz.validation import relay_output
 
 connection_router = APIRouter(prefix="/lights")
 
@@ -18,6 +20,13 @@ def _ha_resync() -> None:
     from turbacz.ha.bridge import ha_bridge
 
     ha_bridge.schedule_resync()
+
+
+def _require_output(relay_id, output_id):
+    try:
+        relay_output(connection_manager, relay_id, output_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 MAX_NAME_LENGTH = 64
@@ -34,8 +43,10 @@ def _invalid_name(name: str) -> bool:
     return not stripped or len(stripped) > MAX_NAME_LENGTH or "<" in stripped or ">" in stripped
 
 
+@serialized_manager
 class ConnectionManager:
     def __init__(self):
+        self._db_lock = RLock()
         self.rootId: Optional[int] = None
 
         self._init_db()
@@ -825,18 +836,18 @@ class ConnectionManager:
 @connection_router.post("/add_relay")
 def add_relay(
     request: Request,
-    relay_id: int = Form(...),
+    relay_id: int = Form(..., ge=1, le=2**63 - 1),
     relay_name: str = Form(...),
-    outputs: int = Form(8),
+    outputs: int = Form(8, ge=1, le=16),
     access_token: Optional[str] = Cookie(None),
 ):
-    user = auth.get_current_user(access_token)
+    user = auth.get_current_user(auth.bearer_token_from_header(request.headers.get("authorization")) or access_token)
 
     if not user:
-        return {"error": "Unauthorized"}
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     if _invalid_name(relay_name):
-        return {"error": "Invalid name"}
+        raise HTTPException(status_code=400, detail="Invalid name")
 
     connection_manager.add_relay(relay_id, relay_name, outputs)
 
@@ -846,20 +857,21 @@ def add_relay(
 @connection_router.post("/name_output")
 def add_output(
     request: Request,
-    relay_id: int = Form(...),
-    output_id: str = Form(...),
+    relay_id: int = Form(..., ge=1, le=2**63 - 1),
+    output_id: str = Form(..., pattern=r"^[a-p]$", min_length=1, max_length=1),
     output_name: str = Form(...),
     auto_off_seconds: Optional[int] = Form(None),
     access_token: Optional[str] = Cookie(None),
 ):
-    user = auth.get_current_user(access_token)
+    user = auth.get_current_user(auth.bearer_token_from_header(request.headers.get("authorization")) or access_token)
 
     if not user:
-        return {"error": "Unauthorized"}
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     if _invalid_name(output_name):
-        return {"error": "Invalid name"}
+        raise HTTPException(status_code=400, detail="Invalid name")
 
+    _require_output(relay_id, output_id)
     connection_manager.name_output(relay_id, output_id, output_name, auto_off_seconds)
 
     _ha_resync()
@@ -869,18 +881,18 @@ def add_output(
 @connection_router.post("/rename_relay")
 def rename_relay(
     request: Request,
-    relay_id: int = Form(...),
+    relay_id: int = Form(..., ge=1, le=2**63 - 1),
     relay_name: str = Form(...),
-    outputs: int = Form(...),
+    outputs: int = Form(..., ge=1, le=16),
     access_token: Optional[str] = Cookie(None),
 ):
-    user = auth.get_current_user(access_token)
+    user = auth.get_current_user(auth.bearer_token_from_header(request.headers.get("authorization")) or access_token)
 
     if not user:
-        return {"error": "Unauthorized"}
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     if _invalid_name(relay_name):
-        return {"error": "Invalid name"}
+        raise HTTPException(status_code=400, detail="Invalid name")
 
     connection_manager.rename_relay(relay_id, relay_name, outputs)
 
@@ -890,18 +902,18 @@ def rename_relay(
 @connection_router.post("/rename_switch")
 def rename_switch(
     request: Request,
-    switch_id: int = Form(...),
+    switch_id: int = Form(..., ge=1, le=2**63 - 1),
     switch_name: str = Form(...),
-    buttons: int = Form(...),
+    buttons: int = Form(..., ge=1, le=24),
     access_token: Optional[str] = Cookie(None),
 ):
-    user = auth.get_current_user(access_token)
+    user = auth.get_current_user(auth.bearer_token_from_header(request.headers.get("authorization")) or access_token)
 
     if not user:
-        return {"error": "Unauthorized"}
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     if _invalid_name(switch_name):
-        return {"error": "Invalid name"}
+        raise HTTPException(status_code=400, detail="Invalid name")
 
     connection_manager.rename_switch(switch_id, switch_name, buttons)
 
@@ -911,18 +923,18 @@ def rename_switch(
 @connection_router.post("/add_switch")
 def add_switch(
     request: Request,
-    switch_id: int = Form(...),
+    switch_id: int = Form(..., ge=1, le=2**63 - 1),
     switch_name: str = Form(...),
-    buttons: int = Form(...),
+    buttons: int = Form(..., ge=1, le=24),
     access_token: Optional[str] = Cookie(None),
 ):
-    user = auth.get_current_user(access_token)
+    user = auth.get_current_user(auth.bearer_token_from_header(request.headers.get("authorization")) or access_token)
 
     if not user:
-        return {"error": "Unauthorized"}
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     if _invalid_name(switch_name):
-        return {"error": "Invalid name"}
+        raise HTTPException(status_code=400, detail="Invalid name")
 
     connection_manager.add_switch(switch_id, switch_name, buttons)
 
@@ -932,17 +944,18 @@ def add_switch(
 @connection_router.post("/add_connection")
 def add_connection(
     request: Request,
-    switch_id: int = Form(...),
-    button_id: str = Form(...),
-    relay_id: int = Form(...),
-    output_id: str = Form(...),
+    switch_id: int = Form(..., ge=1, le=2**63 - 1),
+    button_id: str = Form(..., pattern=r"^[a-x]$", min_length=1, max_length=1),
+    relay_id: int = Form(..., ge=1, le=2**63 - 1),
+    output_id: str = Form(..., pattern=r"^[a-p]$", min_length=1, max_length=1),
     access_token: Optional[str] = Cookie(None),
 ):
-    user = auth.get_current_user(access_token)
+    user = auth.get_current_user(auth.bearer_token_from_header(request.headers.get("authorization")) or access_token)
 
     if not user:
-        return {"error": "Unauthorized"}
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
+    _require_output(relay_id, output_id)
     connection_manager.add_connection(switch_id, button_id, relay_id, output_id)
 
     return {"status": "Connection added"}
@@ -953,10 +966,10 @@ def get_connections(
     request: Request,
     access_token: Optional[str] = Cookie(None),
 ):
-    user = auth.get_current_user(access_token)
+    user = auth.get_current_user(auth.bearer_token_from_header(request.headers.get("authorization")) or access_token)
 
     if not user:
-        return {"error": "Unauthorized"}
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     connections = connection_manager.get_all_connections()
     return JSONResponse(content=connections)
@@ -967,10 +980,10 @@ def get_relays(
     request: Request,
     access_token: Optional[str] = Cookie(None),
 ):
-    user = auth.get_current_user(access_token)
+    user = auth.get_current_user(auth.bearer_token_from_header(request.headers.get("authorization")) or access_token)
 
     if not user:
-        return {"error": "Unauthorized"}
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     relays = connection_manager.get_relays()
     return JSONResponse(content=relays)
@@ -981,10 +994,10 @@ def get_switches(
     request: Request,
     access_token: Optional[str] = Cookie(None),
 ):
-    user = auth.get_current_user(access_token)
+    user = auth.get_current_user(auth.bearer_token_from_header(request.headers.get("authorization")) or access_token)
 
     if not user:
-        return {"error": "Unauthorized"}
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     switches = connection_manager.get_switches()
     return JSONResponse(content=switches)
@@ -995,10 +1008,10 @@ def get_outputs(
     request: Request,
     access_token: Optional[str] = Cookie(None),
 ):
-    user = auth.get_current_user(access_token)
+    user = auth.get_current_user(auth.bearer_token_from_header(request.headers.get("authorization")) or access_token)
 
     if not user:
-        return {"error": "Unauthorized"}
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     outputs = connection_manager.get_outputs()
     return JSONResponse(content=outputs)
@@ -1009,10 +1022,10 @@ def get_all_buttons(
     request: Request,
     access_token: Optional[str] = Cookie(None),
 ):
-    user = auth.get_current_user(access_token)
+    user = auth.get_current_user(auth.bearer_token_from_header(request.headers.get("authorization")) or access_token)
 
     if not user:
-        return {"error": "Unauthorized"}
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     buttons = connection_manager.get_all_buttons()
     return JSONResponse(content=buttons)
@@ -1021,16 +1034,16 @@ def get_all_buttons(
 @connection_router.post("/remove_connection")
 def remove_connection(
     request: Request,
-    switch_id: int = Form(...),
-    button_id: str = Form(...),
-    relay_id: int = Form(...),
-    output_id: str = Form(...),
+    switch_id: int = Form(..., ge=1, le=2**63 - 1),
+    button_id: str = Form(..., pattern=r"^[a-x]$", min_length=1, max_length=1),
+    relay_id: int = Form(..., ge=1, le=2**63 - 1),
+    output_id: str = Form(..., pattern=r"^[a-p]$", min_length=1, max_length=1),
     access_token: Optional[str] = Cookie(None),
 ):
-    user = auth.get_current_user(access_token)
+    user = auth.get_current_user(auth.bearer_token_from_header(request.headers.get("authorization")) or access_token)
 
     if not user:
-        return {"error": "Unauthorized"}
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     connection_manager.remove_connection(switch_id, button_id, relay_id, output_id)
     return {"status": "Connection removed"}
@@ -1039,13 +1052,13 @@ def remove_connection(
 @connection_router.post("/remove_relay")
 def remove_relay(
     request: Request,
-    relay_id: int = Form(...),
+    relay_id: int = Form(..., ge=1, le=2**63 - 1),
     access_token: Optional[str] = Cookie(None),
 ):
-    user = auth.get_current_user(access_token)
+    user = auth.get_current_user(auth.bearer_token_from_header(request.headers.get("authorization")) or access_token)
 
     if not user:
-        return {"error": "Unauthorized"}
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     connection_manager.remove_relay(relay_id)
     return {"status": "Relay removed"}
@@ -1054,13 +1067,13 @@ def remove_relay(
 @connection_router.post("/remove_switch")
 def remove_switch(
     request: Request,
-    switch_id: int = Form(...),
+    switch_id: int = Form(..., ge=1, le=2**63 - 1),
     access_token: Optional[str] = Cookie(None),
 ):
-    user = auth.get_current_user(access_token)
+    user = auth.get_current_user(auth.bearer_token_from_header(request.headers.get("authorization")) or access_token)
 
     if not user:
-        return {"error": "Unauthorized"}
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     connection_manager.remove_switch(switch_id)
     return {"status": "Switch removed"}
@@ -1069,14 +1082,14 @@ def remove_switch(
 @connection_router.post("/remove_button")
 def remove_button(
     request: Request,
-    switch_id: int = Form(...),
-    button_id: str = Form(...),
+    switch_id: int = Form(..., ge=1, le=2**63 - 1),
+    button_id: str = Form(..., pattern=r"^[a-x]$", min_length=1, max_length=1),
     access_token: Optional[str] = Cookie(None),
 ):
-    user = auth.get_current_user(access_token)
+    user = auth.get_current_user(auth.bearer_token_from_header(request.headers.get("authorization")) or access_token)
 
     if not user:
-        return {"error": "Unauthorized"}
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     connection_manager.remove_button(switch_id, button_id)
     return {"status": "Button removed"}
@@ -1087,10 +1100,10 @@ def get_blind_pairs(
     request: Request,
     access_token: Optional[str] = Cookie(None),
 ):
-    user = auth.get_current_user(access_token)
+    user = auth.get_current_user(auth.bearer_token_from_header(request.headers.get("authorization")) or access_token)
 
     if not user:
-        return {"error": "Unauthorized"}
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     return JSONResponse(content=connection_manager.get_blind_pairs())
 
@@ -1098,19 +1111,21 @@ def get_blind_pairs(
 @connection_router.post("/add_blind_pair")
 def add_blind_pair(
     request: Request,
-    relay_id: int = Form(...),
-    output_id_power: str = Form(...),
-    output_id_direction: str = Form(...),
+    relay_id: int = Form(..., ge=1, le=2**63 - 1),
+    output_id_power: str = Form(..., pattern=r"^[a-p]$", min_length=1, max_length=1),
+    output_id_direction: str = Form(..., pattern=r"^[a-p]$", min_length=1, max_length=1),
     access_token: Optional[str] = Cookie(None),
 ):
-    user = auth.get_current_user(access_token)
+    user = auth.get_current_user(auth.bearer_token_from_header(request.headers.get("authorization")) or access_token)
 
     if not user:
-        return {"error": "Unauthorized"}
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     if output_id_power == output_id_direction:
-        return {"error": "Power and direction outputs must be different"}
+        raise HTTPException(status_code=400, detail="Power and direction outputs must be different")
 
+    _require_output(relay_id, output_id_power)
+    _require_output(relay_id, output_id_direction)
     connection_manager.add_blind_pair(relay_id, output_id_power, output_id_direction)
     _ha_resync()
     return {"status": "Blind pair added"}
@@ -1119,15 +1134,16 @@ def add_blind_pair(
 @connection_router.post("/remove_blind_pair")
 def remove_blind_pair(
     request: Request,
-    relay_id: int = Form(...),
-    output_id: str = Form(...),
+    relay_id: int = Form(..., ge=1, le=2**63 - 1),
+    output_id: str = Form(..., pattern=r"^[a-p]$", min_length=1, max_length=1),
     access_token: Optional[str] = Cookie(None),
 ):
-    user = auth.get_current_user(access_token)
+    user = auth.get_current_user(auth.bearer_token_from_header(request.headers.get("authorization")) or access_token)
 
     if not user:
-        return {"error": "Unauthorized"}
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
+    _require_output(relay_id, output_id)
     connection_manager.remove_blind_pair(relay_id, output_id)
     _ha_resync()
     return {"status": "Blind pair removed"}
@@ -1136,19 +1152,20 @@ def remove_blind_pair(
 @connection_router.post("/rename_blind_pair")
 def rename_blind_pair(
     request: Request,
-    relay_id: int = Form(...),
-    output_id_power: str = Form(...),
+    relay_id: int = Form(..., ge=1, le=2**63 - 1),
+    output_id_power: str = Form(..., pattern=r"^[a-p]$", min_length=1, max_length=1),
     name: str = Form(...),
     access_token: Optional[str] = Cookie(None),
 ):
-    user = auth.get_current_user(access_token)
+    user = auth.get_current_user(auth.bearer_token_from_header(request.headers.get("authorization")) or access_token)
 
     if not user:
-        return {"error": "Unauthorized"}
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     if _invalid_name(name):
-        return {"error": "Invalid name"}
+        raise HTTPException(status_code=400, detail="Invalid name")
 
+    _require_output(relay_id, output_id_power)
     connection_manager.rename_blind_pair(relay_id, output_id_power, name.strip())
     return {"status": "Blind pair renamed"}
 

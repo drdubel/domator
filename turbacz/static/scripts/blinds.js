@@ -97,6 +97,8 @@ function renderRelayBlinds(pairs) {
 	container.innerHTML = ''
 
 	pairs.forEach(function (pair) {
+        if (!Number.isSafeInteger(Number(pair.relay_id)) || Number(pair.relay_id) < 1 ||
+            !/^[a-p]$/.test(pair.power_id) || !/^[a-p]$/.test(pair.direction_id) || pair.power_id === pair.direction_id) return
 		var card = document.createElement('div')
 		card.className = 'relay-blind-card'
 		card.dataset.relayId = pair.relay_id
@@ -106,13 +108,13 @@ function renderRelayBlinds(pairs) {
 		card.innerHTML =
 			'<div class="rblind-header">' +
 				'<div class="rblind-name-wrap">' +
-					'<span class="rblind-name-text">' + escapeHtml(pair.name) + '</span>' +
-					'<input class="rblind-name-input" type="text" value="' + escapeHtml(pair.name) + '" style="display:none">' +
+					'<span class="rblind-name-text"></span>' +
+					'<input class="rblind-name-input" type="text" style="display:none">' +
 					'<button class="rblind-edit-btn" title="Rename">✎</button>' +
 					'<button class="rblind-save-btn" title="Save" style="display:none">✓</button>' +
 					'<button class="rblind-cancel-btn" title="Cancel" style="display:none">✕</button>' +
 				'</div>' +
-				'<div class="rblind-subname">' + escapeHtml(pair.relay_name) + '</div>' +
+				'<div class="rblind-subname"></div>' +
 			'</div>' +
 			'<div class="rblind-controls">' +
 				'<button class="rblind-btn rblind-up" title="Up">' +
@@ -129,7 +131,11 @@ function renderRelayBlinds(pairs) {
 				'</button>' +
 			'</div>'
 
-		// Register in cardIndex for state tracking
+		card.querySelector('.rblind-name-text').textContent = pair.name
+        card.querySelector('.rblind-name-input').value = pair.name
+        card.querySelector('.rblind-subname').textContent = pair.relay_name
+
+        // Register in cardIndex for state tracking
 		var indexKey = pair.relay_id + ':' + pair.power_id + ':' + pair.direction_id
 		cardIndex[indexKey] = {
 			card: card,
@@ -186,7 +192,7 @@ function renderRelayBlinds(pairs) {
 			body.append('output_id_power', pair.power_id)
 			body.append('name', newName)
 
-			fetch('/lights/rename_blind_pair', { method: 'POST', body: body })
+			apiFetch('/lights/rename_blind_pair', { method: 'POST', body: body })
 				.then(function (r) { return r.json() })
 				.then(function (data) {
 					if (data.status === 'Blind pair renamed') {

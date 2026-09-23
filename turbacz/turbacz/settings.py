@@ -1,7 +1,12 @@
 from typing import Optional
 
-from pydantic import BaseModel
-from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict, TomlConfigSettingsSource
+from pydantic import BaseModel, Field
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+    TomlConfigSettingsSource,
+)
 
 
 class OIDCSettings(BaseModel):
@@ -24,6 +29,7 @@ class MQTTServerSettings(BaseModel):
 class ServerSettings(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8000
+    forwarded_allow_ips: Optional[str] = None
 
 
 class PSQLSettings(BaseModel):
@@ -39,6 +45,7 @@ class Monitoring(BaseModel):
     metrics: str = "http://127.0.0.1:8428"
     labels: dict[str, str] = {}
     sentry_dsn: Optional[str] = None
+    sentry_traces_sample_rate: float = Field(default=0.1, ge=0, le=1)
     collect_host_metrics: bool = True
     # "auto" detects common containers; it can be overridden with "host" or
     # "container". The label prevents container-visible values being mistaken
@@ -70,6 +77,25 @@ class HASettings(BaseModel):
     resync_interval: int = 60
 
 
+class SecuritySettings(BaseModel):
+    # The configured OIDC redirect origin/host is also trusted. No forwarded
+    # header is used to derive these allowlists.
+    allowed_hosts: list[str] = ["localhost", "127.0.0.1", "::1", "turbacz"]
+    allowed_origins: list[str] = ["https://localhost", "https://127.0.0.1"]
+    allow_insecure_http: bool = False
+    auth_requests_per_minute: int = Field(default=30, ge=1)
+    uploads_per_minute: int = Field(default=5, ge=1)
+    ws_handshakes_per_minute: int = Field(default=60, ge=1)
+    ws_connections_per_user: int = Field(default=8, ge=1)
+    ws_connections_per_ip: int = Field(default=16, ge=1)
+    ws_connections_total: int = Field(default=128, ge=1)
+    ws_messages_per_minute: int = Field(default=240, ge=1)
+    ws_max_bytes: int = Field(default=65536, ge=1024, le=1048576)
+    ws_max_items: int = Field(default=1024, ge=1, le=4096)
+    ws_idle_seconds: float = Field(default=300, gt=0)
+    ws_send_timeout: float = Field(default=5, gt=0)
+
+
 class TurbaczSettings(BaseSettings):
     authorized: set[str] = set()
     jwt_secret: str = ""
@@ -81,6 +107,7 @@ class TurbaczSettings(BaseSettings):
     psql: PSQLSettings = PSQLSettings()
     ha: HASettings = HASettings()
     firmware: FirmwareSettings = FirmwareSettings()
+    security: SecuritySettings = SecuritySettings()
     use_mqtt: bool = True
 
     model_config = SettingsConfigDict(toml_file="turbacz.toml")

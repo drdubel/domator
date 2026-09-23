@@ -21,6 +21,25 @@ case "$ENABLE_HA" in
     *)     HA_ENABLED="true" ;;
 esac
 
+echo "Local HTTP development on this machine only? [y/N]"
+read -r -p "> " LOCAL_HTTP
+case "$LOCAL_HTTP" in
+    [Yy]*) INSECURE_HTTP="true"; DEFAULT_ORIGIN="http://127.0.0.1:8000" ;;
+    *) INSECURE_HTTP="false"; DEFAULT_ORIGIN="https://localhost" ;;
+esac
+echo "Public browser origin, including scheme and optional port [$DEFAULT_ORIGIN]:"
+read -r -p "> " PUBLIC_ORIGIN
+PUBLIC_ORIGIN=${PUBLIC_ORIGIN:-$DEFAULT_ORIGIN}
+if [ "$INSECURE_HTTP" = "true" ]; then
+    if ! [[ "$PUBLIC_ORIGIN" =~ ^http://(localhost|127\.0\.0\.1)(:[0-9]{1,5})?$ ]]; then
+        echo "Local HTTP mode requires a localhost or 127.0.0.1 origin."
+        exit 1
+    fi
+elif ! [[ "$PUBLIC_ORIGIN" =~ ^https://[a-zA-Z0-9][a-zA-Z0-9.-]*(:[0-9]{1,5})?$ ]]; then
+    echo "Production requires an HTTPS origin without a path or trailing slash."
+    exit 1
+fi
+
 echo "Generating configuration file..."
 
 # Generate a random secret for JWT
@@ -55,8 +74,8 @@ password = "$MQTT_PASSWORD"
 [oidc]
 client_id = ""
 client_secret = ""
-allow_insecure_http = true
-redirect_uri = "http://127.0.0.1:8000/auth"
+allow_insecure_http = $INSECURE_HTTP
+redirect_uri = "$PUBLIC_ORIGIN/auth"
 token_endpoint_auth_method = "client_secret_post"
 
 [psql]
@@ -69,6 +88,10 @@ port = 5432
 [server]
 host = "0.0.0.0"
 port = 8000
+
+[security]
+allow_insecure_http = $INSECURE_HTTP
+allowed_origins = ["$PUBLIC_ORIGIN"]
 
 [monitoring]
 metrics = "http://victoriametrics:8428"

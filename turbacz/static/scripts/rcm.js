@@ -305,7 +305,7 @@ let rafId = CanvasView.rafId
 let isCardDragging = State.isCardDragging
 let root_id = State.root_id
 
-const API_BASE_URL = `https://${window.location.host}`
+const API_BASE_URL = window.location.origin
 const FIREFOX_THROTTLE_MS = 16
 
 // ========== UTILITY FUNCTIONS ==========
@@ -1142,7 +1142,7 @@ async function fetchAPI(endpoint) {
         const url = `${API_BASE_URL}${endpoint}`
         console.log('Fetching:', url)
 
-        const response = await fetch(url)
+        const response = await apiFetch(url)
         const text = await response.text()
         console.log('Response text:', text.substring(0, 200))
 
@@ -1173,7 +1173,7 @@ async function postForm(endpoint, data, sendUpdate = true) {
         const url = `${API_BASE_URL}${endpoint}`
         console.log('Posting to:', url, data)
 
-        const response = await fetch(url, {
+        const response = await apiFetch(url, {
             method: 'POST',
             body: formData
         })
@@ -1958,6 +1958,7 @@ function getRssiIcon(rssi) {
 }
 
 function createSwitch(switchId, switchName, buttonCount, x, y) {
+    if (!Number.isSafeInteger(switchId) || switchId < 1 || !Number.isInteger(buttonCount) || buttonCount < 1 || buttonCount > 24) return
     const savedPos = getSavedPosition(`switch-${switchId}`, x, y)
     const savedColor = getSavedColor(`switch-${switchId}`)
 
@@ -2053,7 +2054,7 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
                     </div>
                 </div>
                 <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
-                    <div class="device-name device-name-switch-${switchId}" style="flex: 1; margin-bottom: 0; cursor: pointer;">${escapeHtml(switchName)}</div>
+                    <div class="device-name device-name-switch-${switchId}" style="flex: 1; margin-bottom: 0; cursor: pointer;"></div>
                     <span class="ping-time ping-time-switch-${switchId}" title="${pingTitleSwitch}" style="font-size: 0.85rem; color: #94a3b8; white-space: nowrap;">${pingTextSwitch}</span>
                     <span class="signal-icon signal-icon-switch-${switchId}" title="${rssiTitleSwitch}">${getRssiIcon(rssiSwitch)}</span>
                     <button class="color-btn" onclick="event.stopPropagation(); showColorPicker(${switchId})" title="Change Color">🎨</button>
@@ -2069,6 +2070,7 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
                 </div>
         `
 
+    switchDiv.querySelector('.device-name').textContent = switchName
     document.getElementById('canvas').appendChild(switchDiv)
 
     // Add click and touch handler for device name edit
@@ -2328,6 +2330,7 @@ async function saveOutputConfig(relayId, outputId, outputName, autoOffSeconds, s
 }
 
 function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
+    if (!Number.isSafeInteger(relayId) || relayId < 1 || !Number.isInteger(outputsCount) || outputsCount < 1 || outputsCount > 16) return
     const savedPos = getSavedPosition(`relay-${relayId}`, x, y)
 
     const relayDiv = document.createElement('div')
@@ -2341,6 +2344,7 @@ function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
     const pairMap = {}
     const relayPairs = State.blindPairs[String(relayId)] || State.blindPairs[relayId] || []
     relayPairs.forEach(([powerId, dirId]) => {
+        if (![powerId, dirId].every(id => typeof id === 'string' && /^[a-p]$/.test(id) && id.charCodeAt(0) - 96 <= outputsCount) || powerId === dirId) return
         pairMap[powerId] = { role: 'power', partner: dirId }
         pairMap[dirId] = { role: 'direction', partner: powerId }
     })
@@ -2349,12 +2353,11 @@ function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
         const idx = outputId.charCodeAt(0) - 96
         const outputMetaRaw = outputs[outputId] || [`Output ${idx}`, 1, idx - 1, 0]
         const outputMeta = parseOutputMeta(outputMetaRaw, `Output ${idx}`)
-        const outputName = outputMeta.name
         const autoOffSeconds = outputMeta.autoOffSeconds
         return `
             <div class="output-item ${extraClass}" id="relay-${relayId}-output-${outputId}">
                 <span><img class="item-icon light-bulb-${relayId}-${outputId}" src="/static/data/img/off.png" alt="switch" style="cursor: pointer;"></span>
-                <span class="output-name output-name-${relayId}-${outputId}" style="cursor: pointer;">${escapeHtml(outputName)}</span>
+                <span class="output-name output-name-${relayId}-${outputId}" style="cursor: pointer;"></span>
                 ${extraBadgeHTML}
                 <span class="output-auto-off-badge" id="relay-${relayId}-auto-off-badge-${outputId}" title="${autoOffSeconds > 0 ? `Turns off after ${autoOffSeconds}s` : ''}">${formatAutoOffBadge(autoOffSeconds)}</span>
                 <div class="output-inline-controls" title="Auto-off delay">
@@ -2390,8 +2393,8 @@ function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
                     <div class="blind-pair-header">
                         <span>🪟 Roller Blind</span>
                         <div style="display:flex;gap:0.3rem;">
-                            <button class="blind-swap-btn" onclick="event.stopPropagation(); swapBlindPair(${relayId}, '${outputId}', '${dirId}')" title="Swap power and direction roles">⇅ Swap</button>
-                            <button class="blind-unlink-btn" onclick="event.stopPropagation(); removeBlindPair(${relayId}, '${outputId}')" title="Unlink blind pair">✕ Unlink</button>
+                            <button class="blind-swap-btn" data-blind-action="swap" data-output="${outputId}" data-direction="${dirId}" title="Swap power and direction roles">⇅ Swap</button>
+                            <button class="blind-unlink-btn" data-blind-action="unlink" data-output="${outputId}" title="Unlink blind pair">✕ Unlink</button>
                         </div>
                     </div>
                     ${buildOutputItemHTML(outputId, '<span class="blind-role-badge">Power ⏻</span>')}
@@ -2400,7 +2403,7 @@ function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
                 </div>`
         } else if (!pairInfo) {
             // Unpaired output — add a link button
-            const linkBtn = `<button class="blind-link-btn" onclick="event.stopPropagation(); startBlindLink(${relayId}, '${outputId}')" title="Link as roller blind">🔗 Link</button>`
+            const linkBtn = `<button class="blind-link-btn" data-blind-action="link" data-output="${outputId}" title="Link as roller blind">🔗 Link</button>`
             outputsHTML += buildOutputItemHTML(outputId, linkBtn)
         }
         // direction outputs are rendered inside their pair group above
@@ -2436,12 +2439,27 @@ function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
                     </div>
                 </div>
                 <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
-                    <div class="device-name device-name-relay-${relayId}" style="flex: 1; margin-bottom: 0; cursor: pointer;">${escapeHtml(relayName)}</div>
+                    <div class="device-name device-name-relay-${relayId}" style="flex: 1; margin-bottom: 0; cursor: pointer;"></div>
                     <span class="ping-time ping-time-relay-${relayId}" title="${pingTitleRelay}" style="font-size: 0.85rem; color: #94a3b8; white-space: nowrap;">${pingTextRelay}</span>
                     <span class="signal-icon signal-icon-relay-${relayId}" title="${rssiTitleRelay}">${getRssiIcon(rssiRelay)}</span>
                 </div>
                 ${outputsHTML}
             `
+    relayDiv.querySelectorAll('[data-blind-action]').forEach(button => {
+        button.addEventListener('click', event => {
+            event.stopPropagation()
+            const { blindAction, output, direction } = button.dataset
+            if (blindAction === 'swap') swapBlindPair(relayId, output, direction)
+            else if (blindAction === 'unlink') removeBlindPair(relayId, output)
+            else startBlindLink(relayId, output)
+        })
+    })
+    relayDiv.querySelector('.device-name').textContent = relayName
+    for (let i = 1; i <= outputsCount; i++) {
+        const id = String.fromCharCode(96 + i)
+        const label = relayDiv.querySelector(`.output-name-${relayId}-${id}`)
+        if (label) label.textContent = parseOutputMeta(outputs[id], `Output ${i}`).name
+    }
 
     document.getElementById('canvas').appendChild(relayDiv)
 
@@ -3249,7 +3267,7 @@ function uploadFirmware(deviceType) {
         const formData = new FormData()
         formData.append('file', file)
         try {
-            const res = await fetch(`/upload/${deviceType}`, {
+            const res = await apiFetch(`/upload/${deviceType}`, {
                 method: 'POST',
                 body: formData,
                 credentials: 'include'

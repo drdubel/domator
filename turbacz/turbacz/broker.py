@@ -16,8 +16,6 @@ from turbacz.websocket import ws_manager
 
 logger = logging.getLogger(__name__)
 
-METRICS_TIMEOUT = 5.0
-
 
 async def periodic_check_devices(interval: int = 15):
     """Periodically check if relays are online."""
@@ -292,15 +290,11 @@ async def handle_root_state(payload_str):
     logger.debug(metric_node)  # Debug log
     logger.debug(metric_mesh)  # Debug log
 
-    try:
-        async with httpx.AsyncClient(timeout=METRICS_TIMEOUT) as client:
-            response = await client.post(url, content=metric_node)
-            if response.status_code != 204:
-                logger.error("Failed to write metric for %s: %s", data["deviceId"], response.text)
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, content=metric_node)
+        if response.status_code != 204:
+            logger.error("Failed to write metric for %s: %s", data["deviceId"], response.text)
 
-            response = await client.post(url, content=metric_mesh)
-            if response.status_code != 204:
-                logger.error("Failed to write metric for %s: %s", data["deviceId"], response.text)
-
-    except httpx.HTTPError as e:
-        logger.warning("Metrics backend unreachable, dropping metrics for %s: %s", data["deviceId"], e)
+        response = await client.post(url, content=metric_mesh)
+        if response.status_code != 204:
+            logger.error("Failed to write metric for %s: %s", data["deviceId"], response.text)

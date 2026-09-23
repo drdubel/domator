@@ -62,7 +62,6 @@ class CustomRequestSizeMiddleware(BaseHTTPMiddleware):
 
 
 MAX_REQUEST_SIZE = 10_000_000
-METRICS_TIMEOUT = 5.0
 
 # Firmware images embed WiFi and MQTT credentials, so they are kept out of the
 # public static/ mount and served only by download_firmware() below.
@@ -220,31 +219,26 @@ async def get_temperatures(
     end: int = Query(..., ge=0),
     step: int = Query(..., gt=0, le=3600),
 ):
-    try:
-        async with httpx.AsyncClient(timeout=METRICS_TIMEOUT) as client:
-            response1 = await client.get(
-                f"{config.monitoring.metrics}/api/v1/query_range",
-                params={
-                    "start": start,
-                    "end": end,
-                    "query": "water_temperature",
-                    "step": step,
-                },
-            )
+    async with httpx.AsyncClient() as client:
+        response1 = await client.get(
+            f"{config.monitoring.metrics}/api/v1/query_range",
+            params={
+                "start": start,
+                "end": end,
+                "query": "water_temperature",
+                "step": step,
+            },
+        )
 
-            response2 = await client.get(
-                f"{config.monitoring.metrics}/api/v1/query_range",
-                params={
-                    "start": start,
-                    "end": end,
-                    "query": "pid_target",
-                    "step": step,
-                },
-            )
-
-    except httpx.HTTPError as e:
-        logger.warning("Metrics backend unreachable, returning empty temperature series: %s", e)
-        return []
+        response2 = await client.get(
+            f"{config.monitoring.metrics}/api/v1/query_range",
+            params={
+                "start": start,
+                "end": end,
+                "query": "pid_target",
+                "step": step,
+            },
+        )
 
     if response1.status_code != 200 or response2.status_code != 200:
         return "connection not working"
@@ -728,12 +722,7 @@ def start():
 
     logging.basicConfig(level=logging.INFO)
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    uvicorn.run(
-        app,
-        host=config.server.host,
-        port=config.server.port,
-        forwarded_allow_ips=config.server.forwarded_allow_ips,
-    )
+    uvicorn.run(app, host=config.server.host, port=config.server.port)
 
 
 if __name__ == "__main__":

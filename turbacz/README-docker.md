@@ -77,14 +77,24 @@ The Prometheus data source uses the same 15-second interval as the scraper.
 After deploying dashboard updates, ensure Grafana can read the files:
 
 ```bash
-chmod 755 monitoring/grafana/dashboards
+chmod 755 monitoring/grafana/dashboards monitoring/grafana/provisioning \
+  monitoring/grafana/provisioning/dashboards monitoring/grafana/provisioning/datasources
 chmod 644 monitoring/grafana/dashboards/*.json
+chmod 644 monitoring/grafana/provisioning/dashboards/dashboards.yml \
+  monitoring/grafana/provisioning/datasources/victoriametrics.yml
 docker compose restart grafana
 ```
 
 Restarting also loads changes to data-source provisioning. Dashboard JSON-only
 changes normally appear within 30 seconds without a restart. Use a browser
 refresh to reload an already-open dashboard.
+
+If the logs report `Datasource provisioning error` with `permission denied`,
+Grafana cannot read the mounted YAML and may repeatedly restart. Apply the
+permissions above on the Docker host (use `sudo` if another user owns the
+files). Fixing only the dashboard JSON permissions is insufficient. These
+commands target the shipped dashboard and provisioning files, not the database
+volume or application credential files.
 
 The panels require the device metrics `mesh_node_rssi` and `node_info_*` in
 VictoriaMetrics. Importing the dashboard does not transfer historical metrics.

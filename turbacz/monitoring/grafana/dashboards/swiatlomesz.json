@@ -3,7 +3,7 @@
   "uid": "mix8n8g",
   "title": "Światłomesz2",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "editable": true,
   "annotations": {
     "list": [
@@ -367,7 +367,7 @@
       },
       "options": {
         "edges": {
-          "mainStatUnit": "dB",
+          "mainStatUnit": "dBm",
           "secondaryStatUnit": "string"
         },
         "layoutAlgorithm": "layered",
@@ -385,7 +385,7 @@
         {
           "editorMode": "code",
           "exemplar": false,
-          "expr": "label_join(\n  label_join(\n    label_join(\n      last_over_time(mesh_node_rssi{apartment=~\"${apartment}\"}[30s]),\n      \"source\", \":\", \"apartment\", \"parent\"\n    ),\n    \"target\", \":\", \"apartment\", \"id\"\n  ),\n  \"edge_id\", \"->\", \"source\", \"target\"\n)",
+          "expr": "label_join(\n  label_join(\n    label_join(\n      last_over_time(mesh_node_rssi{apartment=~\"${apartment}\"}[30s]),\n      \"source\", \":\", \"apartment\", \"parent\"\n    ),\n    \"target\", \":\", \"apartment\", \"id\"\n  ),\n  \"id\", \"->\", \"source\", \"target\"\n)",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",
@@ -404,19 +404,18 @@
           "options": {
             "excludeByName": {},
             "includeByName": {
-              "edge_id": true,
+              "id": true,
               "source": true,
               "target": true,
               "Value": true
             },
             "indexByName": {
-              "edge_id": 0,
+              "id": 0,
               "source": 1,
               "target": 2,
               "Value": 3
             },
             "renameByName": {
-              "edge_id": "id",
               "Value": "mainstat"
             }
           }

@@ -3,6 +3,33 @@ from types import SimpleNamespace
 import turbacz.metrics as metrics
 
 
+def test_wifi_signal_and_disappearing_interfaces(tmp_path, monkeypatch):
+    wireless = tmp_path / "wireless"
+    monkeypatch.setenv("TURBACZ_WIFI_WIRELESS_PATH", str(wireless))
+    wireless.write_text(
+        "Inter-| sta-| Quality | Discarded packets\n"
+        " wlan0: 0000 70. -45. -256 0 0 0\n"
+        " wlan1: 0000 40. -72. -256 0 0 0\n"
+        " invalid: broken\n"
+        " relative: 0000 40. 50. 0 0 0\n"
+        " disconnected: 0000 0. 0. 0 0 0\n"
+    )
+    metrics._set_wifi_metrics()
+    assert metrics.host_wifi_signal_dbm.get({"interface": "wlan0"}) == -45
+    assert metrics.host_wifi_signal_dbm.get({"interface": "wlan1"}) == -72
+    assert len(metrics.host_wifi_signal_dbm.values) == 2
+    wireless.write_text("Inter-| sta-| Quality\n")
+    metrics._set_wifi_metrics()
+    assert not metrics.host_wifi_signal_dbm.values
+
+
+def test_wifi_missing_file_removes_previous_readings(tmp_path, monkeypatch):
+    monkeypatch.setenv("TURBACZ_WIFI_WIRELESS_PATH", str(tmp_path / "missing"))
+    metrics.host_wifi_signal_dbm.set({"interface": "wlan0"}, -50)
+    metrics._set_wifi_metrics()
+    assert not metrics.host_wifi_signal_dbm.values
+
+
 def test_memory_metrics_survive_unavailable_swap(monkeypatch):
     memory = SimpleNamespace(
         total=1000,

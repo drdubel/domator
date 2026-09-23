@@ -1,0 +1,1112 @@
+{
+  "id": null,
+  "uid": "mix8n8g",
+  "title": "Światłomesz2",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "annotations": {
+    "list": [
+      {
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "type": "dashboard"
+      }
+    ]
+  },
+  "graphTooltip": 0,
+  "links": [],
+  "liveNow": false,
+  "tags": [],
+  "panels": [
+    {
+      "id": 9,
+      "title": "Ping",
+      "description": "",
+      "links": [],
+      "type": "timeseries",
+      "pluginVersion": "12.4.0",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 14
+      },
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "dark-green"
+              },
+              {
+                "value": 5,
+                "color": "semi-dark-green"
+              },
+              {
+                "value": 15,
+                "color": "light-yellow"
+              },
+              {
+                "value": 25,
+                "color": "semi-dark-yellow"
+              },
+              {
+                "value": 50,
+                "color": "orange"
+              },
+              {
+                "value": 100,
+                "color": "dark-red"
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 5,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "area"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Średnia"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#ffffff",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.pointSize",
+                "value": 10
+              },
+              {
+                "id": "custom.drawStyle",
+                "value": "points"
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "avg (node_info_ping_time{apartment=~\"${apartment}\"}) by (name)",
+          "instant": false,
+          "legendFormat": "__auto",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "A",
+          "hide": false
+        },
+        {
+          "editorMode": "code",
+          "expr": "avg (node_info_ping_time{apartment=~\"${apartment}\"})",
+          "instant": false,
+          "legendFormat": "Średnia",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "B",
+          "hide": false
+        }
+      ],
+      "transformations": []
+    },
+    {
+      "id": 1,
+      "title": "Siła sygnału",
+      "description": "",
+      "links": [],
+      "type": "timeseries",
+      "pluginVersion": "12.4.0",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 24,
+        "h": 24
+      },
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dB",
+          "min": -100,
+          "max": -1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": -120,
+                "color": "dark-red"
+              },
+              {
+                "value": -100,
+                "color": "red"
+              },
+              {
+                "value": -80,
+                "color": "dark-orange"
+              },
+              {
+                "value": -70,
+                "color": "yellow"
+              },
+              {
+                "value": -50,
+                "color": "green"
+              },
+              {
+                "value": -30,
+                "color": "dark-green"
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineStyle": {
+              "fill": "solid"
+            },
+            "lineWidth": 5,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "area"
+            }
+          },
+          "fieldMinMax": false
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "points"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#ffffff",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.pointSize",
+                "value": 10
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "avg (mesh_node_rssi{apartment=~\"${apartment}\"}) by (name)",
+          "instant": false,
+          "legendFormat": "{{name}}",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "A",
+          "hide": false
+        },
+        {
+          "editorMode": "code",
+          "expr": "avg(mesh_node_rssi{apartment=~\"${apartment}\"})",
+          "instant": false,
+          "legendFormat": "Średnia",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "B",
+          "hide": false
+        }
+      ],
+      "transformations": []
+    },
+    {
+      "id": 2,
+      "title": "Map",
+      "description": "Mesh links from parent to device. IDs include the apartment to keep devices in different apartments separate; edge statistics show RSSI.",
+      "links": [],
+      "type": "nodeGraph",
+      "pluginVersion": "12.4.0",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 38,
+        "w": 12,
+        "h": 16
+      },
+      "options": {
+        "edges": {
+          "mainStatUnit": "dB",
+          "secondaryStatUnit": "string"
+        },
+        "layoutAlgorithm": "layered",
+        "nodes": {
+          "arcs": [],
+          "mainStatUnit": ""
+        },
+        "zoomMode": "greedy"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "exemplar": false,
+          "expr": "label_join(\n  label_join(\n    label_join(\n      last_over_time(mesh_node_rssi{apartment=~\"${apartment}\"}[30s]),\n      \"source\", \":\", \"apartment\", \"parent\"\n    ),\n    \"target\", \":\", \"apartment\", \"id\"\n  ),\n  \"edge_id\", \"->\", \"source\", \"target\"\n)",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "__auto",
+          "range": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "edges",
+          "hide": false
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "includeByName": {
+              "edge_id": true,
+              "source": true,
+              "target": true,
+              "Value": true
+            },
+            "indexByName": {
+              "edge_id": 0,
+              "source": 1,
+              "target": 2,
+              "Value": 3
+            },
+            "renameByName": {
+              "edge_id": "id",
+              "Value": "mainstat"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Clicks",
+      "description": "",
+      "links": [],
+      "type": "heatmap",
+      "pluginVersion": "12.4.0",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 38,
+        "w": 12,
+        "h": 16
+      },
+      "options": {
+        "calculate": false,
+        "cellGap": 1,
+        "color": {
+          "exponent": 0.5,
+          "fill": "dark-orange",
+          "mode": "scheme",
+          "reverse": false,
+          "scale": "exponential",
+          "scheme": "Oranges",
+          "steps": 64
+        },
+        "exemplars": {
+          "color": "rgba(255,0,255,0.7)"
+        },
+        "filterValues": {
+          "le": 1e-09
+        },
+        "legend": {
+          "show": true
+        },
+        "rowsFrame": {
+          "layout": "auto"
+        },
+        "tooltip": {
+          "mode": "single",
+          "showColorScale": false,
+          "yHistogram": false
+        },
+        "yAxis": {
+          "axisPlacement": "left",
+          "reverse": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "scaleDistribution": {
+              "type": "linear"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "delta(node_info_clicks{apartment=~\"${apartment}\"}[15s])",
+          "instant": false,
+          "legendFormat": "{{name}}",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "A",
+          "hide": false
+        }
+      ],
+      "transformations": []
+    },
+    {
+      "id": 5,
+      "title": "Nodes Free RAM",
+      "description": "",
+      "links": [],
+      "type": "stat",
+      "pluginVersion": "12.4.0",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 54,
+        "w": 24,
+        "h": 16
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": true,
+        "text": {},
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 10000,
+                "color": "#560000"
+              },
+              {
+                "value": 20000,
+                "color": "dark-red"
+              },
+              {
+                "value": 35000,
+                "color": "red"
+              },
+              {
+                "value": 50000,
+                "color": "#EAB839"
+              },
+              {
+                "value": 75000,
+                "color": "#6ED0E0"
+              },
+              {
+                "value": 100000,
+                "color": "green"
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "node_info_free_heap{apartment=~\"${apartment}\"}",
+          "instant": false,
+          "legendFormat": "{{name}}",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "A",
+          "hide": false
+        }
+      ],
+      "transformations": []
+    },
+    {
+      "id": 6,
+      "title": "Uptime",
+      "description": "",
+      "links": [],
+      "type": "timeseries",
+      "pluginVersion": "12.4.0",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 70,
+        "w": 24,
+        "h": 15
+      },
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 5,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "node_info_uptime{apartment=~\"${apartment}\"}/3600",
+          "instant": false,
+          "legendFormat": "{{name}}",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "A",
+          "hide": false
+        }
+      ],
+      "transformations": []
+    },
+    {
+      "id": 8,
+      "title": "Firmware Version",
+      "description": "",
+      "links": [],
+      "type": "table",
+      "pluginVersion": "12.4.0",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 85,
+        "w": 24,
+        "h": 12
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 80,
+                "color": "red"
+              }
+            ]
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "firmware"
+            },
+            "properties": []
+          }
+        ]
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "exemplar": false,
+          "expr": "mesh_node_rssi{apartment=~\"${apartment}\"}",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "__auto",
+          "range": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "A",
+          "hide": false
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "__name__": true,
+              "apartment": true,
+              "parent": true,
+              "parent_name": true,
+              "type": false
+            },
+            "includeByName": {},
+            "indexByName": {},
+            "renameByName": {}
+          }
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Heap & Dropped Messages on Root",
+      "description": "",
+      "links": [],
+      "type": "timeseries",
+      "pluginVersion": "12.4.0",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 97,
+        "w": 12,
+        "h": 14
+      },
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 80,
+                "color": "red"
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 5,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "exemplar": false,
+          "expr": "delta(node_info_low_heap{apartment=~\"${apartment}\"}[15s])",
+          "instant": false,
+          "legendFormat": "Low Heap",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "A",
+          "hide": false
+        },
+        {
+          "editorMode": "code",
+          "expr": "delta(node_info_critical_heap{apartment=~\"${apartment}\"}[15s])",
+          "instant": false,
+          "legendFormat": "Critical Heap",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "B",
+          "hide": false
+        },
+        {
+          "editorMode": "code",
+          "expr": "delta(node_info_mqtt_dropped{apartment=~\"${apartment}\"}[15s])",
+          "instant": false,
+          "legendFormat": "MQTT Dropped",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "C",
+          "hide": false
+        },
+        {
+          "editorMode": "code",
+          "expr": "node_info_mesh_dropped{apartment=~\"${apartment}\"}",
+          "instant": false,
+          "legendFormat": "Mesh Dropped",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "D",
+          "hide": false
+        }
+      ],
+      "transformations": []
+    },
+    {
+      "id": 4,
+      "title": "Disconnects ",
+      "description": "",
+      "links": [],
+      "type": "timeseries",
+      "pluginVersion": "12.4.0",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 97,
+        "w": 12,
+        "h": 14
+      },
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "min": 0,
+          "max": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              }
+            ]
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 5,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "delta(node_info_disconnects{apartment=~\"${apartment}\"}[15s])",
+          "instant": false,
+          "legendFormat": "{{name}}",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "A",
+          "hide": false
+        }
+      ],
+      "transformations": []
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "apartment",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "label": "Mieszkanie",
+        "hide": 0,
+        "refresh": 1,
+        "skipUrlSync": false,
+        "query": {
+          "qryType": 1,
+          "query": "label_values(node_info_uptime,apartment)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "regex": "",
+        "regexApplyTo": "value",
+        "sort": 0,
+        "definition": "label_values(node_info_uptime,apartment)",
+        "options": [],
+        "multi": false,
+        "includeAll": true,
+        "allowCustomValue": true,
+        "datasource": {
+          "type": "prometheus",
+          "uid": "victoriametrics"
+        },
+        "type": "query",
+        "allValue": ".*"
+      },
+      {
+        "name": "Filters",
+        "baseFilters": [],
+        "filters": [],
+        "defaultKeys": [],
+        "hide": 0,
+        "skipUrlSync": false,
+        "allowCustomValue": true,
+        "datasource": {
+          "type": "prometheus",
+          "uid": "victoriametrics"
+        },
+        "type": "adhoc"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-5m",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "refresh": "10s",
+  "timepicker": {
+    "refresh_intervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m",
+      "15m",
+      "30m",
+      "1h",
+      "2h",
+      "1d"
+    ],
+    "hidden": false
+  },
+  "fiscalYearStartMonth": 0
+}

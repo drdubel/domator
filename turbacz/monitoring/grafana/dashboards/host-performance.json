@@ -137,6 +137,17 @@
       "title": "Filesystems",
       "transformations": [{"id": "organize", "options": {"excludeByName": {"Time": true, "__name__": true, "instance": true, "job": true}, "indexByName": {"mountpoint": 0, "device": 1, "fstype": 2, "Value": 3}, "renameByName": {"Value": "Used %", "device": "Device", "fstype": "Type", "mountpoint": "Mountpoint"}}}],
       "type": "table"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "description": "Host Wi-Fi received signal strength in dBm, by wireless interface. Higher (less negative) is stronger. Red below -80, orange from -80, yellow from -70, green from -60. Requires Linux driver statistics; in Docker enable docker-compose.wifi.yml. Ethernet-only hosts and unsupported drivers show no data.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "decimals": 0, "min": -100, "max": 0, "noValue": "No recent signal", "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": -80}, {"color": "yellow", "value": -70}, {"color": "green", "value": -60}]}, "unit": "dBm"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 27},
+      "id": 14,
+      "options": {"displayMode": "gradient", "minVizHeight": 16, "minVizWidth": 8, "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showUnfilled": true},
+      "targets": [{"expr": "turbacz_host_wifi_signal_dbm{instance=~\"$instance\"}", "instant": true, "range": false, "legendFormat": "{{interface}}", "refId": "A"}],
+      "title": "Host Wi-Fi signal strength",
+      "type": "bargauge"
     }
   ],
   "refresh": "15s",
@@ -148,6 +159,6 @@
   "timezone": "browser",
   "title": "Host performance",
   "uid": "domator-host-performance",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }

@@ -29,8 +29,58 @@ This project now supports a streamlined Docker-based deployment that allows runn
 - Grafana dashboard (http://localhost:3000) - default login: admin/admin
 - VictoriaMetrics monitoring
 - Automatic 15-second scraping and a provisioned **Domator / Host performance** dashboard
+- Your **Domator / Światłomesz2** mesh dashboard, provisioned from
+  `monitoring/grafana/dashboards/swiatlomesz.json` and connected to VictoriaMetrics.
+  It includes all nine panels from the original export and defaults to all
+  apartments; select one with the **Mieszkanie** variable.
+
+### Mesh dashboard
+
+After copying the updated `monitoring` directory to the device, run from `turbacz`:
+
+```bash
+docker compose up -d victoriametrics grafana
+```
+
+Open `http://DEVICE_IP:3000/d/mix8n8g` or find **Światłomesz2** in the
+**Domator** folder. An already-running Grafana picks up dashboard file changes
+within about 30 seconds. This file uses Classic dashboard JSON for the existing
+file provisioning setup; the original v2 export's data-source references were
+replaced with the provisioned `victoriametrics` UID. The map creates unique
+edge IDs and uses apartment-qualified device IDs for its source and target.
+
+The panels require the device metrics `mesh_node_rssi` and `node_info_*` in
+VictoriaMetrics. Importing the dashboard does not transfer historical metrics.
+Keep persistent dashboard edits in the JSON file: later provisioning updates
+can overwrite edits made only in the Grafana UI.
 
 The system will be accessible at http://localhost:8000
+
+## Host Wi-Fi signal on Armbian / Linux
+
+The **Host performance** dashboard includes a **Host Wi-Fi signal strength**
+indicator in dBm for each wireless interface, filtered by the selected Instance.
+For Docker on the Orange Pi, first check that the driver exposes a negative
+signal level in the host's wireless statistics:
+
+```bash
+cat /proc/net/wireless
+```
+
+Enable the optional read-only host statistics mount and rebuild Turbacz:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.wifi.yml up -d --build turbacz grafana
+```
+
+Use both Compose files for subsequent stack updates to retain the mount.
+The override reads `/proc/1/net/wireless` from the Linux host network namespace;
+it does not require privileged containers or host networking. Native Linux
+installations read `/proc/net/wireless` automatically. The bar colors change
+at -80, -70, and -60 dBm; less negative values mean stronger reception.
+Ethernet-only hosts, unsupported drivers, and disconnected interfaces without
+valid readings show no data. This optional collector depends on the driver's
+wireless-extension statistics and does not collect Wi-Fi on macOS or Windows.
 
 ## Troubleshooting dependency downloads on Armbian / Orange Pi
 

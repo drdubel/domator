@@ -3,6 +3,7 @@ import os
 import platform
 import socket
 import time
+from pathlib import Path
 
 import psutil
 from aioprometheus.collectors import Counter, Gauge
@@ -29,10 +30,11 @@ pid_output = Gauge("pid_output", "PID output", const_labels=config.monitoring.la
 pid_target = Gauge("pid_target", "PID target", const_labels=config.monitoring.labels)
 pid_multiplier = Gauge("pid_multiplier", "PID multiplier", const_labels=config.monitoring.labels)
 
-# These metrics deliberately use psutil rather than Linux-only /proc parsing or
-# privileged hardware interfaces. The same collector therefore works when the
+# Core metrics use psutil rather than privileged hardware interfaces.
+# The same collector therefore works when the
 # service is run by an ordinary user on Linux (including Armbian), FreeBSD,
-# macOS, and Windows. Optional platform APIs are simply omitted when absent.
+# macOS, and Windows. Optional platform APIs are simply omitted when absent;
+# Wi-Fi signal collection additionally uses Linux's optional /proc statistics.
 host_info = _gauge("turbacz_host_info", "Static information about the measured host")
 host_metrics_collection_success = _gauge(
     "turbacz_host_metrics_collection_success",
@@ -79,6 +81,7 @@ host_network_sent_packets = _counter(
 host_network_errors = _counter("turbacz_host_network_errors_total", "Network errors by interface and direction")
 host_network_drops = _counter("turbacz_host_network_drops_total", "Dropped packets by interface and direction")
 host_temperature_celsius = _gauge("turbacz_host_temperature_celsius", "Hardware temperature when exposed by the OS")
+host_wifi_signal_dbm = _gauge("turbacz_host_wifi_signal_dbm", "Host Wi-Fi received signal strength in dBm")
 process_cpu_usage_percent = _gauge(
     "turbacz_process_cpu_usage_percent",
     "Turbacz process CPU usage as a percentage of one logical CPU",
@@ -158,6 +161,30 @@ def _set_network_metrics() -> None:
         host_network_errors.set({**labels, "direction": "send"}, values.errout)
         host_network_drops.set({**labels, "direction": "receive"}, values.dropin)
         host_network_drops.set({**labels, "direction": "send"}, values.dropout)
+
+
+def _set_wifi_metrics() -> None:
+    # Optional Linux wireless-extension statistics. A read-only host file mount
+    # makes these available without changing Docker's network or privileges.
+    host_wifi_signal_dbm.values.clear()
+    path = os.environ.get("TURBACZ_WIFI_WIRELESS_PATH", "/proc/net/wireless")
+    try:
+        lines = Path(path).read_text().splitlines()
+    except (OSError, UnicodeError):
+        return
+    for line in lines:
+        interface, separator, statistics = line.partition(":")
+        if not separator or not interface.strip():
+            continue
+        fields = statistics.split()
+        try:
+            level = float(fields[2].rstrip("."))
+        except (IndexError, ValueError):
+            continue
+        # Some drivers expose relative levels instead of dBm; do not label
+        # those as received power. Zero also commonly means disconnected.
+        if -256 < level < 0:
+            host_wifi_signal_dbm.set({"interface": interface.strip()}, level)
 
 
 def _set_temperature_metrics() -> None:
@@ -270,6 +297,7 @@ def collect_host_metrics() -> None:
                 logger.exception("Could not collect %s performance metrics", name)
 
         _set_temperature_metrics()
+        _set_wifi_metrics()
     except Exception:
         success = False
         logger.exception("Could not collect host performance metrics")

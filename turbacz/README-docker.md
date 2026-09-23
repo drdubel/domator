@@ -31,8 +31,8 @@ This project now supports a streamlined Docker-based deployment that allows runn
 - Automatic 15-second scraping and a provisioned **Domator / Host performance** dashboard
 - Your **Domator / Światłomesz2** mesh dashboard, provisioned from
   `monitoring/grafana/dashboards/swiatlomesz.json` and connected to VictoriaMetrics.
-  It includes all nine panels from the original export and defaults to all
-  apartments; select one with the **Mieszkanie** variable.
+  It defaults to all apartments; narrow the panels with **Mieszkanie** and
+  **Device ID**. Device names remain visible in charts and on the map.
 
 ### Mesh dashboard
 
@@ -48,6 +48,43 @@ within about 30 seconds. This file uses Classic dashboard JSON for the existing
 file provisioning setup; the original v2 export's data-source references were
 replaced with the provisioned `victoriametrics` UID. The map creates unique
 edge IDs and uses apartment-qualified device IDs for its source and target.
+
+The mesh dashboard starts with reporting-device count, weak-link count,
+weakest signal, highest ping, lowest free heap, and estimated clicks during the
+selected time range. Compact sections cover named topology, RSSI and ping
+history, free heap, button activity, uptime, observed restarts, and firmware
+inventory. Click rates account for counter resets. Uptime decreases indicate
+observed restarts; restarts during telemetry gaps may be missed.
+
+Most current mesh readings use a two-minute window; the topology uses 30
+seconds. These are telemetry windows, not authoritative online/offline states.
+The previous disconnect and dropped-message charts were replaced because the
+current broker does not export those metrics. Missing readings remain missing
+rather than displaying a healthy zero. RSSI values of zero are excluded because
+the firmware also uses zero when signal information is unavailable.
+
+**Host performance** separates scrape reachability from collector health and
+adds available memory, scrape/collection duration, network errors and drops,
+Wi-Fi history, free disk space, and process threads/open files. The process
+memory chart has a separate axis from CPU. Check **Measured scope**: bridge-mode
+Docker resource metrics describe the container-visible environment, while the
+optional Wi-Fi mount supplies physical-host wireless statistics.
+
+Both dashboards have navigation links and preserve gaps in time-series data.
+Threshold colors are visual troubleshooting guides, not configured alerts.
+The Prometheus data source uses the same 15-second interval as the scraper.
+
+After deploying dashboard updates, ensure Grafana can read the files:
+
+```bash
+chmod 755 monitoring/grafana/dashboards
+chmod 644 monitoring/grafana/dashboards/*.json
+docker compose restart grafana
+```
+
+Restarting also loads changes to data-source provisioning. Dashboard JSON-only
+changes normally appear within 30 seconds without a restart. Use a browser
+refresh to reload an already-open dashboard.
 
 The panels require the device metrics `mesh_node_rssi` and `node_info_*` in
 VictoriaMetrics. Importing the dashboard does not transfer historical metrics.

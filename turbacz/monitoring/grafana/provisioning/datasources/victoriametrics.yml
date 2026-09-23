@@ -8,3 +8,6 @@ datasources:
     url: http://victoriametrics:8428
     isDefault: true
     editable: true
+    jsonData:
+      # Match prometheus.yml so $__rate_interval uses the real scrape cadence.
+      timeInterval: 15s

@@ -3,7 +3,7 @@
   "uid": "mix8n8g",
   "title": "Światłomesz2",
   "schemaVersion": 39,
-  "version": 2,
+  "version": 3,
   "editable": true,
   "annotations": {
     "list": [
@@ -351,7 +351,7 @@
     {
       "id": 2,
       "title": "Map",
-      "description": "Mesh links from parent to device. IDs include the apartment to keep devices in different apartments separate; edge statistics show RSSI.",
+      "description": "Mesh links from parent to device. Devices display their names; apartment-qualified IDs keep connections unique. Parent-only nodes use parent names, including the root. Edge statistics show RSSI in dBm.",
       "links": [],
       "type": "nodeGraph",
       "pluginVersion": "12.4.0",
@@ -396,27 +396,53 @@
           },
           "refId": "edges",
           "hide": false
+        },
+        {
+          "editorMode": "code",
+          "exemplar": false,
+          "expr": "group by (id, title) (\n  label_join(\n    label_replace(\n      last_over_time(mesh_node_rssi{apartment=~\"${apartment}\"}[30s]),\n      \"title\", \"$1\", \"name\", \"(.+)\"\n    ),\n    \"id\", \":\", \"apartment\", \"id\"\n  )\n)\nor on (id)\ngroup by (id, title) (\n  label_join(\n    label_replace(\n      last_over_time(mesh_node_rssi{apartment=~\"${apartment}\"}[30s]),\n      \"title\", \"$1\", \"parent_name\", \"(.+)\"\n    ),\n    \"id\", \":\", \"apartment\", \"parent\"\n  )\n)",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "__auto",
+          "range": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "nodes",
+          "hide": false
         }
       ],
       "transformations": [
         {
-          "id": "organize",
+          "id": "filterFieldsByName",
+          "filter": {
+            "id": "byRefId",
+            "options": "edges"
+          },
           "options": {
-            "excludeByName": {},
-            "includeByName": {
-              "id": true,
-              "source": true,
-              "target": true,
-              "Value": true
-            },
-            "indexByName": {
-              "id": 0,
-              "source": 1,
-              "target": 2,
-              "Value": 3
-            },
-            "renameByName": {
-              "Value": "mainstat"
+            "include": {
+              "names": [
+                "id",
+                "source",
+                "target",
+                "Value"
+              ]
+            }
+          }
+        },
+        {
+          "id": "filterFieldsByName",
+          "filter": {
+            "id": "byRefId",
+            "options": "nodes"
+          },
+          "options": {
+            "include": {
+              "names": [
+                "id",
+                "title"
+              ]
             }
           }
         }

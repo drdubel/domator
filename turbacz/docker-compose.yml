@@ -1,6 +1,10 @@
 services:
   turbacz:
-    build: .
+    build:
+      context: .
+      # On Linux, set TURBACZ_BUILD_NETWORK=host if host DNS works but build
+      # DNS fails. See README-docker.md for diagnosis and a persistent fix.
+      network: ${TURBACZ_BUILD_NETWORK:-default}
     ports:
       - "8000:8000"
     depends_on:
@@ -14,6 +18,14 @@ services:
       - TURBACZ_CONFIG_PATH=/app/turbacz.toml
     volumes:
       - ./turbacz.toml:/app/turbacz.toml
+      # Uploaded OTA images. A named volume, not a path under static/, so the
+      # binaries (which embed WiFi/MQTT credentials) survive restarts without
+      # ever being reachable through the public static mount.
+      - firmware_data:/app/firmware
+    # These DNS servers apply to the running service, not Dockerfile RUN steps.
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     restart: unless-stopped
 
   postgres:
@@ -33,11 +45,31 @@ services:
       - "9883:9883"
     volumes:
       - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./mosquitto.acl:/mosquitto/config/mosquitto.acl
+      - ./mosquitto.passwd:/mosquitto/config/mosquitto.passwd
       - mosquitto_data:/mosquitto/data
     restart: unless-stopped
 
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    ports:
+      - "8123:8123"
+    depends_on:
+      mosquitto:
+        condition: service_started
+    volumes:
+      - ./homeassistant:/config
+      - /etc/localtime:/etc/localtime:ro
+    # Bridge networking keeps "mosquitto" resolvable by service name. Switch to
+    # network_mode: host (and drop ports/volumes' localtime) only if you later
+    # need mDNS/SSDP discovery of non-Domator devices on the LAN.
+    restart: unless-stopped
+
   grafana:
-    image: grafana/grafana:latest
+    # Keep upgrades deliberate: a moving `latest` tag can run database
+    # migrations merely because the stack was recreated. 13.2.2 is the
+    # current patched 13.2 release used by this dashboard.
+    image: grafana/grafana:13.2.2
     ports:
       - "3000:3000"
     depends_on:
@@ -46,19 +78,37 @@ services:
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_SECURITY_ADMIN_USER=admin
+      # Grafana 13's unified-storage workers perform concurrent reads and
+      # writes. SQLite's default rollback journal and zero query retries can
+      # turn a transient lock into a full HTTP-server shutdown. WAL permits
+      # concurrent readers, while retries absorb short writer contention.
+      - GF_DATABASE_WAL=true
+      - GF_DATABASE_QUERY_RETRIES=10
+      - GF_DATABASE_TRANSACTION_RETRIES=10
+      # This installation uses only built-in panels. Avoid background plugin
+      # downloads/updates competing for the SQLite database during startup.
+      - GF_PLUGINS_PREINSTALL_DISABLED=true
+      - GF_PLUGINS_PREINSTALL_AUTO_UPDATE=false
     volumes:
       - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     restart: unless-stopped
 
   victoriametrics:
     image: victoriametrics/victoria-metrics:latest
+    command:
+      - -storageDataPath=/victoriametrics_data
+      - -promscrape.config=/etc/victoriametrics/prometheus.yml
     ports:
       - "8428:8428"
     volumes:
       - victoriametrics_data:/victoriametrics_data
+      - ./monitoring/prometheus.yml:/etc/victoriametrics/prometheus.yml:ro
     restart: unless-stopped
 
 volumes:
+  firmware_data:
   postgres_data:
   mosquitto_data:
   grafana_data:

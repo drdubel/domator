@@ -1,0 +1,31 @@
+# Per-user topic permissions.
+#
+# The mesh protocol lives under a leading slash (/relay, /switch, /blind,
+# /heating). The Home Assistant bridge publishes only under homeassistant/ and
+# domator/, with no leading slash, so the two never overlap -- which is what
+# lets Home Assistant share this broker without being able to reach the mesh.
+
+# The backend is the only thing that bridges between the two worlds.
+user turbacz
+topic readwrite #
+
+# ESP-WiFi-mesh root node (uc/buttonsMeshIDF).
+user mesh_root
+topic readwrite /relay/#
+topic readwrite /switch/#
+
+# Heating controller (uc/heating).
+user heating-wifi
+topic write /heating/metrics
+topic read /heating/cmd
+
+# Legacy blind controller (uc/blinds_wifi).
+user blinds-wifi
+topic write /blind/pos
+topic read /blind/cmd
+
+# Home Assistant: discovery and the bridge's own topic tree, nothing else.
+# It cannot see or command the mesh directly.
+user homeassistant
+topic readwrite homeassistant/#
+topic readwrite domator/#

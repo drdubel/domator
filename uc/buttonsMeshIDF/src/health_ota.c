@@ -149,6 +149,27 @@ static void ota_reset_fail_count(void) { ota_set_fail_count(0); }
  * @return Never returns on success.  Returns ESP_FAIL if WiFi setup fails
  *         before the restart call is reached.
  */
+/**
+ * @brief Attach the OTA download token to the outgoing HTTPS request.
+ *
+ * The image served by turbacz embeds the WiFi and MQTT credentials, so its
+ * /firmware/<device>.bin route answers 401 to anonymous clients. This header
+ * is what identifies us as one of the household's own devices.
+ */
+static esp_err_t ota_http_client_init_cb(esp_http_client_handle_t client) {
+    const domator_credentials_t* creds = credentials_get();
+
+    if (strlen(creds->ota_token) == 0) {
+        ESP_LOGW(TAG,
+                 "No OTA token provisioned; the backend will reject this "
+                 "download with 401.");
+        return ESP_OK;
+    }
+
+    return esp_http_client_set_header(client, "X-Firmware-Token",
+                                      creds->ota_token);
+}
+
 esp_err_t mesh_disconnect_and_ota() {
     esp_err_t ret;
 
@@ -233,30 +254,40 @@ esp_err_t mesh_disconnect_and_ota() {
                     },
             },
     };
-    strlcpy((char*)wifi_cfg.sta.ssid, CONFIG_ROUTER_SSID,
+    const domator_credentials_t* creds = credentials_get();
+
+    strlcpy((char*)wifi_cfg.sta.ssid, creds->router_ssid,
             sizeof(wifi_cfg.sta.ssid));
-    strlcpy((char*)wifi_cfg.sta.password, CONFIG_ROUTER_PASSWD,
+    strlcpy((char*)wifi_cfg.sta.password, creds->router_pass,
             sizeof(wifi_cfg.sta.password));
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    ESP_LOGI(TAG, "Waiting for WiFi connection to '%s'...", CONFIG_ROUTER_SSID);
+    ESP_LOGI(TAG, "Waiting for WiFi connection to '%s'...",
+             creds->router_ssid);
     EventBits_t bits = xEventGroupWaitBits(
         s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT, pdFALSE,
         pdFALSE, pdMS_TO_TICKS(30000));
 
     if (!(bits & WIFI_CONNECTED_BIT)) {
-        ESP_LOGE(TAG, "Failed to connect to SSID: %s", CONFIG_ROUTER_SSID);
+        ESP_LOGE(TAG, "Failed to connect to SSID: %s", creds->router_ssid);
         ret = ESP_FAIL;
         esp_restart();
     }
 
-    ESP_LOGI(TAG, "Starting OTA from: %s", CONFIG_OTA_URL);
+    if (strlen(creds->ota_url) == 0) {
+        ESP_LOGE(TAG,
+                 "No OTA URL provisioned; nothing to download. Write ota_url "
+                 "into NVS (see provisioning/README.md).");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    ESP_LOGI(TAG, "Starting OTA from: %s", creds->ota_url);
 
     esp_http_client_config_t http_cfg = {
-        .url = CONFIG_OTA_URL,
+        .url = creds->ota_url,
         .timeout_ms = 30000,
         .keep_alive_enable = true,
         .crt_bundle_attach = esp_crt_bundle_attach,
@@ -264,6 +295,7 @@ esp_err_t mesh_disconnect_and_ota() {
 
     esp_https_ota_config_t ota_cfg = {
         .http_config = &http_cfg,
+        .http_client_init_cb = ota_http_client_init_cb,
     };
 
     ret = esp_https_ota(&ota_cfg);

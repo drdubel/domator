@@ -29,3 +29,33 @@ port = 8000
 
 [monitoring]
 metrics = "http://victoriametrics:8428"
+# Export CPU, load, memory, disk, network, temperature (when the OS exposes
+# it), and Turbacz process metrics at /metrics. No root access is required.
+collect_host_metrics = true
+# Use "host" for a native install. The Docker setup uses "container" because
+# filesystem and namespace values visible to the app belong to its container.
+host_metrics_scope = "container"
+# Optional. The same public DSN configures both server-side and browser error
+# reporting. Leave unset to disable Sentry without loading its browser SDK.
+# sentry_dsn = "https://PUBLIC_KEY@YOUR_SENTRY_HOST/PROJECT_ID"
+
+[firmware]
+# Where uploaded OTA images are kept. Deliberately outside static/: these
+# binaries embed the WiFi and MQTT credentials, so they must not be servable
+# anonymously. They are handed out by GET /firmware/<device>.bin.
+directory = "firmware"
+# Shared secret the devices send in the X-Firmware-Token header. Must match
+# CONFIG_OTA_TOKEN in uc/buttonsMeshIDF. Generate with: openssl rand -hex 32
+# Leaving this empty blocks device downloads entirely.
+token = ""
+
+[ha]
+# Publish lights, blinds, the heating loop and wall-button events to Home
+# Assistant over MQTT Discovery. Home Assistant must use the same broker.
+# See docs/home_assistant.md
+enabled = false
+# discovery_prefix = "homeassistant"
+# base_topic = "domator"
+# How often (seconds) to re-derive entities from the registry. The apply pass
+# is a diff, so a run with no changes publishes nothing.
+# resync_interval = 60

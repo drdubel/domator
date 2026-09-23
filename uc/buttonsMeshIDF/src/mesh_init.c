@@ -234,19 +234,34 @@ void mesh_network_init(void) {
 
     mesh_cfg_t cfg = MESH_INIT_CONFIG_DEFAULT();
 
-    uint8_t mesh_id[6] = {0};
-    memcpy(mesh_id, CONFIG_MESH_ID, sizeof(mesh_id));
-    memcpy(&cfg.mesh_id, mesh_id, 6);
+    const domator_credentials_t* creds = credentials_get();
+
+    uint8_t mesh_id[DOMATOR_MESH_ID_LEN] = {0};
+    memcpy(mesh_id, creds->mesh_id, sizeof(mesh_id));
+    memcpy(&cfg.mesh_id, mesh_id, DOMATOR_MESH_ID_LEN);
 
     cfg.channel = 11;
-    cfg.router.ssid_len = strlen(CONFIG_ROUTER_SSID);
-    memcpy(cfg.router.ssid, CONFIG_ROUTER_SSID, cfg.router.ssid_len);
-    memcpy(cfg.router.password, CONFIG_ROUTER_PASSWD,
-           strlen(CONFIG_ROUTER_PASSWD));
+
+    size_t ssid_len = strlen(creds->router_ssid);
+    if (ssid_len > sizeof(cfg.router.ssid)) {
+        ssid_len = sizeof(cfg.router.ssid);
+    }
+    cfg.router.ssid_len = ssid_len;
+    memcpy(cfg.router.ssid, creds->router_ssid, ssid_len);
+
+    size_t router_pass_len = strlen(creds->router_pass);
+    if (router_pass_len > sizeof(cfg.router.password)) {
+        router_pass_len = sizeof(cfg.router.password);
+    }
+    memcpy(cfg.router.password, creds->router_pass, router_pass_len);
 
     cfg.mesh_ap.max_connection = 6;
-    memcpy(cfg.mesh_ap.password, CONFIG_MESH_AP_PASSWD,
-           strlen(CONFIG_MESH_AP_PASSWD));
+
+    size_t ap_pass_len = strlen(creds->mesh_ap_pass);
+    if (ap_pass_len > sizeof(cfg.mesh_ap.password)) {
+        ap_pass_len = sizeof(cfg.mesh_ap.password);
+    }
+    memcpy(cfg.mesh_ap.password, creds->mesh_ap_pass, ap_pass_len);
 
     ESP_ERROR_CHECK(esp_mesh_set_config(&cfg));
 

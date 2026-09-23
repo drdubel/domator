@@ -1,0 +1,12 @@
+# Optional Linux/Armbian host Wi-Fi statistics for the Host performance dashboard.
+services:
+  turbacz:
+    environment:
+      - TURBACZ_WIFI_WIRELESS_PATH=/host/proc/net/wireless
+    volumes:
+      - type: bind
+        source: /proc/1/net/wireless
+        target: /host/proc/net/wireless
+        read_only: true
+        bind:
+          create_host_path: false

@@ -4,3 +4,9 @@ otadata,  data, ota,     0xd000,  0x2000,
 phy_init, data, phy,     0xf000,  0x1000,
 ota_0,    app,  ota_0,   0x10000, 1408K,
 ota_1,    app,  ota_1,   0x170000, 1408K,
+# Per-installation credentials, written over the wire at programming time.
+# Deliberately its own partition, placed after ota_1 so no existing offset
+# moves: the default nvs partition is erased on corruption (see app_main) and
+# is rewritten by OTA tooling, neither of which may take the credentials with
+# it. Re-provisioning touches 0x2D0000 only, never the app.
+creds,    data, nvs,     0x2D0000, 0x4000,

@@ -1,0 +1,5 @@
+# Filled-in provisioning data and the NVS images built from it. These hold the
+# WiFi and MQTT passwords in the clear -- they exist only on the machine doing
+# the flashing.
+credentials.csv
+*.bin

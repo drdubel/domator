@@ -71,8 +71,30 @@ Docker resource metrics describe the container-visible environment, while the
 optional Wi-Fi mount supplies physical-host wireless statistics.
 
 Both dashboards have navigation links and preserve gaps in time-series data.
+Dashboards refresh once per minute by default to limit query bursts on small
+boards. You can select a faster refresh in Grafana when troubleshooting.
 Threshold colors are visual troubleshooting guides, not configured alerts.
 The Prometheus data source uses the same 15-second interval as the scraper.
+
+### Idle CPU usage
+
+Turbacz keeps one HTTP connection pool for VictoriaMetrics and sends both node
+metric records in one request. Device names are cached for up to 60 seconds;
+edits through Turbacz invalidate this cache immediately. MQTT reconnects reuse
+the existing device-check and Home Assistant background tasks. Duplicate relay
+state reports no longer trigger WebSocket broadcasts to every open page.
+
+To apply backend changes, rebuild the service from the updated checkout:
+
+```bash
+docker compose up -d --build --no-deps turbacz
+```
+
+This briefly restarts Turbacz. Dashboard files are picked up automatically
+within about 30 seconds; reload open dashboards to use the new refresh default.
+Compare `docker stats` with pages closed and then open. CPU percentages there
+are relative to one core. Collect several minutes of samples to account for
+15-second telemetry bursts; a single snapshot is not an idle average.
 
 After deploying dashboard updates, ensure Grafana can read the files:
 

@@ -1364,7 +1364,7 @@
     "to": "now"
   },
   "timezone": "browser",
-  "refresh": "15s",
+  "refresh": "1m",
   "timepicker": {
     "refresh_intervals": [
       "5s",

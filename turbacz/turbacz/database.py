@@ -3,6 +3,7 @@
 import asyncio
 import inspect
 from functools import wraps
+from time import monotonic
 
 from fastapi import HTTPException
 
@@ -11,6 +12,11 @@ from turbacz import validation
 
 def serialized(method):
     signature = inspect.signature(method)
+    registry_read = method.__name__ in {"get_relays", "get_switches"}
+    registry_write = method.__name__ in {
+        "add_relay", "rename_relay", "remove_relay",
+        "add_switch", "rename_switch", "remove_switch",
+    }
 
     @wraps(method)
     def call(self, *args, **kwargs):
@@ -31,7 +37,19 @@ def serialized(method):
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             try:
-                return method(self, *args, **kwargs)
+                if registry_write:
+                    self._registry_cache.clear()
+                if registry_read:
+                    cached = self._registry_cache.get(method.__name__)
+                    if cached is not None and monotonic() - cached[0] < 60:
+                        return cached[1].copy()
+                result = method(self, *args, **kwargs)
+                if registry_read:
+                    # Values are immutable tuples; return a separate dict so
+                    # callers cannot mutate the cached registry. The TTL also
+                    # picks up changes made outside this process.
+                    self._registry_cache[method.__name__] = (monotonic(), result.copy())
+                return result
             except Exception:
                 self.conn.rollback()
                 raise

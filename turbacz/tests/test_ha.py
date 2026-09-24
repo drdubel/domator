@@ -224,6 +224,20 @@ async def test_unchanged_state_is_not_republished(bridge, client):
     assert client.sent == []
 
 
+async def test_reconnect_republishes_discovery_and_state(bridge, client):
+    await bridge.apply()
+    await bridge.on_relay_state(111, "a", 1)
+    client.drain()
+    await bridge.apply()
+    assert client.drain() == []
+    bridge.reset_published_state()
+    await bridge.apply()
+    await bridge.on_relay_state(111, "a", 1)
+    assert LIGHT_A in client.topics()
+    assert ("domator/status", "online", True) in client.sent
+    assert ("domator/light/111_a/state", "ON", True) in client.sent
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "direction, moving, stopped",

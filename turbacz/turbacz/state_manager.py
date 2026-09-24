@@ -17,6 +17,12 @@ class StateManager:
         self._ping_times: dict[int, list[int]] = {}
 
     async def update_state(self, relay_id: int, output_id: str, state: int):
+        if self.get_state(relay_id, output_id) == state:
+            # Opening a page requests every relay output again. Existing web
+            # clients already have these values; HA may still need a replay
+            # after a broker reconnect or a discovery change.
+            await ha_bridge.on_relay_state(relay_id, output_id, state)
+            return
         if relay_id not in self._states:
             self._states[relay_id] = {}
 
@@ -51,6 +57,10 @@ class StateManager:
         await ha_bridge.on_relay_state(relay_id, output_id, state)
 
     async def send_online_status(self, websocket=None):
+        if websocket is None and not any(
+            "/rcm/ws/" in connection.url.path for connection in ws_manager.active_connections
+        ):
+            return
         message = {
             "type": "online_status",
             "online_relays": list(self._online_relays.keys()),

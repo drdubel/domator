@@ -84,6 +84,10 @@ class HABridge:
         self._published[topic] = payload
         self._publish(topic, payload)
 
+    def reset_published_state(self) -> None:
+        """A reconnected broker may have lost retained discovery and state."""
+        self._published.clear()
+
     # -- discovery ------------------------------------------------------------
 
     async def apply(self) -> None:
@@ -103,8 +107,8 @@ class HABridge:
 
             self._registry = registry
 
-            self._publish(T.bridge_status_topic(self._base), "online")
-            self._publish(T.heating_mode_state_topic(self._base), "performance")
+            self._publish_state(T.bridge_status_topic(self._base), "online")
+            self._publish_state(T.heating_mode_state_topic(self._base), "performance")
 
             try:
                 applied = await asyncio.to_thread(self.cm().get_applied_topics)

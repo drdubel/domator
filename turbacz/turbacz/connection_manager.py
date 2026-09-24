@@ -47,6 +47,7 @@ def _invalid_name(name: str) -> bool:
 class ConnectionManager:
     def __init__(self):
         self._db_lock = RLock()
+        self._registry_cache = {}
         self.rootId: Optional[int] = None
 
         self._init_db()

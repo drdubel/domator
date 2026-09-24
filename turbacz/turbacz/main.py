@@ -3,13 +3,11 @@ import json
 import logging
 import os
 import secrets
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Callable, Optional
 
-import httpx
 import sentry_sdk
-import turbacz.auth as auth
-import turbacz.broker  # noqa: F401  -- registers the MQTT on_connect/on_message handlers
 from aioprometheus.asgi.middleware import MetricsMiddleware
 from aioprometheus.asgi.starlette import metrics as render_metrics
 from fastapi import (
@@ -33,10 +31,14 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
 from starlette.types import ASGIApp
+
+import turbacz.auth as auth
+import turbacz.broker  # noqa: F401  -- registers the MQTT on_connect/on_message handlers
 from turbacz.connection_manager import connection_manager, connection_router
 from turbacz.database import db_call
 from turbacz.ha.bridge import ha_bridge
 from turbacz.metrics import collect_host_metrics
+from turbacz.metrics_client import get_metrics_client, metrics_client_lifespan
 from turbacz.mqtt_client import mqtt, publish_blind_action
 from turbacz.security import SecurityMiddleware
 from turbacz.settings import config
@@ -117,7 +119,18 @@ if config.monitoring.sentry_dsn is not None:
     )
 
 
-app = FastAPI(title="Turbacz Home Automation System", version="0.1.0")
+@asynccontextmanager
+async def lifespan(app):
+    async with metrics_client_lifespan():
+        try:
+            await mqtt.mqtt_startup()
+            yield
+        finally:
+            await turbacz.broker.stop_background_tasks()
+            await mqtt.mqtt_shutdown()
+
+
+app = FastAPI(title="Turbacz Home Automation System", version="0.1.0", lifespan=lifespan)
 app.add_middleware(CustomRequestSizeMiddleware, max_content_size=MAX_REQUEST_SIZE)
 session_secret = config.session_secret
 if not session_secret:
@@ -151,9 +164,6 @@ async def prometheus_metrics(request: Request):
 
 app.include_router(auth.router)
 app.include_router(connection_router)
-mqtt.init_app(app)
-
-background_task_started = False
 
 
 @app.get("/sentry-config.js", include_in_schema=False)
@@ -228,26 +238,28 @@ async def get_temperatures(
     end: int = Query(..., ge=0),
     step: int = Query(..., gt=0, le=3600),
 ):
-    async with httpx.AsyncClient() as client:
-        response1 = await client.get(
-            f"{config.monitoring.metrics}/api/v1/query_range",
-            params={
-                "start": start,
-                "end": end,
-                "query": "water_temperature",
-                "step": step,
-            },
-        )
+    if end < start or (end - start) // step + 1 > 10000:
+        raise HTTPException(status_code=400, detail="History range must contain at most 10000 points")
+    client = get_metrics_client()
+    response1 = await client.get(
+        f"{config.monitoring.metrics}/api/v1/query_range",
+        params={
+            "start": start,
+            "end": end,
+            "query": "water_temperature",
+            "step": step,
+        },
+    )
 
-        response2 = await client.get(
-            f"{config.monitoring.metrics}/api/v1/query_range",
-            params={
-                "start": start,
-                "end": end,
-                "query": "pid_target",
-                "step": step,
-            },
-        )
+    response2 = await client.get(
+        f"{config.monitoring.metrics}/api/v1/query_range",
+        params={
+            "start": start,
+            "end": end,
+            "query": "pid_target",
+            "step": step,
+        },
+    )
 
     if response1.status_code != 200 or response2.status_code != 200:
         return "connection not working"

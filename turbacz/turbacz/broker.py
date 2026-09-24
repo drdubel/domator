@@ -3,19 +3,31 @@ import json
 import logging
 from time import time
 
-import httpx
 import namer
+
 import turbacz.metrics as metrics
 from turbacz.connection_manager import connection_manager
 from turbacz.database import db_call
 from turbacz.ha.bridge import ha_bridge
 from turbacz.line_protocol import node_metrics
+from turbacz.metrics_client import get_metrics_client
 from turbacz.mqtt_client import mqtt
 from turbacz.settings import config
 from turbacz.state_manager import state_manager
 from turbacz.websocket import ws_manager
 
 logger = logging.getLogger(__name__)
+_device_task: asyncio.Task | None = None
+_ha_task: asyncio.Task | None = None
+
+
+async def stop_background_tasks():
+    global _device_task, _ha_task
+    tasks = [task for task in (_device_task, _ha_task, ha_bridge._resync_task) if task is not None]
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    _device_task = _ha_task = ha_bridge._resync_task = None
 
 
 async def periodic_check_devices(interval: int = 15):
@@ -37,17 +49,23 @@ async def periodic_check_devices(interval: int = 15):
 
 @mqtt.on_connect()
 def connect(client, flags, rc, properties):
+    global _device_task, _ha_task
     mqtt.client.subscribe("/blind/pos")
     mqtt.client.subscribe("/heating/metrics")
     mqtt.client.subscribe("/relay/state/+")
     mqtt.client.subscribe("/switch/state/+")
 
     if config.ha.enabled:
+        ha_bridge.reset_published_state()
         for topic in ha_bridge.command_subscriptions():
             mqtt.client.subscribe(topic)
-        asyncio.create_task(ha_bridge.resync_loop())
+        if _ha_task is None or _ha_task.done():
+            _ha_task = asyncio.create_task(ha_bridge.resync_loop())
+        else:
+            ha_bridge.schedule_resync()
 
-    asyncio.create_task(periodic_check_devices())
+    if _device_task is None or _device_task.done():
+        _device_task = asyncio.create_task(periodic_check_devices())
 
     logger.info("Connected: %s %s %s %s", client, flags, rc, properties)
 
@@ -176,10 +194,6 @@ async def handle_root_state(payload_str):
     """
     Process root switch state payload.
     """
-    connections = await db_call(connection_manager.get_all_connections)
-    relays = await db_call(connection_manager.get_relays)
-    switches = await db_call(connection_manager.get_switches)
-
     try:
         data = json.loads(payload_str)
         logger.debug("Root State Data: %s", data)  # Debug log
@@ -191,6 +205,7 @@ async def handle_root_state(payload_str):
     status = data.get("status", "")
 
     if status == "connected":
+        connections = await db_call(connection_manager.get_all_connections)
         logger.debug("Connections: %s", connections)  # Debug log
 
         mqtt.client.publish("/switch/cmd/root", json.dumps({"type": "connections", "data": connections}))
@@ -221,6 +236,8 @@ async def handle_root_state(payload_str):
     if status == "disconnected":
         return
 
+    relays = await db_call(connection_manager.get_relays)
+    switches = await db_call(connection_manager.get_switches)
     url = f"{config.monitoring.metrics}/api/v2/write"
     if data["type"] == "switch":
         if data["deviceId"] in switches:
@@ -287,11 +304,6 @@ async def handle_root_state(payload_str):
     logger.debug(metric_node)  # Debug log
     logger.debug(metric_mesh)  # Debug log
 
-    async with httpx.AsyncClient() as client:
-        response = await client.post(url, content=metric_node)
-        if response.status_code != 204:
-            logger.error("Failed to write metric for %s: %s", data["deviceId"], response.text)
-
-        response = await client.post(url, content=metric_mesh)
-        if response.status_code != 204:
-            logger.error("Failed to write metric for %s: %s", data["deviceId"], response.text)
+    response = await get_metrics_client().post(url, content=f"{metric_node}\n{metric_mesh}")
+    if response.status_code != 204:
+        logger.error("Failed to write metrics for %s: %s", data["deviceId"], response.text)

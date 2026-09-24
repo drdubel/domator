@@ -10,8 +10,9 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
+
 from turbacz.database import db_call, serialized_manager
-from turbacz.line_protocol import node_metrics
+from turbacz.mesh_metrics import record_node_metrics
 from turbacz.security import RateLimiter, csrf_token
 from turbacz.settings import SecuritySettings, config
 from turbacz.temperature_history import merge_temperature_series
@@ -227,6 +228,7 @@ def test_jwt_compatibility_and_invalid_tokens(application):
 def test_explicit_local_http_opt_in(application, monkeypatch):
     from fastapi import FastAPI
     from starlette.middleware.sessions import SessionMiddleware
+
     from turbacz.security import SecurityMiddleware
 
     a = application
@@ -529,7 +531,7 @@ def test_form_output_ids_and_membership(application):
     assert response.status_code == 400
 
 
-def test_metrics_escape_all_tags_and_reject_injected_fields():
+def test_mesh_metrics_reject_invalid_labels_and_values():
     data = {
         "deviceId": 111,
         "name": "A, B=C",
@@ -541,10 +543,7 @@ def test_metrics_escape_all_tags_and_reject_injected_fields():
         "freeHeap": 100,
         "rssi": -40,
     }
-    node, mesh = node_metrics(data, "P, Q=R", {"site,name": "a=b c"}, 5)
-    assert "name=A\\,\\ B\\=C" in node
-    assert "site\\,name=a\\=b\\ c" in mesh
-    assert "parent_name=P\\,\\ Q\\=R" in mesh
+    record_node_metrics(data, 'P, Q=R', 5)
     for field, value in [
         ("firmware", "x\ninjected value=1"),
         ("name", "x\rfoo"),
@@ -553,7 +552,7 @@ def test_metrics_escape_all_tags_and_reject_injected_fields():
         ("freeHeap", float("inf")),
     ]:
         with pytest.raises(ValueError):
-            node_metrics({**data, field: value}, "parent", {}, 5)
+            record_node_metrics({**data, field: value}, "parent", 5)
 
 
 def test_temperature_history_joins_labels_and_sparse_timestamps():

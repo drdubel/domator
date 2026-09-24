@@ -1,4 +1,4 @@
-"""One connection pool for telemetry writes and history queries."""
+"""Connection pool for VictoriaMetrics history queries."""
 
 from contextlib import asynccontextmanager
 
@@ -17,7 +17,7 @@ def get_metrics_client() -> httpx.AsyncClient:
 async def metrics_client_lifespan():
     global _client
     # Keep TLS verification and normal timeout defaults. Reusing the client
-    # avoids reloading the trust store and reconnecting for every mesh report.
+    # avoids reloading the trust store and reconnecting for each history query.
     async with httpx.AsyncClient() as client:
         _client = client
         try:

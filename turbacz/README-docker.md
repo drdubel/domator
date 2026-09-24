@@ -76,10 +76,53 @@ boards. You can select a faster refresh in Grafana when troubleshooting.
 Threshold colors are visual troubleshooting guides, not configured alerts.
 The Prometheus data source uses the same 15-second interval as the scraper.
 
+### All telemetry uses `/metrics`
+
+VictoriaMetrics scrapes mesh, heating and host metrics from the same endpoint.
+The bundled Compose setup already configures a 15-second scrape. For an external
+VictoriaMetrics instance, add this job to the file loaded by its
+`-promscrape.config` flag and reload/restart that instance:
+
+```yaml
+scrape_configs:
+  - job_name: turbacz
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["TURBACZ_HOST_IP:8000"]
+```
+
+The target must be reachable from VictoriaMetrics. Native Turbacz must listen
+on a reachable interface, such as `server.host = "0.0.0.0"`. Grafana must query
+this same VictoriaMetrics instance. Setting `monitoring.metrics` alone does not
+configure scraping: that URL is now used only for heating-history queries.
+The obsolete `monitoring.send_metrics` setting is ignored; no push path remains.
+
+Existing mesh metric names and device labels are preserved. Scraped series also
+receive the scraper's `job` and `instance` labels, so old pushed history and new
+scraped data have different series identities. Avoid running old push-producing
+Turbacz instances alongside the new one for the same devices. Existing history
+is retained, but a dashboard range spanning migration can show both identities.
+
+Mesh readings expire after 30 seconds without valid telemetry. The endpoint
+continues to expose `node_info_available = 0` and
+`node_info_last_seen_seconds` for up to one hour, then forgets the device.
+Renames, firmware changes and parent changes replace old label sets on the next
+scrape. Scrapes use collection timestamps and keep only the latest report;
+short-lived changes between scrapes are not retained. Dashboard range windows
+can still display earlier samples until their lookback window expires.
+
+Verify after deploying and receiving a device report:
+
+```bash
+curl -fsS http://localhost:8000/metrics | grep -E '^(node_info_|mesh_node_)'
+```
+
 ### Idle CPU usage
 
-Turbacz keeps one HTTP connection pool for VictoriaMetrics and sends both node
-metric records in one request. Device names are cached for up to 60 seconds;
+Turbacz stores the latest mesh readings in memory and exposes them alongside
+heating and host telemetry at `/metrics`, with no outbound metric writes. One
+HTTP connection pool is retained for heating-history queries. Device names are
+cached for up to 60 seconds;
 edits through Turbacz invalidate this cache immediately. MQTT reconnects reuse
 the existing device-check and Home Assistant background tasks. Duplicate relay
 state reports no longer trigger WebSocket broadcasts to every open page.

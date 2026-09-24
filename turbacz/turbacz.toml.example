@@ -50,6 +50,8 @@ allowed_origins = ["https://domator.example"]
 # ws_idle_seconds = 300
 
 [monitoring]
+# Used only to query heating history. Mesh, heating and host metrics are all
+# exposed at /metrics and must be scraped by VictoriaMetrics/Prometheus.
 metrics = "http://victoriametrics:8428"
 # Export CPU, load, memory, disk, network, temperature (when the OS exposes
 # it), and Turbacz process metrics at /metrics. No root access is required.

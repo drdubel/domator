@@ -37,6 +37,7 @@ import turbacz.broker  # noqa: F401  -- registers the MQTT on_connect/on_message
 from turbacz.connection_manager import connection_manager, connection_router
 from turbacz.database import db_call
 from turbacz.ha.bridge import ha_bridge
+from turbacz.mesh_metrics import collect_mesh_metrics
 from turbacz.metrics import collect_host_metrics
 from turbacz.metrics_client import get_metrics_client, metrics_client_lifespan
 from turbacz.mqtt_client import mqtt, publish_blind_action
@@ -159,6 +160,7 @@ async def prometheus_metrics(request: Request):
         # Filesystem accounting can touch slow/network mounts. Keep a scrape
         # from stalling unrelated FastAPI requests.
         await asyncio.to_thread(collect_host_metrics)
+    collect_mesh_metrics()
     return await render_metrics(request)
 
 

@@ -41,7 +41,7 @@ class PSQLSettings(BaseModel):
 
 
 class Monitoring(BaseModel):
-    send_metrics: bool = True
+    # Query endpoint for heating history only; all telemetry is scraped at /metrics.
     metrics: str = "http://127.0.0.1:8428"
     labels: dict[str, str] = {}
     sentry_dsn: Optional[str] = None

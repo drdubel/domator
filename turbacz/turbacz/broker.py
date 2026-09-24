@@ -9,8 +9,7 @@ import turbacz.metrics as metrics
 from turbacz.connection_manager import connection_manager
 from turbacz.database import db_call
 from turbacz.ha.bridge import ha_bridge
-from turbacz.line_protocol import node_metrics
-from turbacz.metrics_client import get_metrics_client
+from turbacz.mesh_metrics import record_node_metrics
 from turbacz.mqtt_client import mqtt
 from turbacz.settings import config
 from turbacz.state_manager import state_manager
@@ -238,7 +237,6 @@ async def handle_root_state(payload_str):
 
     relays = await db_call(connection_manager.get_relays)
     switches = await db_call(connection_manager.get_switches)
-    url = f"{config.monitoring.metrics}/api/v2/write"
     if data["type"] == "switch":
         if data["deviceId"] in switches:
             data["name"] = switches[data["deviceId"]][0]
@@ -290,20 +288,7 @@ async def handle_root_state(payload_str):
 
     mqtt.client.publish("/switch/cmd/" + str(data["deviceId"]), "P")
 
-    if not config.monitoring.send_metrics:
-        return
-
     try:
-        metric_node, metric_mesh = node_metrics(
-            data, parent_name, config.monitoring.labels, state_manager.get_device_ping(data["deviceId"])
-        )
+        record_node_metrics(data, parent_name, state_manager.get_device_ping(data["deviceId"]))
     except (ValueError, TypeError, KeyError, OverflowError):
         logger.warning("Rejected invalid node metrics")
-        return
-
-    logger.debug(metric_node)  # Debug log
-    logger.debug(metric_mesh)  # Debug log
-
-    response = await get_metrics_client().post(url, content=f"{metric_node}\n{metric_mesh}")
-    if response.status_code != 204:
-        logger.error("Failed to write metrics for %s: %s", data["deviceId"], response.text)

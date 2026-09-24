@@ -8,14 +8,13 @@ import httpx
 import pytest
 
 from turbacz import metrics_client
-from turbacz.settings import config
 
 from .test_security import (
     application as application,  # noqa: PLC0414 -- shared pytest fixture
 )
 
 
-async def test_shared_pool_batches_reports_and_serves_history(application, monkeypatch):
+async def test_mesh_reports_are_scraped_while_pool_only_serves_history(application, monkeypatch):
     from turbacz import broker
 
     requests = []
@@ -36,7 +35,6 @@ async def test_shared_pool_batches_reports_and_serves_history(application, monke
     broker.state_manager.get_device_ping.return_value = 5
     monkeypatch.setattr(broker, "ha_bridge", MagicMock())
     broker.ha_bridge._resync_task = None
-    monkeypatch.setattr(config.monitoring, "send_metrics", True)
     data = {
         "deviceId": 111,
         "parentId": 111,
@@ -57,14 +55,13 @@ async def test_shared_pool_batches_reports_and_serves_history(application, monke
     assert pool.is_closed
     with pytest.raises(RuntimeError):
         metrics_client.get_metrics_client()
-    writes = [r for r in requests if r.method == "POST"]
-    assert len(writes) == 3
-    for request in writes:
-        lines = request.content.decode().splitlines()
-        assert len(lines) == 2
-        assert lines[0].startswith("node_info,")
-        assert lines[1].startswith("mesh_node,")
-    assert len(requests) == 5
+    assert len(requests) == 2
+    assert all(request.method == "GET" for request in requests)
+    response = application.http.get("/metrics")
+    assert response.status_code == 200
+    assert 'node_info_uptime{' in response.text
+    assert 'mesh_node_rssi{' in response.text
+    assert 'node_info_available{' in response.text
 
 
 async def test_pool_closes_when_mqtt_startup_fails(application, monkeypatch):

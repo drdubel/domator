@@ -1481,8 +1481,9 @@ void mqtt_init(void) {
              g_device_id);
 
     // Build complete MQTT broker URI
-    char broker_uri[128];
     const domator_credentials_t* creds = credentials_get();
+    // Allow the longest provisioned URI plus the optional default port.
+    char broker_uri[sizeof(creds->mqtt_uri) + sizeof(":1883") - 1];
     const char* url = creds->mqtt_uri;
 
     // Check if URL already includes port

@@ -21,7 +21,31 @@ Two things follow from moving them out:
 A device with no credentials does not fall back to defaults. It logs what is
 missing every 10 seconds and joins nothing.
 
+## Setup
+
+On each programming computer, run from `uc/buttonsMeshIDF`:
+
+```bash
+python3 -m venv .pio/provisioning-venv
+source .pio/provisioning-venv/bin/activate
+python -m pip install -r provisioning/requirements.txt
+```
+
+Activate that environment again in each new terminal before provisioning.
+On Debian/Ubuntu, if creating the environment fails because `venv` or
+`ensurepip` is unavailable, install `python3-venv` first.
+
+These tools work without a full ESP-IDF installation. Finding ESP-IDF's
+`nvs_partition_gen.py` alone is not enough: newer versions are wrappers that
+require the `esp_idf_nvs_partition_gen` Python package. The script checks both
+tools before creating the credential image or accessing the device.
+
+To select an interpreter without activating its environment, set
+`PROVISION_PYTHON=/path/to/venv/bin/python` when running `provision.sh`.
+
 ## First time on a given device
+
+With the environment above active, run from `provisioning/`:
 
 ```bash
 cp credentials.csv.example credentials.csv

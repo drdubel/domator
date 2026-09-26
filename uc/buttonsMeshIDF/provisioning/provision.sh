@@ -15,6 +15,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CSV="$HERE/credentials.csv"
 CHIP="auto"
 PORT=""
+PROVISION_PYTHON="${PROVISION_PYTHON:-python3}"
 
 usage() { sed -n '3,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
@@ -48,19 +49,40 @@ fi
 
 echo "Partition 'creds' at $OFFSET, size $SIZE (from partitions.csv)"
 
-# nvs_partition_gen.py ships with ESP-IDF; PlatformIO keeps its own copy.
-GEN=""
-for candidate in \
-    "${IDF_PATH:-}/components/nvs_flash/nvs_partition_generator/nvs_partition_gen.py" \
-    "$HOME/.platformio/packages/framework-espidf/components/nvs_flash/nvs_partition_generator/nvs_partition_gen.py"
-do
-    if [ -n "$candidate" ] && [ -f "$candidate" ]; then GEN="$candidate"; break; fi
-done
+# Prefer the installed module; newer ESP-IDF scripts only wrap this module.
+# Older ESP-IDF installations may still provide a standalone generator.
+GEN=("$PROVISION_PYTHON" -m esp_idf_nvs_partition_gen)
+if ! "${GEN[@]}" --help >/dev/null 2>&1; then
+    GEN=()
+    for candidate in \
+        "${IDF_PATH:-}/components/nvs_flash/nvs_partition_generator/nvs_partition_gen.py" \
+        "$HOME/.platformio/packages/framework-espidf/components/nvs_flash/nvs_partition_generator/nvs_partition_gen.py"
+    do
+        if [ -f "$candidate" ] && "$PROVISION_PYTHON" "$candidate" --help >/dev/null 2>&1; then
+            GEN=("$PROVISION_PYTHON" "$candidate")
+            break
+        fi
+    done
+fi
 
-if [ -z "$GEN" ]; then
-    echo "ERROR: nvs_partition_gen.py not found." >&2
-    echo "Source ESP-IDF's export.sh, or: pip install esp-idf-nvs-partition-gen" >&2
+if [ "${#GEN[@]}" -eq 0 ]; then
+    echo "ERROR: NVS generator is unavailable in Python: $PROVISION_PYTHON" >&2
+    echo "Activate a provisioning virtual environment and install its tools:" >&2
+    echo "  python -m pip install -r \"$HERE/requirements.txt\"" >&2
+    echo "See $HERE/README.md (Setup)." >&2
     exit 1
+fi
+
+ESPTOOL=("$PROVISION_PYTHON" -m esptool)
+if ! "${ESPTOOL[@]}" --help >/dev/null 2>&1; then
+    ESPTOOL_SCRIPT="$(command -v esptool.py || true)"
+    if [ -n "$ESPTOOL_SCRIPT" ] && "$PROVISION_PYTHON" "$ESPTOOL_SCRIPT" --help >/dev/null 2>&1; then
+        ESPTOOL=("$PROVISION_PYTHON" "$ESPTOOL_SCRIPT")
+    else
+        echo "ERROR: esptool is unavailable in Python: $PROVISION_PYTHON" >&2
+        echo "Install provisioning/requirements.txt in your active virtual environment." >&2
+        exit 1
+    fi
 fi
 
 # An explicit template works with both GNU (Linux) and BSD (macOS) mktemp.
@@ -71,10 +93,7 @@ IMAGE="$CREDS_TMP_DIR/credentials.bin"
 trap 'rm -f "$IMAGE"; rmdir "$CREDS_TMP_DIR"' EXIT
 
 echo "Building NVS image from $(basename "$CSV")..."
-python3 "$GEN" generate "$CSV" "$IMAGE" "$SIZE" >/dev/null
-
-ESPTOOL=(python3 -m esptool)
-command -v esptool.py >/dev/null 2>&1 && ESPTOOL=(esptool.py)
+"${GEN[@]}" generate "$CSV" "$IMAGE" "$SIZE" >/dev/null
 
 ARGS=(--chip "$CHIP")
 [ -n "$PORT" ] && ARGS+=(--port "$PORT")

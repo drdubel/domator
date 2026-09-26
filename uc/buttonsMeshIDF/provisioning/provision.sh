@@ -63,8 +63,12 @@ if [ -z "$GEN" ]; then
     exit 1
 fi
 
-IMAGE="$(mktemp -t creds).bin"
-trap 'rm -f "$IMAGE"' EXIT   # the image holds the passwords in the clear
+# An explicit template works with both GNU (Linux) and BSD (macOS) mktemp.
+# Keep the .bin inside a private directory: appending it to a temporary file
+# name would leave the original file behind and create a new, unprotected file.
+CREDS_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/domator-creds.XXXXXX")"
+IMAGE="$CREDS_TMP_DIR/credentials.bin"
+trap 'rm -f "$IMAGE"; rmdir "$CREDS_TMP_DIR"' EXIT
 
 echo "Building NVS image from $(basename "$CSV")..."
 python3 "$GEN" generate "$CSV" "$IMAGE" "$SIZE" >/dev/null

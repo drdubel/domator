@@ -497,9 +497,13 @@ void remote_switch_run(void) {
     ESP_ERROR_CHECK(start_now());
     ota_check_rollback_on_boot();
     // SuperMini GPIO8 is an active-low discrete LED, not a WS2812.
+    ESP_ERROR_CHECK(gpio_hold_dis(LED_GPIO));
     gpio_config_t led = {.pin_bit_mask = 1ULL << LED_GPIO, .mode = GPIO_MODE_OUTPUT};
     ESP_ERROR_CHECK(gpio_config(&led));
     gpio_set_level(LED_GPIO, 1);
+    // IDF's GPIO sleep workaround isolates pads by default. Keep the
+    // SuperMini's active-low LED driven high instead of floating in sleep.
+    ESP_ERROR_CHECK(gpio_sleep_sel_dis(LED_GPIO));
     button_edges = xQueueCreate(64, sizeof(button_edge_t));
     configASSERT(button_edges);
     ESP_ERROR_CHECK(gpio_install_isr_service(ESP_INTR_FLAG_IRAM));
@@ -573,7 +577,14 @@ void remote_switch_run(void) {
         // that pin's timer. No periodic 2 ms CPU polling in remote mode.
         ESP_ERROR_CHECK(esp_sleep_enable_timer_wakeup(remaining > 0 ? remaining : 1));
         esp_err_t err = ESP_OK;
-        if (!uxQueueMessagesWaiting(button_edges)) err = esp_light_sleep_start();
+        if (!uxQueueMessagesWaiting(button_edges)) {
+            // Latch the physical pad high, not just its awake GPIO register.
+            // Release after waking so transmission/OTA indications still work.
+            ESP_ERROR_CHECK(gpio_set_level(LED_GPIO, 1));
+            ESP_ERROR_CHECK(gpio_hold_en(LED_GPIO));
+            err = esp_light_sleep_start();
+            ESP_ERROR_CHECK(gpio_hold_dis(LED_GPIO));
+        }
         for (int i = 0; i < NUM_BUTTONS; i++) {
             ESP_ERROR_CHECK(gpio_wakeup_disable(g_button_pins[i]));
             ESP_ERROR_CHECK(gpio_set_intr_type(g_button_pins[i], GPIO_INTR_ANYEDGE));

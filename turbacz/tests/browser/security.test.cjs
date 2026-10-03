@@ -122,3 +122,25 @@ test('Sentry is optional, uses integrity, and disables default PII', () => {
         assert.equal(options.tracesSampleRate, 0.05)
     } finally { dom.window.close() }
 })
+
+
+test('RCM gateway controls follow reported roles and retain remote button cards', () => {
+    const dom = page(fs.readFileSync(path.join(root, 'static/rcm.html'), 'utf8'))
+    try {
+        dom.window.jsPlumb = { ready() {} }
+        run(dom, `${script('common.js')}\n${script('rcm.js')}\n
+            jsPlumbInstance = { draggable() {}, makeSource() {}, makeTarget() {}, repaintEverything() {} };
+            online_switches = new Set([222]);
+            State.deviceRoles = {222: {type: 'switch', gateway: true,
+                gateway_mac: '02:00:00:00:00:01', channel: 11}};
+            createSwitch(222, 'Switch', 7, 0, 0);`)
+        const button = dom.window.document.querySelector('[data-gateway-switch="222"]')
+        assert.equal(button.hidden, false)
+        assert.equal(button.textContent, 'Gateway: on')
+        assert.match(button.title, /02:00:00:00:00:01/)
+        run(dom, `State.deviceRoles[222] = {type: 'remote'}; updateGatewayControls()`)
+        assert.equal(button.hidden, true)
+        assert.equal(dom.window.document.querySelector('[data-remote-switch="222"]').hidden, false)
+        assert.ok(dom.window.document.getElementById('switch-222-btn-g'))
+    } finally { dom.window.close() }
+})

@@ -594,3 +594,21 @@ async def test_database_work_is_off_loop_and_transactions_do_not_interleave():
     release.set()
     await asyncio.gather(first, second)
     assert events == [(1, "start"), (1, "commit"), (2, "start"), (2, "commit")]
+
+
+def test_gateway_websocket_publishes_only_for_online_normal_switch(application):
+    from time import time
+    a = application
+    state = a.main.state_manager
+    state.set_device_role(222, {"type": "switch", "gateway": False})
+    state.mark_switch_online(222, int(time()))
+    with a.http.websocket_connect(f"/rcm/ws/1?token={a.token}") as ws:
+        assert ws.receive_json()["type"] == "online_status"
+        ws.send_json({"type": "gateway_mode", "device_id": 222, "enabled": True})
+        assert ws.receive_json()["type"] == "gateway_requested"
+        assert ("/switch/cmd/222", "gateway:1", False) in a.mqtt.sent
+        state.set_device_role(222, {"type": "remote"})
+        a.mqtt.sent.clear()
+        ws.send_json({"type": "gateway_mode", "device_id": 222, "enabled": False})
+        assert ws.receive_json()["type"] == "error"
+        assert not a.mqtt.sent

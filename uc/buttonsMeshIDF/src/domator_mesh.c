@@ -347,6 +347,17 @@ void app_main(void) {
     build_time_to_unix(FW_BUILD_TIME);
     detect_hardware_type();
 
+    if (strcmp(credentials_get()->switch_role, "remote") == 0) {
+#ifdef CONFIG_IDF_TARGET_ESP32C3
+        g_node_type = NODE_TYPE_REMOTE_SWITCH;
+        remote_switch_run(); // Separate radio/sleep lifecycle; never joins mesh.
+#else
+        ESP_LOGE(TAG, "Remote switches require ESP32-C3");
+#endif
+        return;
+    }
+    remote_gateway_load();
+
     g_mesh_tx_queue = xQueueCreate(MESH_TX_QUEUE_SIZE, sizeof(mesh_app_msg_t));
     if (g_mesh_tx_queue == NULL) {
         ESP_LOGE(TAG, "Failed to create mesh TX queue");
@@ -384,6 +395,7 @@ void app_main(void) {
         relay_button_init();
     }
 
+    mesh_tx_init();
     mesh_network_init();
 
     xTaskCreate(mesh_rx_task, "mesh_rx", 8192, NULL, 5, NULL);

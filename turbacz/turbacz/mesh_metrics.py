@@ -29,7 +29,7 @@ readings = {
     field: Gauge(name, description) for field, (name, description) in _FIELDS.items()
 }
 available = Gauge(
-    "node_info_available", "Whether device telemetry arrived within the last 30 seconds"
+    "node_info_available", "Whether device telemetry arrived within its reporting timeout"
 )
 last_seen = Gauge(
     "node_info_last_seen_seconds", "Unix timestamp of the latest valid device telemetry"
@@ -112,7 +112,8 @@ def collect_mesh_metrics():
         if age > FORGET_SECONDS:
             del _snapshots[device_id]
             continue
-        fresh = age <= STALE_SECONDS
+        timeout = 150 if snapshot.mesh_labels.get("type") == "remote" else STALE_SECONDS
+        fresh = age <= timeout
         available.set(snapshot.node_labels, int(fresh))
         last_seen.set(snapshot.node_labels, snapshot.timestamp)
         if fresh:

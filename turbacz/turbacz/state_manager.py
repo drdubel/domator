@@ -8,6 +8,7 @@ from turbacz.websocket import ws_manager
 class StateManager:
     def __init__(self):
         self._states: dict[int, dict[str, int]] = {}
+        self._device_roles: dict[int, dict] = {}
         self._online_relays: dict[int, int] = {}
         self._online_switches: dict[int, int] = {}
         self._devices_rssi: dict[int, int] = {}
@@ -68,6 +69,7 @@ class StateManager:
             "up_to_date_devices": self._up_to_date_devices,
             "devices_rssi": self._devices_rssi,
             "root_id": connection_manager.rootId,
+            "device_roles": self._device_roles,
             "ping_times": self.get_all_device_pings(),
         }
 
@@ -76,6 +78,17 @@ class StateManager:
 
         else:
             await ws_manager.broadcast(message, "/rcm/ws/")
+
+    def set_device_role(self, device_id: int, data: dict):
+        self._device_roles[device_id] = {
+            "type": data["type"],
+            "gateway": data.get("gateway") is True,
+            "gateway_mac": data.get("gatewayMac", ""),
+            "channel": data.get("radioChannel"),
+        }
+
+    def get_device_role(self, device_id: int) -> dict:
+        return self._device_roles.get(device_id, {})
 
     def set_device_rssi(self, device_id: int, rssi: int):
         self._devices_rssi[device_id] = rssi
@@ -124,6 +137,10 @@ class StateManager:
     def mark_relay_online(self, relay_id: int, timestamp: int):
         self._online_relays[relay_id] = timestamp
 
+    def is_switch_online(self, switch_id: int) -> bool:
+        timeout = 150 if self.get_device_role(switch_id).get("type") == "remote" else 30
+        return self._online_switches.get(switch_id, 0) + timeout >= time()
+
     def is_relay_online(self, relay_id: int) -> bool:
         return relay_id in self._online_relays
 
@@ -141,7 +158,8 @@ class StateManager:
         to_remove = []
 
         for id, timestamp in self._online_switches.items():
-            if timestamp + 30 < time():
+            timeout = 150 if self.get_device_role(id).get("type") == "remote" else 30
+            if timestamp + timeout < time():
                 to_remove.append(id)
 
         for id in to_remove:

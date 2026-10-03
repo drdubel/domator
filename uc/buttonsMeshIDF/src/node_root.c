@@ -21,6 +21,7 @@
 
 #include "cJSON.h"
 #include "domator_mesh.h"
+#include "remote_protocol.h"
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
@@ -128,6 +129,29 @@ static bool registry_find(uint64_t device_id, mesh_addr_t* out_addr) {
     }
     xSemaphoreGive(registry_mutex);
     return false;
+}
+
+static bool wrap_remote_command(uint64_t id, mesh_app_msg_t* msg) {
+    bool remote = false;
+    if (xSemaphoreTake(registry_mutex, pdMS_TO_TICKS(200)) != pdTRUE) return false;
+    for (int i = 0; i < node_count; i++)
+        if (node_registry[i].device_id == id)
+            remote = node_registry[i].node_type[0] == REMOTE_DEVICE_TYPE;
+    xSemaphoreGive(registry_mutex);
+    return !remote || remote_wrap_command(id, msg);
+}
+
+static bool send_remote_or_mesh(mesh_app_msg_t* msg, tx_priority_t prio,
+                                 mesh_addr_t* dest) {
+    if (msg->msg_type == MSG_TYPE_ESPNOW && remote_gateway_enabled()) {
+        uint8_t self[6];
+        esp_wifi_get_mac(WIFI_IF_STA, self);
+        if (!memcmp(self, dest->addr, 6)) {
+            remote_gateway_mesh_receive(msg);
+            return true;
+        }
+    }
+    return mesh_queue_to_node(msg, prio, dest);
 }
 
 /**
@@ -239,6 +263,8 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
 
     switch (msg->msg_type) {
         case MSG_TYPE_COMMAND: {
+            if (g_node_type == NODE_TYPE_SWITCH_C3 &&
+                remote_gateway_command(msg->data, msg->data_len)) break;
             ESP_LOGI(TAG, "Command received: %.*s", msg->data_len, msg->data);
 
             if (g_node_type == NODE_TYPE_RELAY_8 ||
@@ -373,13 +399,13 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
         }
 
         case MSG_TYPE_TYPE_INFO: {
-            char type_str;
-            memcpy(&type_str, msg->data, msg->data_len);
+            if (msg->data_len != 1) break;
+            char type_str[2] = {msg->data[0], 0};
             ESP_LOGI(TAG, "Device type info from %" PRIu64 ": %c", msg->src_id,
-                     type_str);
-            registry_update(msg->src_id, from, &type_str);
+                     type_str[0]);
+            registry_update(msg->src_id, from, type_str);
 
-            if (type_str == DEVICE_TYPE_RELAY) {
+            if (type_str[0] == DEVICE_TYPE_RELAY) {
                 mesh_app_msg_t sync_msg = {0};
                 sync_msg.src_id = g_device_id;
                 sync_msg.msg_type = MSG_TYPE_SYNC_REQUEST;
@@ -450,7 +476,8 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
             pong.msg_type = MSG_TYPE_PING;
             pong.data_len = sizeof(uint16_t);
             memcpy(pong.data, &pingNum, sizeof(uint16_t));
-            mesh_queue_to_node(&pong, TX_PRIO_HIGH, from);
+            if (wrap_remote_command(msg->src_id, &pong))
+                send_remote_or_mesh(&pong, TX_PRIO_HIGH, from);
             ESP_LOGV(TAG, "Sent pong to %" PRIu64, msg->src_id);
             break;
         }
@@ -640,6 +667,18 @@ void root_publish_status(void) {
     cJSON_AddNumberToObject(json, "deviceId", g_device_id);
     cJSON_AddNumberToObject(json, "parentId", g_device_id);
     cJSON_AddStringToObject(json, "type", type_str);
+    if (g_node_type == NODE_TYPE_SWITCH_C3) {
+        cJSON_AddBoolToObject(json, "gateway", remote_gateway_enabled());
+        uint8_t mac[6], primary = 0;
+        wifi_second_chan_t secondary;
+        char address[18];
+        if (esp_wifi_get_mac(WIFI_IF_STA, mac) == ESP_OK) {
+            snprintf(address, sizeof(address), MACSTR, MAC2STR(mac));
+            cJSON_AddStringToObject(json, "gatewayMac", address);
+        }
+        if (esp_wifi_get_channel(&primary, &secondary) == ESP_OK)
+            cJSON_AddNumberToObject(json, "radioChannel", primary);
+    }
     cJSON_AddNumberToObject(json, "isRoot", 1);
     cJSON_AddNumberToObject(json, "freeHeap", free_heap);
     cJSON_AddNumberToObject(json, "uptime", uptime);
@@ -1277,7 +1316,7 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
         ESP_LOGI(TAG, "Non-JSON command for target device %" PRIu64, target_id);
 
         mesh_addr_t dest = {0};
-        if (registry_find(target_id, &dest)) {
+        if (target_id == g_device_id || registry_find(target_id, &dest)) {
             mesh_app_msg_t cmd = {0};
             cmd.src_id = g_device_id;
             if (data_len == 1 && data[0] == MSG_TYPE_OTA_START)
@@ -1287,7 +1326,11 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
 
             memcpy(cmd.data, data, data_len);
             cmd.data_len = data_len;
-            mesh_queue_to_node(&cmd, TX_PRIO_NORMAL, &dest);
+            if (target_id == g_device_id &&
+                remote_gateway_command(cmd.data, cmd.data_len)) {
+                root_publish_status();
+            } else if (wrap_remote_command(target_id, &cmd))
+                send_remote_or_mesh(&cmd, TX_PRIO_NORMAL, &dest);
             ESP_LOGI(TAG, "Routed non-JSON MQTT command to device %" PRIu64,
                      target_id);
         } else {
@@ -1306,8 +1349,12 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
             ota_cmd.target_type = device_type[0] - 'a' + 'A';
             for (int i = 0; i < MAX_NODES; i++) {
                 if (node_registry[i].device_id == 0) continue;
-                mesh_queue_to_node(&ota_cmd, TX_PRIO_HIGH,
-                                   &node_registry[i].mesh_addr);
+                if (node_registry[i].node_type[0] == REMOTE_DEVICE_TYPE &&
+                    ota_cmd.target_type != DEVICE_TYPE_SWITCH) continue;
+                mesh_app_msg_t routed = ota_cmd;
+                if (wrap_remote_command(node_registry[i].device_id, &routed))
+                    send_remote_or_mesh(&routed, TX_PRIO_HIGH,
+                                       &node_registry[i].mesh_addr);
                 ESP_LOGI(TAG,
                          "Broadcasted OTA start command to device %" PRIu64,
                          node_registry[i].device_id);
@@ -1324,7 +1371,8 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
             ota_cmd.src_id = g_device_id;
             ota_cmd.msg_type = MSG_TYPE_OTA_START;
             ota_cmd.target_type = device_type[0] - 'a' + 'A';
-            mesh_queue_to_node(&ota_cmd, TX_PRIO_HIGH, &dest);
+            if (wrap_remote_command(target_id, &ota_cmd))
+                send_remote_or_mesh(&ota_cmd, TX_PRIO_HIGH, &dest);
             ESP_LOGI(TAG, "Routed OTA start command to device %" PRIu64,
                      target_id);
         } else {
@@ -1349,7 +1397,8 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
             memcpy(ping.data, &pingNum, sizeof(uint16_t));
             ping.data_len = sizeof(uint16_t);
 
-            if (mesh_queue_to_node(&ping, TX_PRIO_HIGH, &dest)) {
+            if (wrap_remote_command(target_id, &ping) &&
+                send_remote_or_mesh(&ping, TX_PRIO_HIGH, &dest)) {
                 if (xSemaphoreTake(registry_mutex, pdMS_TO_TICKS(5000)) ==
                     pdTRUE) {
                     int index = -1;
@@ -1438,6 +1487,10 @@ static void handle_mqtt_command(const char* topic, int topic_len,
  *        Creates the node registry mutex if it does not yet exist.
  *        Idempotent: returns immediately if the MQTT client is already running.
  */
+bool node_root_ready(void) {
+    return registry_mutex != NULL && g_blind_pairs_mutex != NULL;
+}
+
 void node_root_start(void) {
     if (g_mqtt_client) return;
 

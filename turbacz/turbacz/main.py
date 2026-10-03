@@ -594,6 +594,25 @@ async def websocket_rcm(websocket: WebSocket):
         async for cmd in ws_manager.messages(websocket):
             logger.debug("putting %s in command queue", cmd)
 
+            if cmd.get("type") == "gateway_mode":
+                device_id = int(cmd["device_id"])
+                # Only reported normal switch hardware can become a gateway.
+                role = state_manager.get_device_role(device_id)
+                if role.get("type") != "switch" or not state_manager.is_switch_online(device_id):
+                    await ws_manager.send_personal_message(
+                        {"type": "error", "message": "Gateway mode requires an online normal switch"},
+                        websocket,
+                    )
+                    continue
+                mqtt.client.publish(
+                    f"/switch/cmd/{device_id}",
+                    "gateway:1" if cmd["enabled"] else "gateway:0",
+                )
+                await ws_manager.send_personal_message(
+                    {"type": "gateway_requested", "device_id": device_id}, websocket
+                )
+                continue
+
             if cmd.get("type") == "auto_off_update":
                 try:
                     relay_id = int(cmd.get("relay_id"))

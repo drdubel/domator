@@ -130,6 +130,13 @@ def validate_command(path, cmd, cm):
             "get_states",
         }:
             return
+        if kind == "gateway_mode":
+            identifier = device_id(cmd.get("device_id"))
+            if identifier not in cm.get_switches() or identifier in cm.get_relays():
+                raise ValueError("Gateway mode requires a normal switch")
+            if not isinstance(cmd.get("enabled"), bool):
+                raise ValueError("Gateway enabled must be a boolean")
+            return
         if kind == "update_device":
             if cmd.get("device_type") not in {"relay", "switch"}:
                 raise ValueError("Invalid device type")

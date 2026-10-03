@@ -17,6 +17,7 @@ const State = {
 
     // Status tracking
     devicesRssi: {},
+    deviceRoles: {},
     pingTimes: {},
     onlineRelays: new Set(),
     onlineSwitches: new Set(),
@@ -334,6 +335,10 @@ const wsManager = new WebSocketManager('/rcm/ws/', function (event) {
     console.log(msg)
 
     // Handle different message types
+    if (msg.type === "error") {
+        showToast(msg.message || 'Gateway request failed', true)
+        return
+    }
     if (msg.type === "update") {
         loadConfiguration()
         return
@@ -358,6 +363,8 @@ const wsManager = new WebSocketManager('/rcm/ws/', function (event) {
         State.onlineSwitches = online_switches
         State.upToDateDevices = up_to_date_devices
         State.devicesRssi = devices_rssi
+        State.deviceRoles = msg.device_roles || {}
+        updateGatewayControls()
         State.pingTimes = devices_ping_times
         console.log('Online relays:', online_relays)
         console.log('Online switches:', online_switches)
@@ -1532,6 +1539,31 @@ function clearRootHighlight() {
     })
 }
 
+function updateGatewayControls() {
+    document.querySelectorAll('[data-gateway-switch]').forEach(button => {
+        const id = button.dataset.gatewaySwitch
+        const role = State.deviceRoles[id] || {}
+        button.hidden = role.type !== 'switch' || !online_switches.has(Number(id))
+        button.textContent = role.gateway ? 'Gateway: on' : 'Gateway: off'
+        button.title = role.gateway
+            ? `ESP-NOW gateway ${role.gateway_mac}, channel ${role.channel}. Click to disable.`
+            : 'Enable ESP-NOW gateway (requires remote_key provisioning)'
+    })
+    document.querySelectorAll('[data-remote-switch]').forEach(label => {
+        label.hidden = State.deviceRoles[label.dataset.remoteSwitch]?.type !== 'remote'
+    })
+}
+
+function toggleGateway(deviceId) {
+    if (!wsManager.isConnected()) return
+    const role = State.deviceRoles[deviceId] || {}
+    if (role.type !== 'switch') return
+    wsManager.send(JSON.stringify({
+        type: 'gateway_mode', device_id: deviceId, enabled: !role.gateway
+    }))
+    showToast('Gateway change requested; device status will confirm it.')
+}
+
 function updateDevice(deviceId, deviceType) {
     if (!wsManager.isConnected()) {
         alert('Not connected to server')
@@ -2048,6 +2080,8 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
                     <span class="device-id" onclick="event.stopPropagation(); copyIdToClipboard(${switchId}, this)">ID: ${switchId}</span>
                     </span>
                     <div style="display: flex; gap: 0.5rem;">
+                        <span data-remote-switch="${switchId}" hidden>Remote</span>
+                        <button data-gateway-switch="${switchId}" hidden onclick="event.stopPropagation(); toggleGateway(${switchId})">Gateway</button>
                         <button class="hide-btn" onclick="event.stopPropagation(); hideDevice(${switchId}, 'switch')" title="Hide Device">👁️</button>
                         <button class="update-btn update-btn-switch" onclick="event.stopPropagation(); updateDevice(${switchId}, 'switch')" title="Update Device">⟳</button>
                         <button class="delete-btn" onclick="event.stopPropagation(); deleteSwitch(${switchId})">✕</button>
@@ -2072,6 +2106,7 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
 
     switchDiv.querySelector('.device-name').textContent = switchName
     document.getElementById('canvas').appendChild(switchDiv)
+    updateGatewayControls()
 
     // Add click and touch handler for device name edit
     const deviceNameElement = switchDiv.querySelector(`.device-name-switch-${switchId}`)

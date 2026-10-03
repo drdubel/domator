@@ -237,13 +237,13 @@ async def handle_root_state(payload_str):
 
     relays = await db_call(connection_manager.get_relays)
     switches = await db_call(connection_manager.get_switches)
-    if data["type"] == "switch":
+    if data["type"] in {"switch", "remote"}:
         if data["deviceId"] in switches:
             data["name"] = switches[data["deviceId"]][0]
         else:
             name = namer.generate(category="astronomy")
             data["name"] = name
-            await db_call(connection_manager.add_switch, data["deviceId"], name, 3)
+            await db_call(connection_manager.add_switch, data["deviceId"], name, 7 if data["type"] == "remote" else 3)
             await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
 
     elif data["type"] == "relay8" or data["type"] == "relay16":
@@ -268,6 +268,7 @@ async def handle_root_state(payload_str):
     if data.get("isRoot") == 1:
         connection_manager.rootId = data["deviceId"]
 
+    state_manager.set_device_role(data["deviceId"], data)
     state_manager.mark_relay_online(data["deviceId"], int(time()))
     state_manager.mark_switch_online(data["deviceId"], int(time()))
     ha_bridge.publish_relay_availability(data["deviceId"], True)
@@ -286,7 +287,8 @@ async def handle_root_state(payload_str):
     else:
         parent_name = "unknown"
 
-    mqtt.client.publish("/switch/cmd/" + str(data["deviceId"]), "P")
+    if data["type"] != "remote":
+        mqtt.client.publish("/switch/cmd/" + str(data["deviceId"]), "P")
 
     try:
         record_node_metrics(data, parent_name, state_manager.get_device_ping(data["deviceId"]))

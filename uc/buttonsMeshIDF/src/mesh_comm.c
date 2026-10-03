@@ -114,6 +114,12 @@ void mesh_rx_task(void* arg) {
             continue;
         }
 
+        if (msg->msg_type == MSG_TYPE_ESPNOW) {
+            if (g_is_root) remote_root_receive(&from, msg);
+            else remote_gateway_mesh_receive(msg);
+            esp_task_wdt_reset();
+            continue;
+        }
         if (g_is_root) {
             root_handle_mesh_message(&from, msg);
             esp_task_wdt_reset();
@@ -121,6 +127,8 @@ void mesh_rx_task(void* arg) {
         }
         switch (msg->msg_type) {
             case MSG_TYPE_COMMAND: {
+                if (g_node_type == NODE_TYPE_SWITCH_C3 &&
+                    remote_gateway_command(msg->data, msg->data_len)) break;
                 ESP_LOGI(TAG, "Command received: %.*s", msg->data_len,
                          msg->data);
 
@@ -182,13 +190,18 @@ typedef struct {
 
 static QueueHandle_t queue = NULL;
 
+void mesh_tx_init(void) {
+    if (!queue) queue = xQueueCreate(40, sizeof(tx_item_t*));
+    configASSERT(queue);
+}
+
 /**
  * @brief Drain the internal TX queue and forward each message via the mesh
  *        stack.  Pauses during OTA to avoid interfering with firmware writes.
  *        Allocates the internal queue on first invocation.
  */
 void mesh_tx_task(void* arg) {
-    queue = xQueueCreate(40, sizeof(tx_item_t*));
+    mesh_tx_init();
 
     esp_err_t wdt_err = esp_task_wdt_add(NULL);
     if (wdt_err != ESP_OK) {
@@ -242,6 +255,7 @@ void mesh_tx_task(void* arg) {
  */
 bool mesh_queue_to_node(mesh_app_msg_t* msg, tx_priority_t prio,
                         mesh_addr_t* dest) {
+    if (!queue) return false;
     tx_item_t* item = malloc(sizeof(tx_item_t));
     if (!item) {
         ESP_LOGE(TAG, "OOM queuing message");
@@ -348,6 +362,18 @@ void node_publish_status(void) {
 
     cJSON_AddNumberToObject(json, "deviceId", g_device_id);
     cJSON_AddStringToObject(json, "type", type_str);
+    if (g_node_type == NODE_TYPE_SWITCH_C3) {
+        cJSON_AddBoolToObject(json, "gateway", remote_gateway_enabled());
+        uint8_t mac[6], primary = 0;
+        wifi_second_chan_t secondary;
+        char address[18];
+        if (esp_wifi_get_mac(WIFI_IF_STA, mac) == ESP_OK) {
+            snprintf(address, sizeof(address), MACSTR, MAC2STR(mac));
+            cJSON_AddStringToObject(json, "gatewayMac", address);
+        }
+        if (esp_wifi_get_channel(&primary, &secondary) == ESP_OK)
+            cJSON_AddNumberToObject(json, "radioChannel", primary);
+    }
     cJSON_AddNumberToObject(json, "parentId", g_parent_id);
     cJSON_AddNumberToObject(json, "freeHeap", free_heap);
     cJSON_AddNumberToObject(json, "uptime", uptime);

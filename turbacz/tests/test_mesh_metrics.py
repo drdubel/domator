@@ -99,3 +99,16 @@ def test_invalid_report_does_not_replace_good_snapshot():
     with pytest.raises(ValueError):
         mesh.record_node_metrics(report(rssi=float("nan")), "Root", 5)
     assert mesh._snapshots["111"] is before
+
+
+def test_remote_reports_remain_fresh_between_minute_heartbeats(monkeypatch):
+    clock = [100]
+    monkeypatch.setattr(mesh.time, "monotonic", lambda: clock[0])
+    mesh.record_node_metrics(report(type="remote"), "Gateway", None)
+    labels = mesh._snapshots["111"].node_labels
+    clock[0] = 161
+    exposition()
+    assert mesh.available.get(labels) == 1
+    clock[0] = 251
+    exposition()
+    assert mesh.available.get(labels) == 0

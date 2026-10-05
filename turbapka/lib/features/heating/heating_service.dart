@@ -20,17 +20,35 @@ class HeatingService extends ChangeNotifier {
   List<HeatingReading> history = [];
   HeatingReading? latest;
 
+  bool _disposed = false;
+
   static const _maxHistoryPoints = 50;
 
-  HeatingService(String token, this._historyApi) : _ws = WsClient(path: '/heating/ws', token: token) {
+  HeatingService(
+    String token,
+    this._historyApi, {
+    void Function()? onAuthFailure,
+    void Function()? onConnectionError,
+  }) : _ws = WsClient(
+         path: '/heating/ws',
+         token: token,
+         onAuthFailure: onAuthFailure,
+         onConnectionError: onConnectionError,
+       ) {
     _ws.messages.listen(_handleMessage);
     _ws.connect();
     _loadHistory();
   }
 
   Future<void> _loadHistory() async {
-    history = await _historyApi.fetchLastHour();
-    notifyListeners();
+    try {
+      final readings = await _historyApi.fetchLastHour();
+      if (_disposed) return;
+      history = readings;
+      notifyListeners();
+    } catch (_) {
+      // Live readings remain available if history cannot be loaded.
+    }
   }
 
   void _handleMessage(Map<String, dynamic> msg) {
@@ -51,6 +69,7 @@ class HeatingService extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _ws.dispose();
     super.dispose();
   }

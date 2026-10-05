@@ -33,6 +33,13 @@ class _TurbaczAppState extends State<TurbaczApp> {
   }
 
   @override
+  void dispose() {
+    _authService.dispose();
+    _uiScaleService.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
@@ -46,7 +53,9 @@ class _TurbaczAppState extends State<TurbaczApp> {
         builder: (context, child) {
           final uiScale = context.watch<UiScaleService>().scale;
           return MediaQuery(
-            data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(uiScale)),
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(uiScale)),
             child: AmbientBackground(child: child!),
           );
         },

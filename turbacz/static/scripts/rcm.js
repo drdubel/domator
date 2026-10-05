@@ -41,6 +41,8 @@ const State = {
 
     // Hidden buttons: Set of 'switchId-buttonId'
     hiddenButtons: new Set(),
+    autoHiddenButtons: new Set(),
+    revealedAutoButtons: new Set(),
 
     // Blind pairs: relay_id (as string) -> [[power_id, direction_id], ...]
     blindPairs: {},
@@ -208,7 +210,7 @@ const CanvasView = {
     DEFAULT_ZOOM: 0.4,
     DEVICE_CENTER_X: 25000,
     DEVICE_CENTER_Y: 25000,
-    MIN_ZOOM: 0.2,
+    MIN_ZOOM: 0.05,
     MAX_ZOOM: 3,
 
     // State
@@ -496,7 +498,7 @@ function debouncedSyncJsPlumb(delay = 500) {
 function zoomAtPoint(factor, centerX, centerY, commit = false) {
     const prevScale = zoomLevel
     zoomLevel *= factor
-    zoomLevel = Math.min(Math.max(zoomLevel, 0.2), 3)
+    zoomLevel = Math.min(Math.max(zoomLevel, CanvasView.MIN_ZOOM), CanvasView.MAX_ZOOM)
 
     panX = centerX - (centerX - panX) * (zoomLevel / prevScale)
     panY = centerY - (centerY - panY) * (zoomLevel / prevScale)
@@ -680,7 +682,7 @@ function initPanning() {
 
         const prevScale = zoomLevel
         zoomLevel *= factor
-        zoomLevel = Math.min(Math.max(zoomLevel, 0.2), 3)
+        zoomLevel = Math.min(Math.max(zoomLevel, CanvasView.MIN_ZOOM), CanvasView.MAX_ZOOM)
         panX = centerX - (centerX - panX) * (zoomLevel / prevScale)
         panY = centerY - (centerY - panY) * (zoomLevel / prevScale)
 
@@ -755,12 +757,128 @@ function getSavedPosition(deviceId, defaultX, defaultY) {
 }
 
 function resetAllPositions() {
-    if (!confirm('Reset all device positions to default? This will center all devices on the canvas.')) return
+    if (!confirm('Reset positions to columns with switches on the left and relays on the right?')) return
 
     localStorage.removeItem('rcm_device_positions')
+    arrangeDevices('columns')
+}
 
-    // Reload configuration to apply default positions
-    loadConfiguration()
+const ARRANGEMENT_STYLES = ['columns', 'grid', 'paired']
+const ARRANGEMENT_LABELS = { columns: 'Columns', grid: 'Grid', paired: 'Paired' }
+let arrangementStyle = localStorage.getItem('rcm_arrangement_style')
+
+function updateArrangementButton() {
+    const button = document.getElementById('arrangeDevicesButton')
+    if (!button) return
+    const index = ARRANGEMENT_STYLES.indexOf(arrangementStyle)
+    const next = ARRANGEMENT_STYLES[(index + 1) % ARRANGEMENT_STYLES.length]
+    button.querySelector('.btn-text').textContent = index < 0 ? 'Arrange' : `Arrange: ${ARRANGEMENT_LABELS[arrangementStyle]}`
+    button.title = `Arrange switches left and relays right. Next layout: ${ARRANGEMENT_LABELS[next]}.`
+}
+
+function cycleDeviceArrangement() {
+    const index = ARRANGEMENT_STYLES.indexOf(arrangementStyle)
+    arrangeDevices(ARRANGEMENT_STYLES[(index + 1) % ARRANGEMENT_STYLES.length])
+}
+
+function arrangeDevices(style = 'columns', { preserveSaved = false, focus = true } = {}) {
+    if (!ARRANGEMENT_STYLES.includes(style)) style = 'columns'
+    const saved = preserveSaved ? loadDevicePositions() : {}
+    const cards = type => [...document.querySelectorAll(`.${type}-box`)]
+        .filter(el => el.style.display !== 'none' && !hiddenDevices.has(el.id))
+        .sort((a, b) => Number(a.id.split('-')[1]) - Number(b.id.split('-')[1]))
+    const left = cards('switch')
+    const right = cards('relay')
+    const all = [...left, ...right]
+    if (!all.length) return
+    const gap = 60
+    const columnGap = 240
+    const width = Math.max(280, ...all.map(el => el.offsetWidth))
+    const height = el => el.offsetHeight || 200
+    const startY = CanvasView.DEVICE_CENTER_Y
+    const place = (el, x, y) => {
+        if (!el || saved[el.id]) return
+        el.style.left = `${x}px`
+        el.style.top = `${y}px`
+    }
+    const switchesById = new Map(left.map(el => [el.id.split('-')[1], el]))
+    const relaysById = new Map(right.map(el => [el.id.split('-')[1], el]))
+    const ids = [...new Set([...switchesById.keys(), ...relaysById.keys()])].sort((a, b) => Number(a) - Number(b))
+    // Compare measured footprints to choose a layout closest to a widescreen view.
+    const buildLayout = columns => {
+        const positions = []
+        const groupWidth = columns * width + (columns - 1) * gap
+        const groupLeft = CanvasView.DEVICE_CENTER_X - groupWidth - columnGap / 2
+        const add = (el, side, col, y) => {
+            if (el) positions.push({ el, x: groupLeft + side * (groupWidth + columnGap) + col * (width + gap), y })
+        }
+        if (style === 'paired') {
+            let y = startY
+            for (let i = 0; i < ids.length; i += columns) {
+                let rowHeight = 0
+                ids.slice(i, i + columns).forEach((id, col) => {
+                    const sw = switchesById.get(id), relay = relaysById.get(id)
+                    add(sw, 0, col, y)
+                    add(relay, 1, col, y)
+                    rowHeight = Math.max(rowHeight, sw ? height(sw) : 0, relay ? height(relay) : 0)
+                })
+                y += rowHeight + gap
+            }
+        } else {
+            ;[left, right].forEach((group, side) => {
+                if (style === 'columns') {
+                    const rows = Math.ceil(group.length / columns)
+                    for (let col = 0; col < columns; col++) {
+                        let y = startY
+                        group.slice(col * rows, (col + 1) * rows).forEach(el => {
+                            add(el, side, col, y)
+                            y += height(el) + gap
+                        })
+                    }
+                } else {
+                    let y = startY
+                    for (let i = 0; i < group.length; i += columns) {
+                        const row = group.slice(i, i + columns)
+                        row.forEach((el, col) => add(el, side, col, y))
+                        y += Math.max(...row.map(height)) + gap
+                    }
+                }
+            })
+        }
+        const footprintWidth = Math.max(...positions.map(p => p.x + (p.el.offsetWidth || width))) - Math.min(...positions.map(p => p.x))
+        const footprintHeight = Math.max(...positions.map(p => p.y + height(p.el))) - startY
+        return { positions, score: Math.abs(Math.log((footprintWidth / footprintHeight) / (16 / 9))) }
+    }
+    let bestLayout = buildLayout(1)
+    const maxColumns = style === 'paired' ? ids.length : Math.max(left.length, right.length)
+    for (let columns = 2; columns <= maxColumns; columns++) {
+        const candidate = buildLayout(columns)
+        if (candidate.score < bestLayout.score) bestLayout = candidate
+    }
+    bestLayout.positions.forEach(({ el, x, y }) => place(el, x, y))
+    // Update endpoint locations after moving their parent cards.
+    all.forEach(el => jsPlumbInstance?.revalidate(el))
+    if (focus) {
+        const wrapper = document.getElementById('canvas-wrapper')
+        const minX = Math.min(...all.map(el => parseFloat(el.style.left)))
+        const maxX = Math.max(...all.map(el => parseFloat(el.style.left) + (el.offsetWidth || width)))
+        const minY = Math.min(...all.map(el => parseFloat(el.style.top)))
+        const maxY = Math.max(...all.map(el => parseFloat(el.style.top) + height(el)))
+        const viewWidth = wrapper.clientWidth || window.innerWidth
+        const viewHeight = wrapper.clientHeight || window.innerHeight - 120
+        zoomLevel = Math.min(1, Math.max(CanvasView.MIN_ZOOM, Math.min((viewWidth - 80) / (maxX - minX), (viewHeight - 80) / (maxY - minY))))
+        panX = viewWidth / 2 - (minX + maxX) / 2 * zoomLevel
+        panY = viewHeight / 2 - (minY + maxY) / 2 * zoomLevel
+        applyVisualTransform()
+        saveCanvasView()
+    }
+    syncJsPlumb()
+    if (!preserveSaved) {
+        arrangementStyle = style
+        localStorage.setItem('rcm_arrangement_style', style)
+        saveDevicePositions()
+    }
+    updateArrangementButton()
 }
 
 // Color management
@@ -810,12 +928,37 @@ function loadHiddenButtons() {
 }
 
 function isButtonHidden(switchId, buttonId) {
-    return hiddenButtons.has(`${switchId}-${buttonId}`)
+    const key = `${switchId}-${buttonId}`
+    return hiddenButtons.has(key) || State.autoHiddenButtons.has(key)
+}
+
+function syncRelaySwitchButtons(switchId) {
+    const data = switches[switchId]
+    if (!data) return
+    for (let i = 1; i <= data.buttonCount; i++) {
+        const buttonId = String.fromCharCode(96 + i)
+        const key = `${switchId}-${buttonId}`
+        const connected = (connections[switchId]?.[buttonId]?.length || 0) > 0
+        if (relays[switchId] && !connected && !State.revealedAutoButtons.has(key)) {
+            State.autoHiddenButtons.add(key)
+        } else {
+            State.autoHiddenButtons.delete(key)
+        }
+        const el = document.getElementById(`switch-${switchId}-btn-${buttonId}`)
+        if (el) el.style.display = isButtonHidden(switchId, buttonId) ? 'none' : 'flex'
+        ;(connections[switchId]?.[buttonId] || []).forEach(({ connection, relayId }) => {
+            connection.setVisible(!isButtonHidden(switchId, buttonId)
+                && !hiddenDevices.has(`switch-${switchId}`) && !hiddenDevices.has(`relay-${relayId}`))
+        })
+    }
+    updateShowHiddenButton(switchId)
+    jsPlumbInstance?.revalidate(data.element)
 }
 
 function hideButton(switchId, buttonId) {
     const key = `${switchId}-${buttonId}`
     hiddenButtons.add(key)
+    State.revealedAutoButtons.delete(key)
 
     const buttonElement = document.getElementById(`switch-${switchId}-btn-${buttonId}`)
     if (buttonElement) {
@@ -843,6 +986,8 @@ function hideButton(switchId, buttonId) {
 function showButton(switchId, buttonId) {
     const key = `${switchId}-${buttonId}`
     hiddenButtons.delete(key)
+    State.autoHiddenButtons.delete(key)
+    State.revealedAutoButtons.add(key)
 
     const buttonElement = document.getElementById(`switch-${switchId}-btn-${buttonId}`)
     if (buttonElement) {
@@ -1254,6 +1399,8 @@ function bindJsPlumbEvents() {
                         connectionLookupMap[switchDeviceId].push(info.connection)
                         connectionLookupMap[relayDeviceId].push(info.connection)
 
+                        State.revealedAutoButtons.delete(`${switchId}-${buttonId}`)
+                        syncRelaySwitchButtons(switchId)
                         console.log('Connection saved successfully')
                     } else {
                         console.error('Failed to save connection')
@@ -1307,6 +1454,7 @@ function bindJsPlumbEvents() {
                             )
                         }
 
+                        syncRelaySwitchButtons(switchId)
                         console.log('Connection removed successfully')
                     } else {
                         console.error('Failed to remove connection from API')
@@ -1364,6 +1512,7 @@ function bindJsPlumbEvents() {
                         connectionLookupMap[relayDeviceId] = connectionLookupMap[relayDeviceId].filter(c => c !== connection)
                     }
 
+                    syncRelaySwitchButtons(switchId)
                     console.log('Connection removed successfully')
                 } else {
                     console.error('Failed to remove connection from API')
@@ -1545,6 +1694,7 @@ function updateGatewayControls() {
         const role = State.deviceRoles[id] || {}
         button.hidden = role.type !== 'switch' || !online_switches.has(Number(id))
         button.textContent = role.gateway ? 'Gateway: on' : 'Gateway: off'
+        button.setAttribute('aria-pressed', String(role.gateway === true))
         button.title = role.gateway
             ? `ESP-NOW gateway ${role.gateway_mac}, channel ${role.channel}. Click to disable.`
             : 'Enable ESP-NOW gateway (requires remote_key provisioning)'
@@ -1801,6 +1951,9 @@ async function loadConfiguration() {
     }
     buttonTypes = {}
     hiddenButtons = loadHiddenButtons()
+    State.autoHiddenButtons.clear()
+    State.revealedAutoButtons.clear()
+    updateArrangementButton()
 
     try {
         const [relaysData, outputsData, switchesData, connectionsData, buttonTypesData, blindPairsData] = await Promise.all([
@@ -1863,10 +2016,6 @@ async function loadConfiguration() {
             jsPlumbInstance.batch(() => {
                 for (let [switchId, buttons] of Object.entries(connections_config)) {
                     for (let [buttonId, targets] of Object.entries(buttons)) {
-                        // Skip connection if button is hidden
-                        if (isButtonHidden(parseInt(switchId), buttonId)) {
-                            continue
-                        }
                         for (let [relayId, outputId] of targets) {
                             createConnection(parseInt(switchId), buttonId, parseInt(relayId), outputId)
                         }
@@ -1874,6 +2023,11 @@ async function loadConfiguration() {
                 }
             })
 
+            Object.keys(switches).forEach(syncRelaySwitchButtons)
+            arrangeDevices(ARRANGEMENT_STYLES.includes(arrangementStyle) ? arrangementStyle : 'columns', {
+                preserveSaved: true,
+                focus: Object.keys(loadDevicePositions()).length === 0 && !localStorage.getItem('rcm_canvas_view')
+            })
             bindJsPlumbEvents()
             isLoadingConnections = false
             hideLoading()
@@ -2081,7 +2235,7 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
                     </span>
                     <div style="display: flex; gap: 0.5rem;">
                         <span data-remote-switch="${switchId}" hidden>Remote</span>
-                        <button data-gateway-switch="${switchId}" hidden onclick="event.stopPropagation(); toggleGateway(${switchId})">Gateway</button>
+                        <button class="gateway-btn" type="button" data-gateway-switch="${switchId}" hidden onclick="event.stopPropagation(); toggleGateway(${switchId})">Gateway</button>
                         <button class="hide-btn" onclick="event.stopPropagation(); hideDevice(${switchId}, 'switch')" title="Hide Device">👁️</button>
                         <button class="update-btn update-btn-switch" onclick="event.stopPropagation(); updateDevice(${switchId}, 'switch')" title="Update Device">⟳</button>
                         <button class="delete-btn" onclick="event.stopPropagation(); deleteSwitch(${switchId})">✕</button>
@@ -2222,6 +2376,7 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
     }
 
     switches[switchId] = { name: switchName, buttonCount, element: switchDiv, color: savedColor }
+    if (!isLoadingConnections && relays[switchId]) syncRelaySwitchButtons(switchId)
 
     // Apply saved color after DOM is ready
     if (savedColor) {
@@ -2671,6 +2826,7 @@ function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
     }
 
     relays[relayId] = { name: relayName, outputs, outputsCount, element: relayDiv }
+    if (!isLoadingConnections && switches[relayId]) syncRelaySwitchButtons(relayId)
 }
 
 // ========== UI UPDATES ==========
@@ -2787,6 +2943,13 @@ function createConnection(switchId, buttonId, relayId, outputId) {
 
         connectionLookupMap[switchDeviceId].push(conn)
         connectionLookupMap[relayDeviceId].push(conn)
+        if (isButtonHidden(switchId, buttonId) || hiddenDevices.has(switchDeviceId) || hiddenDevices.has(relayDeviceId)) {
+            conn.setVisible(false)
+        }
+        if (!isLoadingConnections) {
+            State.revealedAutoButtons.delete(`${switchId}-${buttonId}`)
+            syncRelaySwitchButtons(switchId)
+        }
     }
 }
 
@@ -3160,16 +3323,27 @@ async function deleteRelay(relayId) {
     })
 
     if (result !== null) {
-        const element = document.getElementById(`relay - ${relayId} `)
+        const element = document.getElementById(`relay-${relayId}`)
         if (element) {
             jsPlumbInstance.removeAllEndpoints(element)
             element.remove()
         }
 
         delete relays[relayId]
-        delete connectionLookupMap[`relay - ${relayId} `]
+        delete connectionLookupMap[`relay-${relayId}`]
+        for (const switchId of Object.keys(switches)) {
+            for (const targets of Object.values(connections[switchId] || {})) {
+                for (let i = targets.length - 1; i >= 0; i--) {
+                    if (targets[i].relayId === relayId) targets.splice(i, 1)
+                }
+            }
+            const key = `switch-${switchId}`
+            connectionLookupMap[key] = (connectionLookupMap[key] || [])
+                .filter(conn => !conn.targetId.startsWith(`relay-${relayId}-output-`))
+            syncRelaySwitchButtons(switchId)
+        }
 
-        if (highlightedDevice === `relay - ${relayId} `) {
+        if (highlightedDevice === `relay-${relayId}`) {
             clearHighlights()
         }
     }

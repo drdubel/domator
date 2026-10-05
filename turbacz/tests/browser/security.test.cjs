@@ -144,3 +144,146 @@ test('RCM gateway controls follow reported roles and retain remote button cards'
         assert.ok(dom.window.document.getElementById('switch-222-btn-g'))
     } finally { dom.window.close() }
 })
+
+function rcmPage() {
+    const dom = page(fs.readFileSync(path.join(root, 'static/rcm.html'), 'utf8'))
+    dom.window.jsPlumb = { ready() {} }
+    run(dom, `${script('common.js')}\n${script('rcm.js')}\n
+        canvasElement = document.getElementById('canvas');
+        zoomLevelElement = document.getElementById('zoomLevel');
+        const handlers = {};
+        jsPlumbInstance = {
+            draggable() {}, makeSource() {}, makeTarget() {}, repaintEverything() {},
+            revalidate() {}, setZoom() {}, batch(callback) { callback() },
+            deleteEveryConnection() {}, deleteEveryEndpoint() {}, deleteConnection() {},
+            unbind() {}, bind(event, callback) { handlers[event] = callback },
+            connect({source, target}) {
+                return { sourceId: source.id, targetId: target.id, visible: true,
+                    setVisible(value) { this.visible = value } };
+            }
+        };
+        addConnectionHoverEffect = () => {};
+        wsManager.send = () => {};`)
+    return dom
+}
+
+test('RCM arrangements cycle, keep types separated, avoid overlaps and preserve saved positions', () => {
+    const dom = rcmPage()
+    try {
+        run(dom, `for (const id of [1, 2, 3]) {
+            createSwitch(id, 'Switch', 3, 0, 0);
+            createRelay(id, 'Relay', {}, 0, 0, 8);
+        }`)
+        const doc = dom.window.document
+        doc.querySelectorAll('.device-box').forEach((el, index) => {
+            Object.defineProperty(el, 'offsetWidth', { value: 320 + index * 10 })
+            Object.defineProperty(el, 'offsetHeight', { value: 200 + index * 70 })
+        })
+        for (const style of ['columns', 'grid', 'paired', 'columns']) {
+            run(dom, 'cycleDeviceArrangement()')
+            assert.equal(dom.window.localStorage.getItem('rcm_arrangement_style'), style)
+            const switches = [...doc.querySelectorAll('.switch-box')]
+            const relays = [...doc.querySelectorAll('.relay-box')]
+            assert.ok(Math.max(...switches.map(el => parseFloat(el.style.left) + el.offsetWidth))
+                < Math.min(...relays.map(el => parseFloat(el.style.left))))
+            const cards = [...switches, ...relays]
+            cards.forEach((a, i) => cards.slice(i + 1).forEach(b => {
+                const x = el => parseFloat(el.style.left), y = el => parseFloat(el.style.top)
+                assert.ok(x(a) + a.offsetWidth <= x(b) || x(b) + b.offsetWidth <= x(a)
+                    || y(a) + a.offsetHeight <= y(b) || y(b) + b.offsetHeight <= y(a))
+            }))
+            if (style === 'paired') switches.forEach(sw => {
+                assert.equal(sw.style.top, doc.getElementById(sw.id.replace('switch', 'relay')).style.top)
+            })
+        }
+        run(dom, `document.getElementById('switch-1').style.left = '12345px';
+            saveDevicePositions(); arrangeDevices('grid', {preserveSaved: true, focus: false});`)
+        assert.equal(doc.getElementById('switch-1').style.left, '12345px')
+        assert.match(doc.getElementById('arrangeDevicesButton').textContent, /Columns/)
+    } finally { dom.window.close() }
+})
+
+test('RCM hides only unused relay-switch buttons and hides again after their last connection is removed', async () => {
+    const dom = rcmPage()
+    try {
+        run(dom, `createRelay(1, 'Relay', {}, 0, 0, 8);
+            createRelay(2, 'Relay', {}, 0, 0, 8);
+            createSwitch(1, 'Relay switch', 3, 0, 0);
+            createSwitch(9, 'Normal switch', 3, 0, 0);`)
+        const doc = dom.window.document
+        assert.equal(doc.getElementById('switch-1-btn-a').style.display, 'none')
+        assert.equal(doc.getElementById('switch-9-btn-a').style.display, 'flex')
+        run(dom, `showButton(1, 'a'); syncRelaySwitchButtons(1);`)
+        assert.equal(doc.getElementById('switch-1-btn-a').style.display, 'flex')
+        run(dom, `createConnection(1, 'a', 1, 'a'); createConnection(1, 'a', 2, 'b');
+            postForm = async () => ({success: true}); bindJsPlumbEvents();`)
+        assert.equal(doc.getElementById('switch-1-btn-a').style.display, 'flex')
+        assert.equal(run(dom, 'connections[1].a[0].connection.visible'), true)
+        await run(dom, `handlers.dblclick(connections[1].a[0].connection, {preventDefault() {}}); Promise.resolve()`)
+        assert.equal(doc.getElementById('switch-1-btn-a').style.display, 'flex')
+        await run(dom, `handlers.dblclick(connections[1].a[0].connection, {preventDefault() {}}); Promise.resolve()`)
+        assert.equal(doc.getElementById('switch-1-btn-a').style.display, 'none')
+        assert.equal(doc.getElementById('switch-1-show-hidden-btn').style.display, 'block')
+        assert.deepEqual(JSON.parse(dom.window.localStorage.getItem('rcm_hidden_buttons')), [])
+    } finally { dom.window.close() }
+})
+
+test('RCM initial load arranges switches left and retains connections on manually hidden buttons', async () => {
+    const dom = rcmPage()
+    try {
+        run(dom, `localStorage.setItem('rcm_hidden_buttons', JSON.stringify(['1-a']));
+            const pendingTimers = [];
+            window.setTimeout = callback => { pendingTimers.push(callback); return 0 };
+            fetchAPI = async path => ({
+                '/lights/get_relays': {1: ['Relay', 8]},
+                '/lights/get_switches': {1: ['Relay switch', 3], 9: ['Normal switch', 2]},
+                '/lights/get_connections': {1: {a: [[1, 'a']], b: [[1, 'b']]}},
+                '/lights/get_outputs': {}, '/lights/get_all_buttons': {}, '/lights/get_blind_pairs': {}
+            })[path];`)
+        await run(dom, 'loadConfiguration()')
+        run(dom, 'pendingTimers.splice(0).forEach(callback => callback())')
+        const doc = dom.window.document
+        assert.equal(doc.getElementById('switch-1-btn-a').style.display, 'none')
+        assert.equal(doc.getElementById('switch-1-btn-b').style.display, 'flex')
+        assert.equal(doc.getElementById('switch-1-btn-c').style.display, 'none')
+        assert.equal(doc.getElementById('switch-9-btn-a').style.display, 'flex')
+        assert.ok(parseFloat(doc.getElementById('switch-9').style.left) < parseFloat(doc.getElementById('relay-1').style.left))
+        assert.equal(run(dom, 'connections[1].a.length'), 1)
+        assert.equal(run(dom, 'connections[1].a[0].connection.visible'), false)
+        run(dom, "showButton(1, 'a')")
+        assert.equal(run(dom, 'connections[1].a[0].connection.visible'), true)
+    } finally { dom.window.close() }
+})
+
+test('RCM arrangements target a 16:9 footprint and fit measured cards within the viewport', () => {
+    const dom = rcmPage()
+    try {
+        run(dom, `for (let id = 1; id <= 24; id++) {
+            createSwitch(id, 'Switch', 3, 0, 0);
+            createRelay(id, 'Relay', {}, 0, 0, 8);
+        }`)
+        const cards = [...dom.window.document.querySelectorAll('.device-box')]
+        cards.forEach(el => {
+            Object.defineProperty(el, 'offsetWidth', { value: 320 })
+            Object.defineProperty(el, 'offsetHeight', { value: 600 })
+        })
+        const wrapper = dom.window.document.getElementById('canvas-wrapper')
+        Object.defineProperty(wrapper, 'clientWidth', { value: 1280 })
+        Object.defineProperty(wrapper, 'clientHeight', { value: 720 })
+        for (const style of ['columns', 'grid', 'paired']) {
+            dom.window.layoutStyle = style
+            run(dom, 'arrangeDevices(layoutStyle)')
+            const minX = Math.min(...cards.map(el => parseFloat(el.style.left)))
+            const maxX = Math.max(...cards.map(el => parseFloat(el.style.left) + el.offsetWidth))
+            const minY = Math.min(...cards.map(el => parseFloat(el.style.top)))
+            const maxY = Math.max(...cards.map(el => parseFloat(el.style.top) + el.offsetHeight))
+            const ratio = (maxX - minX) / (maxY - minY)
+            assert.ok(Math.abs(ratio - 16 / 9) < 0.15, `${style} ratio: ${ratio}`)
+            const zoom = run(dom, 'zoomLevel'), panX = run(dom, 'panX'), panY = run(dom, 'panY')
+            assert.ok(minX * zoom + panX >= 39)
+            assert.ok(maxX * zoom + panX <= 1241)
+            assert.ok(minY * zoom + panY >= 39)
+            assert.ok(maxY * zoom + panY <= 681)
+        }
+    } finally { dom.window.close() }
+})

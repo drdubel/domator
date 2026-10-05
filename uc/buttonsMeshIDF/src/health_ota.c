@@ -178,16 +178,17 @@ esp_err_t mesh_disconnect_and_ota() {
 
     if (g_is_root) node_root_stop();
 
-    esp_mesh_disconnect();
-    vTaskDelay(pdMS_TO_TICKS(200));
-
-    ret = esp_mesh_stop();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "esp_mesh_stop failed: %s", esp_err_to_name(ret));
-        return ret;
+    if (g_node_type != NODE_TYPE_REMOTE_SWITCH) {
+        esp_mesh_disconnect();
+        vTaskDelay(pdMS_TO_TICKS(200));
+        ret = esp_mesh_stop();
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "esp_mesh_stop failed: %s", esp_err_to_name(ret));
+            return ret;
+        }
+        ESP_LOGI(TAG, "Mesh stopped.");
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
-    ESP_LOGI(TAG, "Mesh stopped.");
-    vTaskDelay(pdMS_TO_TICKS(500));
 
     ESP_LOGI(TAG, "Tearing down WiFi and mesh netifs...");
 

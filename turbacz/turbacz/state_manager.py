@@ -8,6 +8,7 @@ from turbacz.websocket import ws_manager
 class StateManager:
     def __init__(self):
         self._states: dict[int, dict[str, int]] = {}
+        self._device_roles: dict[int, dict] = {}
         self._online_relays: dict[int, int] = {}
         self._online_switches: dict[int, int] = {}
         self._devices_rssi: dict[int, int] = {}
@@ -17,6 +18,12 @@ class StateManager:
         self._ping_times: dict[int, list[int]] = {}
 
     async def update_state(self, relay_id: int, output_id: str, state: int):
+        if self.get_state(relay_id, output_id) == state:
+            # Opening a page requests every relay output again. Existing web
+            # clients already have these values; HA may still need a replay
+            # after a broker reconnect or a discovery change.
+            await ha_bridge.on_relay_state(relay_id, output_id, state)
+            return
         if relay_id not in self._states:
             self._states[relay_id] = {}
 
@@ -51,6 +58,10 @@ class StateManager:
         await ha_bridge.on_relay_state(relay_id, output_id, state)
 
     async def send_online_status(self, websocket=None):
+        if websocket is None and not any(
+            "/rcm/ws/" in connection.url.path for connection in ws_manager.active_connections
+        ):
+            return
         message = {
             "type": "online_status",
             "online_relays": list(self._online_relays.keys()),
@@ -58,6 +69,7 @@ class StateManager:
             "up_to_date_devices": self._up_to_date_devices,
             "devices_rssi": self._devices_rssi,
             "root_id": connection_manager.rootId,
+            "device_roles": self._device_roles,
             "ping_times": self.get_all_device_pings(),
         }
 
@@ -66,6 +78,17 @@ class StateManager:
 
         else:
             await ws_manager.broadcast(message, "/rcm/ws/")
+
+    def set_device_role(self, device_id: int, data: dict):
+        self._device_roles[device_id] = {
+            "type": data["type"],
+            "gateway": data.get("gateway") is True,
+            "gateway_mac": data.get("gatewayMac", ""),
+            "channel": data.get("radioChannel"),
+        }
+
+    def get_device_role(self, device_id: int) -> dict:
+        return self._device_roles.get(device_id, {})
 
     def set_device_rssi(self, device_id: int, rssi: int):
         self._devices_rssi[device_id] = rssi
@@ -114,6 +137,10 @@ class StateManager:
     def mark_relay_online(self, relay_id: int, timestamp: int):
         self._online_relays[relay_id] = timestamp
 
+    def is_switch_online(self, switch_id: int) -> bool:
+        timeout = 150 if self.get_device_role(switch_id).get("type") == "remote" else 30
+        return self._online_switches.get(switch_id, 0) + timeout >= time()
+
     def is_relay_online(self, relay_id: int) -> bool:
         return relay_id in self._online_relays
 
@@ -131,7 +158,8 @@ class StateManager:
         to_remove = []
 
         for id, timestamp in self._online_switches.items():
-            if timestamp + 30 < time():
+            timeout = 150 if self.get_device_role(id).get("type") == "remote" else 30
+            if timestamp + timeout < time():
                 to_remove.append(id)
 
         for id in to_remove:

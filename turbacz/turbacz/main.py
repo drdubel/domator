@@ -3,10 +3,10 @@ import json
 import logging
 import os
 import secrets
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Callable, Optional
 
-import httpx
 import sentry_sdk
 from aioprometheus.asgi.middleware import MetricsMiddleware
 from aioprometheus.asgi.starlette import metrics as render_metrics
@@ -35,11 +35,16 @@ from starlette.types import ASGIApp
 import turbacz.auth as auth
 import turbacz.broker  # noqa: F401  -- registers the MQTT on_connect/on_message handlers
 from turbacz.connection_manager import connection_manager, connection_router
+from turbacz.database import db_call
 from turbacz.ha.bridge import ha_bridge
-from turbacz.mqtt_client import mqtt, publish_blind_action
+from turbacz.mesh_metrics import collect_mesh_metrics
 from turbacz.metrics import collect_host_metrics
+from turbacz.metrics_client import get_metrics_client, metrics_client_lifespan
+from turbacz.mqtt_client import mqtt, publish_blind_action
+from turbacz.security import SecurityMiddleware
 from turbacz.settings import config
 from turbacz.state_manager import state_manager
+from turbacz.temperature_history import merge_temperature_series
 from turbacz.websocket import ws_manager
 
 logger = logging.getLogger(__name__)
@@ -51,7 +56,12 @@ class CustomRequestSizeMiddleware(BaseHTTPMiddleware):
         self.max_content_size = max_content_size
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        content_length = int(request.headers.get("content-length", 0))
+        try:
+            content_length = int(request.headers.get("content-length", 0))
+            if content_length < 0:
+                raise ValueError
+        except ValueError:
+            return JSONResponse({"detail": "Invalid Content-Length"}, status_code=400)
         if content_length > self.max_content_size:
             return Response(
                 content="Request body too large",
@@ -105,12 +115,23 @@ _migrate_legacy_firmware()
 if config.monitoring.sentry_dsn is not None:
     sentry_sdk.init(
         dsn=config.monitoring.sentry_dsn,
-        send_default_pii=True,
-        traces_sample_rate=1.0,
+        send_default_pii=False,
+        traces_sample_rate=config.monitoring.sentry_traces_sample_rate,
     )
 
 
-app = FastAPI(title="Turbacz Home Automation System", version="0.1.0")
+@asynccontextmanager
+async def lifespan(app):
+    async with metrics_client_lifespan():
+        try:
+            await mqtt.mqtt_startup()
+            yield
+        finally:
+            await turbacz.broker.stop_background_tasks()
+            await mqtt.mqtt_shutdown()
+
+
+app = FastAPI(title="Turbacz Home Automation System", version="0.1.0", lifespan=lifespan)
 app.add_middleware(CustomRequestSizeMiddleware, max_content_size=MAX_REQUEST_SIZE)
 session_secret = config.session_secret
 if not session_secret:
@@ -118,15 +139,16 @@ if not session_secret:
     logger.warning(
         "SESSION_SECRET not set; using ephemeral in-memory secret. Set SESSION_SECRET for stable and secure sessions."
     )
-app.add_middleware(SessionMiddleware, secret_key=session_secret)
+app.add_middleware(SessionMiddleware, secret_key=session_secret, https_only=not config.security.allow_insecure_http)
 app.add_middleware(MetricsMiddleware)
+app.add_middleware(SecurityMiddleware)
 
 
 def _require_authenticated_user(
     access_token: Optional[str] = Cookie(None),
     authorization: Optional[str] = Header(None),
 ):
-    token = access_token or auth.bearer_token_from_header(authorization)
+    token = auth.bearer_token_from_header(authorization) or access_token
     user = auth.get_current_user(token)
     if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
@@ -138,21 +160,20 @@ async def prometheus_metrics(request: Request):
         # Filesystem accounting can touch slow/network mounts. Keep a scrape
         # from stalling unrelated FastAPI requests.
         await asyncio.to_thread(collect_host_metrics)
+    collect_mesh_metrics()
     return await render_metrics(request)
 
 
 app.include_router(auth.router)
 app.include_router(connection_router)
-mqtt.init_app(app)
-
-background_task_started = False
 
 
 @app.get("/sentry-config.js", include_in_schema=False)
 async def sentry_browser_config():
     """Expose the public Sentry DSN without baking it into static assets."""
     return Response(
-        content=f"window.SENTRY_DSN = {json.dumps(config.monitoring.sentry_dsn)};\n",
+        content=(f"window.SENTRY_DSN = {json.dumps(config.monitoring.sentry_dsn)};\n"
+                 f"window.SENTRY_TRACES_SAMPLE_RATE = {config.monitoring.sentry_traces_sample_rate};\n"),
         media_type="application/javascript",
         headers={"Cache-Control": "no-store"},
     )
@@ -161,8 +182,8 @@ async def sentry_browser_config():
 app.mount("/static", StaticFiles(directory="./static", html=True), name="static")
 
 
-def publish_relay_auto_off_config() -> None:
-    outputs = connection_manager.get_outputs()
+async def publish_relay_auto_off_config() -> None:
+    outputs = await db_call(connection_manager.get_outputs)
     payload: dict[str, dict[str, int]] = {}
 
     for relay_id, relay_outputs in outputs.items():
@@ -183,7 +204,7 @@ def publish_relay_auto_off_config() -> None:
 
 @app.exception_handler(StarletteHTTPException)
 async def custom_http_exception_handler(request: Request, exc):
-    return HTMLResponse('<h1>Sio!<br>Tu nic nie ma!</h1><a href="/auto">Strona Główna</a>')
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
 
 
 @app.get("/")
@@ -219,47 +240,33 @@ async def get_temperatures(
     end: int = Query(..., ge=0),
     step: int = Query(..., gt=0, le=3600),
 ):
-    async with httpx.AsyncClient() as client:
-        response1 = await client.get(
-            f"{config.monitoring.metrics}/api/v1/query_range",
-            params={
-                "start": start,
-                "end": end,
-                "query": "water_temperature",
-                "step": step,
-            },
-        )
+    if end < start or (end - start) // step + 1 > 10000:
+        raise HTTPException(status_code=400, detail="History range must contain at most 10000 points")
+    client = get_metrics_client()
+    response1 = await client.get(
+        f"{config.monitoring.metrics}/api/v1/query_range",
+        params={
+            "start": start,
+            "end": end,
+            "query": "water_temperature",
+            "step": step,
+        },
+    )
 
-        response2 = await client.get(
-            f"{config.monitoring.metrics}/api/v1/query_range",
-            params={
-                "start": start,
-                "end": end,
-                "query": "pid_target",
-                "step": step,
-            },
-        )
+    response2 = await client.get(
+        f"{config.monitoring.metrics}/api/v1/query_range",
+        params={
+            "start": start,
+            "end": end,
+            "query": "pid_target",
+            "step": step,
+        },
+    )
 
     if response1.status_code != 200 or response2.status_code != 200:
         return "connection not working"
 
-    water_temperatures = response1.json()["data"]["result"] + response2.json()["data"]["result"]
-
-    if not water_temperatures:
-        return []
-
-    result = [
-        {
-            "timestamp": water_temperatures[0]["values"][i][0],
-            "cold": water_temperatures[0]["values"][i][1],
-            "hot": water_temperatures[1]["values"][i][1],
-            "mixed": water_temperatures[2]["values"][i][1],
-            "target": water_temperatures[3]["values"][i][1],
-        }
-        for i in range(len(water_temperatures[0]["values"]))
-    ]
-
-    return result
+    return merge_temperature_series(response1.json()["data"]["result"], response2.json()["data"]["result"])
 
 
 @app.get("/blinds")
@@ -326,10 +333,7 @@ async def upload_firmware(
     access_token: Optional[str] = Cookie(None),
     authorization: Optional[str] = Header(None),
 ):
-    # Responses here are returned, never raised: custom_http_exception_handler
-    # rewrites every HTTPException into a 200 HTML page, which would tell the
-    # uploader that a rejected upload succeeded.
-    token = access_token or auth.bearer_token_from_header(authorization)
+    token = auth.bearer_token_from_header(authorization) or access_token
     if not auth.get_current_user(token):
         return JSONResponse({"status": "error", "reason": "unauthorized"}, status_code=401)
 
@@ -376,14 +380,12 @@ async def download_firmware(
     """Serve an OTA image to a device or to a logged-in browser session.
 
     These binaries carry compiled-in WiFi and MQTT credentials, so this route
-    exists precisely so that they are not reachable anonymously. As above,
-    error responses are returned rather than raised -- esp_https_ota would
-    otherwise be handed a 200 HTML page and try to flash it.
+    exists precisely so that they are not reachable anonymously. Errors retain their HTTP status codes.
     """
     if device not in FIRMWARE_DEVICES:
         return JSONResponse({"detail": "unknown device"}, status_code=404)
 
-    token = access_token or auth.bearer_token_from_header(authorization)
+    token = auth.bearer_token_from_header(authorization) or access_token
     if not (_device_token_ok(x_firmware_token) or auth.get_current_user(token)):
         logger.warning("Rejected unauthenticated firmware download for %s", device)
         return JSONResponse({"detail": "Unauthorized"}, status_code=401)
@@ -396,7 +398,7 @@ async def download_firmware(
 
 
 class BlindRequest(BaseModel):
-    blind: str = Field(pattern=r"^r[0-9]+$")
+    blind: str = Field(pattern=r"^r[1-8]$")
     position: int = Field(ge=0, le=999)
 
 
@@ -411,20 +413,12 @@ async def set_blind(req: BlindRequest, user: dict = Depends(_require_authenticat
 
 
 @app.websocket("/blinds/ws/{client_id}")
+@ws_manager.endpoint
 async def websocket_blinds(websocket: WebSocket):
-    user = await auth.websocket_auth(websocket)
-
-    if not user:
-        await websocket.close(code=1008)
-
-        return
-
-    await ws_manager.connect(websocket)
-
     mqtt.client.publish("/blind/cmd", "S")
 
     # Send relay blind pairs to the newly connected client
-    relay_pairs = connection_manager.get_relay_blind_pairs_with_names()
+    relay_pairs = await db_call(connection_manager.get_relay_blind_pairs_with_names)
     if relay_pairs:
         await ws_manager.send_personal_message(
             {"type": "relay_blinds", "pairs": relay_pairs},
@@ -448,7 +442,7 @@ async def websocket_blinds(websocket: WebSocket):
                 )
 
     async def receive_command(websocket: WebSocket):
-        async for cmd in websocket.iter_json():
+        async for cmd in ws_manager.messages(websocket):
             if cmd.get("type") == "relay_blind_control":
                 try:
                     relay_id = int(cmd["relay_id"])
@@ -475,18 +469,10 @@ async def websocket_blinds(websocket: WebSocket):
 
 
 @app.websocket("/heating/ws/{client_id}")
+@ws_manager.endpoint
 async def websocket_heating(websocket: WebSocket):
-    user = await auth.websocket_auth(websocket)
-
-    if not user:
-        await websocket.close(code=1008)
-
-        return
-
-    await ws_manager.connect(websocket)
-
     async def receive_command(websocket: WebSocket):
-        async for cmd in websocket.iter_json():
+        async for cmd in ws_manager.messages(websocket):
             logger.debug("putting %s in command queue", cmd)
             mqtt.client.publish("/heating/cmd", cmd)
 
@@ -494,26 +480,18 @@ async def websocket_heating(websocket: WebSocket):
 
 
 @app.websocket("/lights/ws/{client_id}")
+@ws_manager.endpoint
 async def websocket_lights(websocket: WebSocket):
-    user = await auth.websocket_auth(websocket)
-
-    if not user:
-        await websocket.close(code=1008)
-
-        return
-
-    await ws_manager.connect(websocket)
-
     await ws_manager.send_personal_message(
         {
             "type": "configuration",
-            "sections": connection_manager.get_sections(),
-            "named_outputs": connection_manager.get_named_outputs(),
+            "sections": await db_call(connection_manager.get_sections),
+            "named_outputs": await db_call(connection_manager.get_named_outputs),
         },
         websocket,
     )
 
-    for relay_id in connection_manager.get_relays():
+    for relay_id in await db_call(connection_manager.get_relays):
         mqtt.client.publish(f"/relay/cmd/{relay_id}", "S")
 
     current_states = state_manager.get_all()
@@ -530,27 +508,27 @@ async def websocket_lights(websocket: WebSocket):
             )
 
     async def receive_command(websocket: WebSocket):
-        async for cmd in websocket.iter_json():
+        async for cmd in ws_manager.messages(websocket):
             if cmd.get("type") == "add_section":
-                connection_manager.add_section(cmd["name"])
+                await db_call(connection_manager.add_section, cmd["name"])
                 await ws_manager.broadcast(
                     {
                         "type": "configuration",
-                        "sections": connection_manager.get_sections(),
-                        "named_outputs": connection_manager.get_named_outputs(),
+                        "sections": await db_call(connection_manager.get_sections),
+                        "named_outputs": await db_call(connection_manager.get_named_outputs),
                     },
                     "/lights/ws/",
                 )
                 continue
 
             if cmd.get("type") == "change_section":
-                connection_manager.change_output_section(int(cmd["relay_id"]), cmd["output_id"], int(cmd["section"]))
+                await db_call(connection_manager.change_output_section, int(cmd["relay_id"]), cmd["output_id"], int(cmd["section"]))
                 ha_bridge.schedule_resync()
                 await ws_manager.broadcast(
                     {
                         "type": "configuration",
-                        "sections": connection_manager.get_sections(),
-                        "named_outputs": connection_manager.get_named_outputs(),
+                        "sections": await db_call(connection_manager.get_sections),
+                        "named_outputs": await db_call(connection_manager.get_named_outputs),
                     },
                     "/lights/ws/",
                 )
@@ -559,13 +537,13 @@ async def websocket_lights(websocket: WebSocket):
             if cmd.get("type") == "change_positions":
                 positions = cmd.get("positions", [])
                 if isinstance(positions, list) and positions:
-                    connection_manager.set_output_positions(positions)
+                    await db_call(connection_manager.set_output_positions, positions)
 
                     await ws_manager.broadcast(
                         {
                             "type": "configuration",
-                            "sections": connection_manager.get_sections(),
-                            "named_outputs": connection_manager.get_named_outputs(),
+                            "sections": await db_call(connection_manager.get_sections),
+                            "named_outputs": await db_call(connection_manager.get_named_outputs),
                         },
                         "/lights/ws/",
                     )
@@ -578,16 +556,16 @@ async def websocket_lights(websocket: WebSocket):
                 positions = cmd.get("positions", [])
 
                 if section is not None and relay_id is not None and output_id is not None:
-                    connection_manager.change_output_section(int(relay_id), str(output_id), int(section))
+                    await db_call(connection_manager.change_output_section, int(relay_id), str(output_id), int(section))
 
                 if isinstance(positions, list) and positions:
-                    connection_manager.set_output_positions(positions)
+                    await db_call(connection_manager.set_output_positions, positions)
 
                 await ws_manager.broadcast(
                     {
                         "type": "configuration",
-                        "sections": connection_manager.get_sections(),
-                        "named_outputs": connection_manager.get_named_outputs(),
+                        "sections": await db_call(connection_manager.get_sections),
+                        "named_outputs": await db_call(connection_manager.get_named_outputs),
                     },
                     "/lights/ws/",
                 )
@@ -604,25 +582,36 @@ async def websocket_lights(websocket: WebSocket):
 
 
 @app.websocket("/rcm/ws/{client_id}")
+@ws_manager.endpoint
 async def websocket_rcm(websocket: WebSocket):
-    user = await auth.websocket_auth(websocket)
-
-    if not user:
-        await websocket.close(code=1008)
-
-        return
-
-    await ws_manager.connect(websocket)
-
-    for relay_id in connection_manager.get_relays():
+    for relay_id in await db_call(connection_manager.get_relays):
         mqtt.client.publish(f"/relay/cmd/{relay_id}", "S")
 
     await asyncio.sleep(0.1)
     await state_manager.send_online_status(websocket)
 
     async def receive_command(websocket: WebSocket):
-        async for cmd in websocket.iter_json():
+        async for cmd in ws_manager.messages(websocket):
             logger.debug("putting %s in command queue", cmd)
+
+            if cmd.get("type") == "gateway_mode":
+                device_id = int(cmd["device_id"])
+                # Only reported normal switch hardware can become a gateway.
+                role = state_manager.get_device_role(device_id)
+                if role.get("type") != "switch" or not state_manager.is_switch_online(device_id):
+                    await ws_manager.send_personal_message(
+                        {"type": "error", "message": "Gateway mode requires an online normal switch"},
+                        websocket,
+                    )
+                    continue
+                mqtt.client.publish(
+                    f"/switch/cmd/{device_id}",
+                    "gateway:1" if cmd["enabled"] else "gateway:0",
+                )
+                await ws_manager.send_personal_message(
+                    {"type": "gateway_requested", "device_id": device_id}, websocket
+                )
+                continue
 
             if cmd.get("type") == "auto_off_update":
                 try:
@@ -649,17 +638,17 @@ async def websocket_rcm(websocket: WebSocket):
                 continue
 
             if cmd.get("type") == "update":
-                connections = connection_manager.get_all_connections()
+                connections = await db_call(connection_manager.get_all_connections)
                 mqtt.client.publish(
                     "/switch/cmd/root",
                     json.dumps({"type": "connections", "data": connections}),
                 )
-                blind_pairs = connection_manager.get_blind_pairs()
+                blind_pairs = await db_call(connection_manager.get_blind_pairs)
                 mqtt.client.publish(
                     "/switch/cmd/root",
                     json.dumps({"type": "blind_pairs", "data": blind_pairs}),
                 )
-                publish_relay_auto_off_config()
+                await publish_relay_auto_off_config()
                 await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
                 continue
 
@@ -701,7 +690,7 @@ async def websocket_rcm(websocket: WebSocket):
             if cmd.get("type") == "button_types":
                 for switch_id, buttons in cmd.get("data", {}).items():
                     for button_id, button_type in buttons.items():
-                        connection_manager.set_button_type(int(switch_id), button_id, int(button_type))
+                        await db_call(connection_manager.set_button_type, int(switch_id), button_id, int(button_type))
 
                 mqtt.client.publish("/switch/cmd/root", cmd)
 
@@ -722,7 +711,16 @@ def start():
 
     logging.basicConfig(level=logging.INFO)
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    uvicorn.run(app, host=config.server.host, port=config.server.port)
+    uvicorn.run(
+        app,
+        host=config.server.host,
+        port=config.server.port,
+        forwarded_allow_ips=config.server.forwarded_allow_ips,
+        ws="websockets",
+        ws_max_size=config.security.ws_max_bytes,
+        ws_max_queue=16,
+        ws_per_message_deflate=False,
+    )
 
 
 if __name__ == "__main__":

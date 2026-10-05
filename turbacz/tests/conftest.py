@@ -1,5 +1,4 @@
 import pytest
-
 from turbacz.ha.bridge import HABridge
 from turbacz.settings import config
 
@@ -92,6 +91,12 @@ class FakeConnectionManager:
 
     def get_switches(self):
         return dict(self.switches)
+
+    def get_relays(self):
+        return dict(self.relays)
+
+    def get_blind_pairs(self):
+        return dict(self.blind_pairs)
 
     def get_all_buttons(self):
         return {s: dict(b) for s, b in self.buttons.items()}

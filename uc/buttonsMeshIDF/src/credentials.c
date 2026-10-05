@@ -123,6 +123,9 @@ esp_err_t credentials_load(void) {
         // OTA is optional: a node without it simply cannot self-update.
         {KEY_OTA_URL, s_creds.ota_url, sizeof(s_creds.ota_url), false},
         {KEY_OTA_TOKEN, s_creds.ota_token, sizeof(s_creds.ota_token), false},
+        {"switch_role", s_creds.switch_role, sizeof(s_creds.switch_role), false},
+        {"gateway_mac", s_creds.gateway_mac, sizeof(s_creds.gateway_mac), false},
+        {"remote_key", s_creds.remote_key, sizeof(s_creds.remote_key), false},
     };
 
     for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); i++) {
@@ -134,7 +137,14 @@ esp_err_t credentials_load(void) {
         }
     }
 
+    s_creds.remote_channel = 11;
+    err = nvs_get_u8(handle, "remote_channel", &s_creds.remote_channel);
     nvs_close(handle);
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) return err;
+    if (s_creds.remote_channel < 1 || s_creds.remote_channel > 13)
+        return ESP_ERR_INVALID_ARG;
+    if (s_creds.switch_role[0] && strcmp(s_creds.switch_role, "normal") &&
+        strcmp(s_creds.switch_role, "remote")) return ESP_ERR_INVALID_ARG;
 
     // The mesh ID is exactly 6 bytes on the wire. Longer values are truncated
     // rather than rejected, because that is what the previous CONFIG_MESH_ID

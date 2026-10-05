@@ -40,7 +40,7 @@
 
 #define STATUS_REPORT_INTERVAL_MS 15000
 #define BUTTON_POLL_INTERVAL_MS 20
-#define BUTTON_DEBOUNCE_MS 15
+#define BUTTON_DEBOUNCE_MS 50
 #define BUTTON_PRESS_TIME_MS 250
 #define LED_UPDATE_INTERVAL_MS 100
 #define LED_FLASH_DURATION_MS 50
@@ -119,6 +119,7 @@
 #define MSG_TYPE_TYPE_INFO 'T'     // Message to convey device type info
 #define MSG_TYPE_OTA_START 'U'     // OTA update start packet
 #define MSG_TYPE_PING 'P'          // Ping message for health check'
+#define MSG_TYPE_ESPNOW 'E'        // Authenticated remote packet / return command
 
 // Device types for type info messages
 #define DEVICE_TYPE_SWITCH 'S'
@@ -131,6 +132,7 @@ typedef enum {
     NODE_TYPE_SWITCH_C3,
     NODE_TYPE_RELAY_8,
     NODE_TYPE_RELAY_16,
+    NODE_TYPE_REMOTE_SWITCH,
 } node_type_t;
 
 /** @brief Hardware board variant. */
@@ -275,6 +277,16 @@ extern mesh_addr_t g_broadcast_addr;
 /** @brief Initialise WiFi, the ESP-MESH stack, and register all event handlers.
  */
 void mesh_network_init(void);
+void mesh_tx_init(void);
+void remote_switch_run(void);
+void remote_gateway_load(void);
+void remote_gateway_init(void);
+bool remote_gateway_enabled(void);
+bool remote_gateway_command(const char* data, size_t len);
+void remote_gateway_mesh_receive(mesh_app_msg_t* msg);
+void remote_root_receive(mesh_addr_t* from, mesh_app_msg_t* msg);
+bool remote_wrap_command(uint64_t device_id, mesh_app_msg_t* msg);
+esp_err_t mesh_disconnect_and_ota(void);
 
 /** @brief Returns true when the station netif has an IP address. */
 bool domator_mesh_is_wifi_connected(void);
@@ -365,6 +377,7 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg);
 
 /** @brief Initialise root-only resources (node registry mutex, etc.). */
 void node_root_start(void);
+bool node_root_ready(void);
 
 /** @brief Initialise and start the MQTT client (root node only). */
 void mqtt_init(void);

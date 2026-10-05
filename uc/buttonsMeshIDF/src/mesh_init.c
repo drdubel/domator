@@ -224,6 +224,7 @@ void mesh_network_init(void) {
     ESP_ERROR_CHECK(esp_wifi_start());
 
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
+    remote_gateway_init();
 
     ESP_ERROR_CHECK(esp_mesh_init());
 

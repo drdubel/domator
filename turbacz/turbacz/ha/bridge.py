@@ -84,6 +84,10 @@ class HABridge:
         self._published[topic] = payload
         self._publish(topic, payload)
 
+    def reset_published_state(self) -> None:
+        """A reconnected broker may have lost retained discovery and state."""
+        self._published.clear()
+
     # -- discovery ------------------------------------------------------------
 
     async def apply(self) -> None:
@@ -96,18 +100,18 @@ class HABridge:
 
         async with self._lock:
             try:
-                registry = build_registry(self.cm(), self._base, config.ha.discovery_prefix)
+                registry = await asyncio.to_thread(build_registry, self.cm(), self._base, config.ha.discovery_prefix)
             except Exception as exc:
                 logger.error("HA bridge could not build registry: %s", exc, exc_info=True)
                 return
 
             self._registry = registry
 
-            self._publish(T.bridge_status_topic(self._base), "online")
-            self._publish(T.heating_mode_state_topic(self._base), "performance")
+            self._publish_state(T.bridge_status_topic(self._base), "online")
+            self._publish_state(T.heating_mode_state_topic(self._base), "performance")
 
             try:
-                applied = self.cm().get_applied_topics()
+                applied = await asyncio.to_thread(self.cm().get_applied_topics)
             except Exception as exc:
                 logger.error("HA bridge could not read applied topics: %s", exc)
                 return
@@ -120,7 +124,7 @@ class HABridge:
                 self._publish(topic, payload)
                 self._published[topic] = payload
                 try:
-                    self.cm().upsert_applied_topic(topic, entity.uid)
+                    await asyncio.to_thread(self.cm().upsert_applied_topic, topic, entity.uid)
                 except Exception as exc:
                     logger.error("HA bridge could not record applied topic %s: %s", topic, exc)
 
@@ -129,7 +133,7 @@ class HABridge:
                 self._publish(topic, "")
                 self._published.pop(topic, None)
                 try:
-                    self.cm().delete_applied_topic(topic)
+                    await asyncio.to_thread(self.cm().delete_applied_topic, topic)
                 except Exception as exc:
                     logger.error("HA bridge could not clear applied topic %s: %s", topic, exc)
                 logger.info("HA bridge cleared discovery topic %s", topic)

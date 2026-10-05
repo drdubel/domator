@@ -1731,7 +1731,7 @@
       }
     }
   ],
-  "refresh": "15s",
+  "refresh": "1m",
   "schemaVersion": 39,
   "tags": [
     "domator",

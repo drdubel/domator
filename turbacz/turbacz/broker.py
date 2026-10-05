@@ -3,18 +3,30 @@ import json
 import logging
 from time import time
 
-import httpx
 import namer
 
 import turbacz.metrics as metrics
 from turbacz.connection_manager import connection_manager
+from turbacz.database import db_call
 from turbacz.ha.bridge import ha_bridge
+from turbacz.mesh_metrics import record_node_metrics
 from turbacz.mqtt_client import mqtt
 from turbacz.settings import config
 from turbacz.state_manager import state_manager
 from turbacz.websocket import ws_manager
 
 logger = logging.getLogger(__name__)
+_device_task: asyncio.Task | None = None
+_ha_task: asyncio.Task | None = None
+
+
+async def stop_background_tasks():
+    global _device_task, _ha_task
+    tasks = [task for task in (_device_task, _ha_task, ha_bridge._resync_task) if task is not None]
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    _device_task = _ha_task = ha_bridge._resync_task = None
 
 
 async def periodic_check_devices(interval: int = 15):
@@ -36,17 +48,23 @@ async def periodic_check_devices(interval: int = 15):
 
 @mqtt.on_connect()
 def connect(client, flags, rc, properties):
+    global _device_task, _ha_task
     mqtt.client.subscribe("/blind/pos")
     mqtt.client.subscribe("/heating/metrics")
     mqtt.client.subscribe("/relay/state/+")
     mqtt.client.subscribe("/switch/state/+")
 
     if config.ha.enabled:
+        ha_bridge.reset_published_state()
         for topic in ha_bridge.command_subscriptions():
             mqtt.client.subscribe(topic)
-        asyncio.create_task(ha_bridge.resync_loop())
+        if _ha_task is None or _ha_task.done():
+            _ha_task = asyncio.create_task(ha_bridge.resync_loop())
+        else:
+            ha_bridge.schedule_resync()
 
-    asyncio.create_task(periodic_check_devices())
+    if _device_task is None or _device_task.done():
+        _device_task = asyncio.create_task(periodic_check_devices())
 
     logger.info("Connected: %s %s %s %s", client, flags, rc, properties)
 
@@ -97,7 +115,7 @@ async def handle_heating_metrics(payload_str):
         for multiplier in ("kp", "ki", "kd"):
             metrics.pid_multiplier.set({"multiplier": multiplier}, data[multiplier])
 
-        await ws_manager.broadcast(data, "/heating/ws/")
+        await ws_manager.broadcast({**data, "timestamp": time()}, "/heating/ws/")
         await ha_bridge.on_heating_metrics(data)
 
     except (json.JSONDecodeError, KeyError) as e:
@@ -175,10 +193,6 @@ async def handle_root_state(payload_str):
     """
     Process root switch state payload.
     """
-    connections = connection_manager.get_all_connections()
-    relays = connection_manager.get_relays()
-    switches = connection_manager.get_switches()
-
     try:
         data = json.loads(payload_str)
         logger.debug("Root State Data: %s", data)  # Debug log
@@ -190,17 +204,18 @@ async def handle_root_state(payload_str):
     status = data.get("status", "")
 
     if status == "connected":
+        connections = await db_call(connection_manager.get_all_connections)
         logger.debug("Connections: %s", connections)  # Debug log
 
         mqtt.client.publish("/switch/cmd/root", json.dumps({"type": "connections", "data": connections}))
-        blind_pairs = connection_manager.get_blind_pairs()
+        blind_pairs = await db_call(connection_manager.get_blind_pairs)
         mqtt.client.publish("/switch/cmd/root", json.dumps({"type": "blind_pairs", "data": blind_pairs}))
         mqtt.client.publish(
-            "/switch/cmd/root", json.dumps({"type": "button_types", "data": connection_manager.get_all_buttons()})
+            "/switch/cmd/root", json.dumps({"type": "button_types", "data": await db_call(connection_manager.get_all_buttons)})
         )
 
         # Sync per-output auto-off timers to relay boards.
-        outputs = connection_manager.get_outputs()
+        outputs = await db_call(connection_manager.get_outputs)
         auto_off_payload: dict[str, dict[str, int]] = {}
         for relay_id, relay_outputs in outputs.items():
             relay_key = str(relay_id)
@@ -220,19 +235,15 @@ async def handle_root_state(payload_str):
     if status == "disconnected":
         return
 
-    url = f"{config.monitoring.metrics}/api/v2/write"
-    if config.monitoring.labels:
-        labels = "," + ",".join(f"{key}={value}" for key, value in config.monitoring.labels.items())
-    else:
-        labels = ""
-
-    if data["type"] == "switch":
+    relays = await db_call(connection_manager.get_relays)
+    switches = await db_call(connection_manager.get_switches)
+    if data["type"] in {"switch", "remote"}:
         if data["deviceId"] in switches:
             data["name"] = switches[data["deviceId"]][0]
         else:
             name = namer.generate(category="astronomy")
             data["name"] = name
-            connection_manager.add_switch(data["deviceId"], name, 3)
+            await db_call(connection_manager.add_switch, data["deviceId"], name, 7 if data["type"] == "remote" else 3)
             await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
 
     elif data["type"] == "relay8" or data["type"] == "relay16":
@@ -243,10 +254,10 @@ async def handle_root_state(payload_str):
             data["name"] = name
 
             if data["type"] == "relay8":
-                connection_manager.add_relay(data["deviceId"], name, 8)
+                await db_call(connection_manager.add_relay, data["deviceId"], name, 8)
             else:
-                connection_manager.add_relay(data["deviceId"], name, 16)
-            connection_manager.add_switch(data["deviceId"], name, 8)
+                await db_call(connection_manager.add_relay, data["deviceId"], name, 16)
+            await db_call(connection_manager.add_switch, data["deviceId"], name, 8)
 
             await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
 
@@ -257,13 +268,12 @@ async def handle_root_state(payload_str):
     if data.get("isRoot") == 1:
         connection_manager.rootId = data["deviceId"]
 
+    state_manager.set_device_role(data["deviceId"], data)
     state_manager.mark_relay_online(data["deviceId"], int(time()))
     state_manager.mark_switch_online(data["deviceId"], int(time()))
     ha_bridge.publish_relay_availability(data["deviceId"], True)
     state_manager.set_firmware_version(data["deviceId"], data["type"], data["firmware"])
     state_manager.set_device_rssi(data["deviceId"], int(data["rssi"]))
-
-    data["name"] = data["name"].replace(" ", "\\ ")
 
     if data["parentId"] in relays:
         parent_name = relays[data["parentId"]][0]  # Extract name from tuple
@@ -277,24 +287,10 @@ async def handle_root_state(payload_str):
     else:
         parent_name = "unknown"
 
-    data["parent_name"] = parent_name.replace(" ", "\\ ")
+    if data["type"] != "remote":
+        mqtt.client.publish("/switch/cmd/" + str(data["deviceId"]), "P")
 
-    mqtt.client.publish("/switch/cmd/" + str(data["deviceId"]), "P")
-
-    if not config.monitoring.send_metrics:
-        return
-
-    metric_node = f"node_info,id={data['deviceId']},name={data['name']}{labels} uptime={data['uptime']},clicks={data['clicks']},free_heap={data['freeHeap']},ping_time={state_manager.get_device_ping(data['deviceId'])}"
-    metric_mesh = f"mesh_node,id={data['deviceId']},name={data['name']},parent={data['parentId']},parent_name={data['parent_name']},firmware={data['firmware']},type={data['type']}{labels} rssi={data['rssi']}"
-
-    logger.debug(metric_node)  # Debug log
-    logger.debug(metric_mesh)  # Debug log
-
-    async with httpx.AsyncClient() as client:
-        response = await client.post(url, content=metric_node)
-        if response.status_code != 204:
-            logger.error("Failed to write metric for %s: %s", data["deviceId"], response.text)
-
-        response = await client.post(url, content=metric_mesh)
-        if response.status_code != 204:
-            logger.error("Failed to write metric for %s: %s", data["deviceId"], response.text)
+    try:
+        record_node_metrics(data, parent_name, state_manager.get_device_ping(data["deviceId"]))
+    except (ValueError, TypeError, KeyError, OverflowError):
+        logger.warning("Rejected invalid node metrics")

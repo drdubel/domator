@@ -3,11 +3,11 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import jwt
 from authlib.integrations.starlette_client import OAuth, OAuthError
-from fastapi import APIRouter, Cookie, Request, Response, WebSocket
-from jose import JWTError, jwt
+from fastapi import APIRouter, Cookie, HTTPException, Request, Response, WebSocket
+from jwt import InvalidTokenError
 from starlette.responses import HTMLResponse, RedirectResponse
-
 from turbacz.settings import config
 
 router = APIRouter()
@@ -47,9 +47,9 @@ def create_jwt(data: dict) -> str:
 
 def verify_jwt(token: str) -> dict | None:
     try:
-        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG], options={"require": ["exp", "iat", "sub"]})
 
-    except JWTError:
+    except InvalidTokenError:
         return None
 
 
@@ -68,7 +68,18 @@ def bearer_token_from_header(authorization: str | None) -> str | None:
 
 
 async def websocket_auth(websocket: WebSocket) -> dict | None:
-    token = websocket.cookies.get("access_token") or websocket.query_params.get("token")
+    from turbacz.security import trusted_host, trusted_origin
+
+    if not trusted_host(websocket):
+        return None
+    origin = websocket.headers.get("origin")
+    if origin is not None and not trusted_origin(websocket):
+        return None
+    explicit = bearer_token_from_header(websocket.headers.get("authorization")) or websocket.query_params.get("token")
+    # A browser cookie alone is never accepted without a trusted Origin.
+    if not origin and not explicit:
+        return None
+    token = explicit or websocket.cookies.get("access_token")
 
     if not token:
         return None
@@ -138,7 +149,7 @@ async def auth(request: Request):
             "access_token",
             jwt_token,
             httponly=True,
-            secure=request.url.scheme == "https",
+            secure=not config.security.allow_insecure_http,
             samesite="lax",
             max_age=JWT_EXPIRE_MINUTES * 60,
             path="/",
@@ -152,9 +163,9 @@ async def auth(request: Request):
     return RedirectResponse(url="/")
 
 
-@router.get("/logout")
+@router.post("/logout")
 async def logout(response: Response):
-    response = RedirectResponse(url="/")
+    response = RedirectResponse(url="/", status_code=303)
     response.delete_cookie("access_token", path="/")
 
     return response
@@ -171,3 +182,14 @@ async def main(request: Request, access_token: Optional[str] = Cookie(None)):
         return Response(content=data, media_type="text/html")
 
     return RedirectResponse(url="/")
+
+
+@router.get("/csrf-token")
+async def get_csrf_token(request: Request):
+    from starlette.responses import JSONResponse
+    from turbacz.security import csrf_token
+
+    token = request.cookies.get("access_token")
+    if not get_current_user(token):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return JSONResponse({"token": csrf_token(token)}, headers={"Cache-Control": "no-store"})

@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "domator_mesh.c"
         "credentials.c"
+        "remote_switch.c"
         "mesh_init.c"
         "node_switch.c"
         "mesh_comm.c"

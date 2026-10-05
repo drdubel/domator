@@ -22,6 +22,11 @@ from fastapi import (
     UploadFile,
     WebSocket,
 )
+from fastapi.openapi.docs import (
+    get_redoc_html,
+    get_swagger_ui_html,
+    get_swagger_ui_oauth2_redirect_html,
+)
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
@@ -131,7 +136,10 @@ async def lifespan(app):
             await mqtt.mqtt_shutdown()
 
 
-app = FastAPI(title="Turbacz Home Automation System", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="Turbacz Home Automation System", version="0.1.0", lifespan=lifespan,
+    docs_url=None, redoc_url=None,
+)
 app.add_middleware(CustomRequestSizeMiddleware, max_content_size=MAX_REQUEST_SIZE)
 session_secret = config.session_secret
 if not session_secret:
@@ -166,6 +174,39 @@ async def prometheus_metrics(request: Request):
 
 app.include_router(auth.router)
 app.include_router(connection_router)
+
+
+@app.api_route("/favicon.ico", methods=["GET", "HEAD"], include_in_schema=False)
+async def favicon():
+    return FileResponse("static/favicon.ico", media_type="image/x-icon")
+
+
+@app.get("/docs", include_in_schema=False)
+async def swagger_docs():
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} - Swagger UI",
+        oauth2_redirect_url=app.swagger_ui_oauth2_redirect_url,
+        swagger_favicon_url="/favicon.ico",
+    )
+
+
+@app.get(app.swagger_ui_oauth2_redirect_url, include_in_schema=False)
+async def swagger_oauth_redirect():
+    response = get_swagger_ui_oauth2_redirect_html()
+    return HTMLResponse(response.body.decode().replace(
+        "</head>",
+        '<link rel="icon" href="/favicon.ico" type="image/x-icon"></head>',
+    ))
+
+
+@app.get("/redoc", include_in_schema=False)
+async def redoc_docs():
+    return get_redoc_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} - ReDoc",
+        redoc_favicon_url="/favicon.ico",
+    )
 
 
 @app.get("/sentry-config.js", include_in_schema=False)

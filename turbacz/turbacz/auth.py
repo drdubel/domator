@@ -114,6 +114,14 @@ async def auth(request: Request):
     def _is_invalid_client(error: OAuthError) -> bool:
         return error.error == "invalid_client"
 
+    def _error_response(error: OAuthError) -> HTMLResponse:
+        return HTMLResponse(
+            '<!DOCTYPE html><html><head><meta charset="UTF-8">'
+            '<title>Turbacz login error</title>'
+            '<link rel="icon" href="/favicon.ico" type="image/x-icon">'
+            f'</head><body><h1>{_format_oauth_error(error)}</h1></body></html>'
+        )
+
     try:
         token = await oauth.google.authorize_access_token(request)
 
@@ -126,9 +134,9 @@ async def auth(request: Request):
                 except OAuthError:
                     continue
             else:
-                return HTMLResponse(f"<h1>{_format_oauth_error(error)}</h1>")
+                return _error_response(error)
         else:
-            return HTMLResponse(f"<h1>{_format_oauth_error(error)}</h1>")
+            return _error_response(error)
 
     user = token.get("userinfo")
     is_mobile_login = request.session.pop("mobile_login", False)

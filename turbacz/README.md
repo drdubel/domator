@@ -10,6 +10,20 @@ Stable version of project **Domator**.
 
 3. Enter ```turbacz``` directory and run ```uv sync```
 
+On FreeBSD, install the PostgreSQL client package providing system `libpq`
+before running `uv sync`. Turbacz uses pure Python Psycopg there because
+`psycopg-binary` does not provide FreeBSD wheels. Linux, macOS and Windows
+use the binary extra. See [Psycopg installation](https://www.psycopg.org/psycopg3/docs/basic/install.html#pure-python-installation).
+
+Check the PostgreSQL adapter without connecting to the database:
+
+```sh
+uv run --frozen python -c "import psycopg; print(psycopg.pq.__impl__)"
+```
+
+On FreeBSD this should print `python`; if `libpq` cannot be found, check that
+the PostgreSQL client library is installed and discoverable by the system loader.
+
 ### Run MQTT Server
 
 1. Install mosquitto:  

@@ -179,21 +179,25 @@ test('RCM arrangements cycle, keep types separated, avoid overlaps and preserve 
             Object.defineProperty(el, 'offsetWidth', { value: 320 + index * 10 })
             Object.defineProperty(el, 'offsetHeight', { value: 200 + index * 70 })
         })
-        for (const style of ['columns', 'grid', 'paired', 'columns']) {
+        for (const style of ['columns', 'grid', 'paired', 'connections', 'columns']) {
             run(dom, 'cycleDeviceArrangement()')
             assert.equal(dom.window.localStorage.getItem('rcm_arrangement_style'), style)
             const switches = [...doc.querySelectorAll('.switch-box')]
             const relays = [...doc.querySelectorAll('.relay-box')]
-            assert.ok(Math.max(...switches.map(el => parseFloat(el.style.left) + el.offsetWidth))
-                < Math.min(...relays.map(el => parseFloat(el.style.left))))
+            if (style === 'columns' || style === 'grid') {
+                assert.ok(Math.max(...switches.map(el => parseFloat(el.style.left) + el.offsetWidth))
+                    < Math.min(...relays.map(el => parseFloat(el.style.left))))
+            }
             const cards = [...switches, ...relays]
             cards.forEach((a, i) => cards.slice(i + 1).forEach(b => {
                 const x = el => parseFloat(el.style.left), y = el => parseFloat(el.style.top)
                 assert.ok(x(a) + a.offsetWidth <= x(b) || x(b) + b.offsetWidth <= x(a)
                     || y(a) + a.offsetHeight <= y(b) || y(b) + b.offsetHeight <= y(a))
             }))
-            if (style === 'paired') switches.forEach(sw => {
-                assert.equal(sw.style.top, doc.getElementById(sw.id.replace('switch', 'relay')).style.top)
+            if (style === 'paired' || style === 'connections') switches.forEach(sw => {
+                const relay = doc.getElementById(sw.id.replace('switch', 'relay'))
+                assert.equal(sw.style.top, relay.style.top)
+                assert.equal(parseFloat(sw.style.left) - parseFloat(relay.style.left) - relay.offsetWidth, 24)
             })
         }
         run(dom, `document.getElementById('switch-1').style.left = '12345px';
@@ -270,7 +274,7 @@ test('RCM arrangements target a 16:9 footprint and fit measured cards within the
         const wrapper = dom.window.document.getElementById('canvas-wrapper')
         Object.defineProperty(wrapper, 'clientWidth', { value: 1280 })
         Object.defineProperty(wrapper, 'clientHeight', { value: 720 })
-        for (const style of ['columns', 'grid', 'paired']) {
+        for (const style of ['columns', 'grid', 'paired', 'connections']) {
             dom.window.layoutStyle = style
             run(dom, 'arrangeDevices(layoutStyle)')
             const minX = Math.min(...cards.map(el => parseFloat(el.style.left)))
@@ -285,5 +289,47 @@ test('RCM arrangements target a 16:9 footprint and fit measured cards within the
             assert.ok(minY * zoom + panY >= 39)
             assert.ok(maxY * zoom + panY <= 681)
         }
+    } finally { dom.window.close() }
+})
+
+test('RCM Connections layout groups by wiring and keeps relay switches beside their relays', () => {
+    const dom = rcmPage()
+    try {
+        run(dom, `createRelay(100, 'Relay A', {}, 0, 0, 8);
+            createRelay(200, 'Relay B', {}, 0, 0, 8);
+            createSwitch(100, 'Relay switch', 3, 0, 0);
+            createSwitch(9, 'Switch B', 3, 0, 0);
+            createSwitch(10, 'Switch A', 3, 0, 0);
+            createSwitch(11, 'Unconnected', 3, 0, 0);
+            createSwitch(12, 'Hidden', 3, 123, 456);
+            hiddenDevices.add('switch-12');
+            createConnection(9, 'a', 200, 'a');
+            createConnection(10, 'a', 100, 'a');`)
+        const doc = dom.window.document
+        doc.querySelectorAll('.device-box').forEach(el => {
+            Object.defineProperty(el, 'offsetWidth', { value: 320 })
+            Object.defineProperty(el, 'offsetHeight', { value: 300 })
+        })
+        run(dom, "arrangeDevices('connections')")
+        for (const [switchId, relayId] of [[9, 200], [10, 100]]) {
+            const sw = doc.getElementById(`switch-${switchId}`)
+            const relay = doc.getElementById(`relay-${relayId}`)
+            assert.equal(sw.style.top, relay.style.top)
+            assert.equal(parseFloat(relay.style.left) - parseFloat(sw.style.left) - sw.offsetWidth, 240)
+        }
+        const relaySwitch = doc.getElementById('switch-100'), relay = doc.getElementById('relay-100')
+        assert.equal(relaySwitch.style.top, relay.style.top)
+        assert.equal(parseFloat(relaySwitch.style.left) - parseFloat(relay.style.left) - relay.offsetWidth, 24)
+        assert.equal(doc.getElementById('switch-12').style.left, '123px')
+        assert.equal(doc.getElementById('switch-12').style.top, '456px')
+        // Joining two clusters keeps every card exactly once and without overlaps.
+        run(dom, "createConnection(9, 'b', 100, 'b'); arrangeDevices('connections')")
+        const cards = [...doc.querySelectorAll('.device-box')].filter(el => el.id !== 'switch-12')
+        cards.forEach((a, i) => cards.slice(i + 1).forEach(b => {
+            const x = el => parseFloat(el.style.left), y = el => parseFloat(el.style.top)
+            assert.ok(x(a) + a.offsetWidth <= x(b) || x(b) + b.offsetWidth <= x(a)
+                || y(a) + a.offsetHeight <= y(b) || y(b) + b.offsetHeight <= y(a))
+        }))
+        assert.equal(run(dom, 'connections[9].a.length + connections[9].b.length + connections[10].a.length'), 3)
     } finally { dom.window.close() }
 })

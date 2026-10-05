@@ -763,8 +763,8 @@ function resetAllPositions() {
     arrangeDevices('columns')
 }
 
-const ARRANGEMENT_STYLES = ['columns', 'grid', 'paired']
-const ARRANGEMENT_LABELS = { columns: 'Columns', grid: 'Grid', paired: 'Paired' }
+const ARRANGEMENT_STYLES = ['columns', 'grid', 'paired', 'connections']
+const ARRANGEMENT_LABELS = { columns: 'Columns', grid: 'Grid', paired: 'Paired', connections: 'Connections' }
 let arrangementStyle = localStorage.getItem('rcm_arrangement_style')
 
 function updateArrangementButton() {
@@ -773,7 +773,7 @@ function updateArrangementButton() {
     const index = ARRANGEMENT_STYLES.indexOf(arrangementStyle)
     const next = ARRANGEMENT_STYLES[(index + 1) % ARRANGEMENT_STYLES.length]
     button.querySelector('.btn-text').textContent = index < 0 ? 'Arrange' : `Arrange: ${ARRANGEMENT_LABELS[arrangementStyle]}`
-    button.title = `Arrange switches left and relays right. Next layout: ${ARRANGEMENT_LABELS[next]}.`
+    button.title = `Cycle device layouts. Next: ${ARRANGEMENT_LABELS[next]}. Paired places relay switches beside their relays; Connections groups connected devices.`
 }
 
 function cycleDeviceArrangement() {
@@ -802,8 +802,99 @@ function arrangeDevices(style = 'columns', { preserveSaved = false, focus = true
         el.style.top = `${y}px`
     }
     const switchesById = new Map(left.map(el => [el.id.split('-')[1], el]))
-    const relaysById = new Map(right.map(el => [el.id.split('-')[1], el]))
-    const ids = [...new Set([...switchesById.keys(), ...relaysById.keys()])].sort((a, b) => Number(a) - Number(b))
+    const cardWidth = el => el.offsetWidth || width
+    const units = []
+    const unitByCard = new Map()
+    right.forEach(relay => {
+        const sw = switchesById.get(relay.id.split('-')[1])
+        const unit = { cards: sw ? [relay, sw] : [relay], relay: true,
+            width: cardWidth(relay) + (sw ? 24 + cardWidth(sw) : 0),
+            height: Math.max(height(relay), sw ? height(sw) : 0), neighbors: new Set() }
+        units.push(unit)
+        unit.cards.forEach(el => unitByCard.set(el.id, unit))
+    })
+    left.filter(sw => !unitByCard.has(sw.id)).forEach(sw => {
+        const unit = { cards: [sw], relay: false, width: cardWidth(sw), height: height(sw), neighbors: new Set() }
+        units.push(unit)
+        unitByCard.set(sw.id, unit)
+    })
+    for (const [switchId, buttons] of Object.entries(connections)) {
+        const source = unitByCard.get(`switch-${switchId}`)
+        if (!source) continue
+        for (const targets of Object.values(buttons)) {
+            for (const { relayId } of targets) {
+                const target = unitByCard.get(`relay-${relayId}`)
+                if (!target || source === target) continue
+                source.neighbors.add(target)
+                target.neighbors.add(source)
+            }
+        }
+    }
+    const scoreLayout = positions => {
+        const minX = Math.min(...positions.map(p => p.x))
+        const minY = Math.min(...positions.map(p => p.y))
+        const footprintWidth = Math.max(...positions.map(p => p.x + cardWidth(p.el))) - minX
+        const footprintHeight = Math.max(...positions.map(p => p.y + height(p.el))) - minY
+        return { positions, width: footprintWidth, height: footprintHeight,
+            score: Math.abs(Math.log((footprintWidth / footprintHeight) / (16 / 9))) }
+    }
+    const buildUnitLayout = (members, columns) => {
+        const positions = []
+        const groups = [members.filter(unit => !unit.relay), members.filter(unit => unit.relay)]
+        let x = 0
+        groups.forEach(group => {
+            if (!group.length) return
+            const slotWidth = Math.max(...group.map(unit => unit.width))
+            let y = 0
+            for (let i = 0; i < group.length; i += columns) {
+                const row = group.slice(i, i + columns)
+                row.forEach((unit, col) => {
+                    let cardX = x + col * (slotWidth + gap)
+                    unit.cards.forEach(el => {
+                        positions.push({ el, x: cardX, y })
+                        cardX += cardWidth(el) + 24
+                    })
+                })
+                y += Math.max(...row.map(unit => unit.height)) + gap
+            }
+            x += Math.min(columns, group.length) * (slotWidth + gap) - gap + columnGap
+        })
+        return scoreLayout(positions)
+    }
+    const bestUnitLayout = members => {
+        let best = buildUnitLayout(members, 1)
+        for (let columns = 2; columns <= members.length; columns++) {
+            const candidate = buildUnitLayout(members, columns)
+            if (candidate.score < best.score) best = candidate
+        }
+        return best
+    }
+    let clusters = []
+    if (style === 'connections') {
+        const visited = new Set()
+        units.forEach(unit => {
+            if (visited.has(unit)) return
+            const members = [unit]
+            visited.add(unit)
+            for (let i = 0; i < members.length; i++) {
+                members[i].neighbors.forEach(neighbor => {
+                    if (!visited.has(neighbor)) {
+                        visited.add(neighbor)
+                        members.push(neighbor)
+                    }
+                })
+            }
+            // Order each side by its neighbors' average rank to reduce crossings.
+            for (let pass = 0; pass < 6; pass++) {
+                const ranks = new Map(members.map((member, index) => [member, index]))
+                const rank = member => member.neighbors.size
+                    ? [...member.neighbors].reduce((sum, neighbor) => sum + ranks.get(neighbor), 0) / member.neighbors.size
+                    : ranks.get(member)
+                members.sort((a, b) => Number(a.relay) - Number(b.relay) || rank(a) - rank(b))
+            }
+            clusters.push(bestUnitLayout(members))
+        })
+    }
     // Compare measured footprints to choose a layout closest to a widescreen view.
     const buildLayout = columns => {
         const positions = []
@@ -813,16 +904,18 @@ function arrangeDevices(style = 'columns', { preserveSaved = false, focus = true
             if (el) positions.push({ el, x: groupLeft + side * (groupWidth + columnGap) + col * (width + gap), y })
         }
         if (style === 'paired') {
+            return buildUnitLayout(units, columns)
+        } else if (style === 'connections') {
             let y = startY
-            for (let i = 0; i < ids.length; i += columns) {
+            const clusterWidth = Math.max(...clusters.map(cluster => cluster.width))
+            for (let i = 0; i < clusters.length; i += columns) {
                 let rowHeight = 0
-                ids.slice(i, i + columns).forEach((id, col) => {
-                    const sw = switchesById.get(id), relay = relaysById.get(id)
-                    add(sw, 0, col, y)
-                    add(relay, 1, col, y)
-                    rowHeight = Math.max(rowHeight, sw ? height(sw) : 0, relay ? height(relay) : 0)
+                clusters.slice(i, i + columns).forEach((cluster, col) => {
+                    cluster.positions.forEach(p => positions.push({ el: p.el,
+                        x: col * (clusterWidth + columnGap) + p.x, y: y + p.y }))
+                    rowHeight = Math.max(rowHeight, cluster.height)
                 })
-                y += rowHeight + gap
+                y += rowHeight + columnGap
             }
         } else {
             ;[left, right].forEach((group, side) => {
@@ -845,17 +938,19 @@ function arrangeDevices(style = 'columns', { preserveSaved = false, focus = true
                 }
             })
         }
-        const footprintWidth = Math.max(...positions.map(p => p.x + (p.el.offsetWidth || width))) - Math.min(...positions.map(p => p.x))
-        const footprintHeight = Math.max(...positions.map(p => p.y + height(p.el))) - startY
-        return { positions, score: Math.abs(Math.log((footprintWidth / footprintHeight) / (16 / 9))) }
+        return scoreLayout(positions)
     }
     let bestLayout = buildLayout(1)
-    const maxColumns = style === 'paired' ? ids.length : Math.max(left.length, right.length)
+    const maxColumns = style === 'paired' ? units.length : style === 'connections' ? clusters.length : Math.max(left.length, right.length)
     for (let columns = 2; columns <= maxColumns; columns++) {
         const candidate = buildLayout(columns)
         if (candidate.score < bestLayout.score) bestLayout = candidate
     }
-    bestLayout.positions.forEach(({ el, x, y }) => place(el, x, y))
+    const layoutMinX = Math.min(...bestLayout.positions.map(p => p.x))
+    const layoutMinY = Math.min(...bestLayout.positions.map(p => p.y))
+    bestLayout.positions.forEach(({ el, x, y }) => place(el,
+        CanvasView.DEVICE_CENTER_X - bestLayout.width / 2 + x - layoutMinX,
+        startY + y - layoutMinY))
     // Update endpoint locations after moving their parent cards.
     all.forEach(el => jsPlumbInstance?.revalidate(el))
     if (focus) {

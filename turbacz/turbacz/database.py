@@ -43,14 +43,25 @@ def serialized(method):
                     cached = self._registry_cache.get(method.__name__)
                     if cached is not None and monotonic() - cached[0] < 60:
                         return cached[1].copy()
-                result = method(self, *args, **kwargs)
+                depth = getattr(self, "_db_call_depth", 0)
+                self._db_call_depth = depth + 1
+                try:
+                    result = method(self, *args, **kwargs)
+                    # SELECT starts a transaction too. End it before releasing
+                    # the lock, otherwise another instance's schema migration
+                    # can wait indefinitely on an idle reader. Nested manager
+                    # calls must leave the caller's transaction alone.
+                    if depth == 0:
+                        self.conn.commit()
+                finally:
+                    self._db_call_depth = depth
                 if registry_read:
                     # Values are immutable tuples; return a separate dict so
                     # callers cannot mutate the cached registry. The TTL also
                     # picks up changes made outside this process.
                     self._registry_cache[method.__name__] = (monotonic(), result.copy())
                 return result
-            except Exception:
+            except BaseException:
                 self.conn.rollback()
                 raise
 

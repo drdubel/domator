@@ -92,6 +92,17 @@ sudo -u postgres psql -c "CREATE DATABASE turbacz OWNER turbacz;"
 ```
 3. Ensure your `turbacz.toml` `[psql]` section points to this database.
 
+Multiple Turbacz instances can point to the same PostgreSQL database. Database
+calls finish their transactions, including reads, so an idle instance does not
+hold table locks that block another instance's startup migrations. When upgrading
+from a version that left read transactions open, restart all instances.
+
+The database regression test can use a disposable PostgreSQL database:
+```bash
+TURBACZ_TEST_POSTGRES_DSN='dbname=turbacz_test' uv run pytest tests/test_database.py
+```
+It creates and removes a uniquely named schema within that database.
+
 ### Firmware / OTA
 
 Uploaded OTA images are **not** public files. They embed the WiFi password and

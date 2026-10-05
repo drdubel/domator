@@ -10,6 +10,11 @@ port = 1883
 username = "turbacz"
 password = "CHANGE_ME_TO_A_LONG_RANDOM_SECRET"
 
+[zigbee.tyua_knob]
+# Actions and target outputs are configured in RCM, and stored in PostgreSQL.
+enabled = true
+topic = "zigbee2mqtt/tyua_knob"
+
 [oidc]
 client_id = "YOUR_CLIENT_ID"
 client_secret = "YOUR_CLIENT_SECRET"

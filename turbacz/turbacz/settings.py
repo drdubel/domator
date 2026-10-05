@@ -28,6 +28,15 @@ class MQTTServerSettings(BaseModel):
     password: str
 
 
+class ZigbeeKnobSettings(BaseModel):
+    enabled: bool = True
+    topic: str = Field(default="zigbee2mqtt/tyua_knob", min_length=1, pattern=r"^[^+#\x00]+$")
+
+
+class ZigbeeSettings(BaseModel):
+    tyua_knob: ZigbeeKnobSettings = Field(default_factory=ZigbeeKnobSettings)
+
+
 class ServerSettings(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8000
@@ -107,6 +116,7 @@ class TurbaczSettings(BaseSettings):
     jwt_secret: str = ""
     session_secret: str = ""
     mqtt: MQTTServerSettings = MQTTServerSettings(password="")
+    zigbee: ZigbeeSettings = Field(default_factory=ZigbeeSettings)
     oidc: OIDCSettings = OIDCSettings(client_id="", client_secret="")
     monitoring: Monitoring = Monitoring()
     server: ServerSettings = ServerSettings()

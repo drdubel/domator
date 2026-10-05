@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from turbacz.database import serialized_manager
 from turbacz.settings import config
 from turbacz.validation import relay_output
+from turbacz.zigbee_knob import KNOB_BUTTONS, KNOB_COMMANDS, KNOB_SWITCH_ID
 
 connection_router = APIRouter(prefix="/lights")
 
@@ -55,6 +56,9 @@ class ConnectionManager:
 
         if not self.get_sections():
             self.add_section("Default")
+
+        if config.zigbee.tyua_knob.enabled and KNOB_SWITCH_ID not in self.get_switches():
+            self.add_switch(KNOB_SWITCH_ID, "tyua_knob", len(KNOB_BUTTONS))
 
     def _init_db(self):
         self.conn = psycopg.connect(
@@ -150,6 +154,16 @@ class ConnectionManager:
                     switch_id BIGINT REFERENCES switches(id),
                     button_id TEXT,
                     type INT NOT NULL DEFAULT 0,
+                    PRIMARY KEY (switch_id, button_id)
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS zigbee_knob_commands (
+                    switch_id BIGINT REFERENCES switches(id) ON DELETE CASCADE,
+                    button_id TEXT NOT NULL,
+                    command TEXT NOT NULL CHECK (command IN ('toggle', 'on', 'off', 'up', 'down', 'stop')),
                     PRIMARY KEY (switch_id, button_id)
                 );
                 """
@@ -287,6 +301,8 @@ class ConnectionManager:
         return {row[0]: (row[1], row[2]) for row in switches}
 
     def rename_switch(self, switch_id: int, switch_name: str, buttons: int):
+        if switch_id == KNOB_SWITCH_ID and buttons != len(KNOB_BUTTONS):
+            raise HTTPException(status_code=400, detail="The Zigbee knob has a fixed set of actions")
         with self.conn.cursor() as cur:
             for i in range(buttons, self.get_switches()[switch_id][1]):
                 button_id = chr(97 + i)
@@ -707,6 +723,41 @@ class ConnectionManager:
 
         self.conn.commit()
 
+    def get_zigbee_knob_config(self) -> dict:
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT button_id, command FROM zigbee_knob_commands WHERE switch_id = %s;",
+                (KNOB_SWITCH_ID,),
+            )
+            commands = dict(cur.fetchall())
+        return {
+            "enabled": config.zigbee.tyua_knob.enabled,
+            "switch_id": KNOB_SWITCH_ID,
+            "buttons": {
+                button: {"label": label, "command": commands.get(button, default)}
+                for button, (label, default) in KNOB_BUTTONS.items()
+            },
+        }
+
+    def set_zigbee_knob_command(self, button_id: str, command: str):
+        if (
+            not config.zigbee.tyua_knob.enabled
+            or button_id not in KNOB_BUTTONS
+            or command not in KNOB_COMMANDS
+            or KNOB_SWITCH_ID not in self.get_switches()
+        ):
+            raise ValueError("Invalid Zigbee knob command")
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO zigbee_knob_commands (switch_id, button_id, command)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (switch_id, button_id) DO UPDATE SET command = EXCLUDED.command;
+                """,
+                (KNOB_SWITCH_ID, button_id, command),
+            )
+        self.conn.commit()
+
     def get_buttons(self, switch_id: int) -> dict[str, int]:
         with self.conn.cursor() as cur:
             cur.execute(
@@ -1030,6 +1081,17 @@ def get_all_buttons(
 
     buttons = connection_manager.get_all_buttons()
     return JSONResponse(content=buttons)
+
+
+@connection_router.get("/get_zigbee_knob_config")
+def get_zigbee_knob_config(
+    request: Request,
+    access_token: str | None = Cookie(None),
+):
+    user = auth.get_current_user(auth.bearer_token_from_header(request.headers.get("authorization")) or access_token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return connection_manager.get_zigbee_knob_config()
 
 
 @connection_router.post("/remove_connection")

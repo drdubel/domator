@@ -50,6 +50,7 @@ from turbacz.settings import config
 from turbacz.state_manager import state_manager
 from turbacz.temperature_history import merge_temperature_series
 from turbacz.websocket import ws_manager
+from turbacz.zigbee_knob import mesh_switch_config
 
 logger = logging.getLogger(__name__)
 
@@ -621,6 +622,14 @@ async def websocket_rcm(websocket: WebSocket):
         async for cmd in ws_manager.messages(websocket):
             logger.debug("putting %s in command queue", cmd)
 
+            if cmd.get("type") == "zigbee_knob_command":
+                await db_call(connection_manager.set_zigbee_knob_command, cmd["button_id"], cmd["command"])
+                await ws_manager.broadcast(
+                    {"type": "zigbee_knob_config", **await db_call(connection_manager.get_zigbee_knob_config)},
+                    "/rcm/ws/",
+                )
+                continue
+
             if cmd.get("type") == "gateway_mode":
                 device_id = int(cmd["device_id"])
                 # Only reported normal switch hardware can become a gateway.
@@ -668,7 +677,7 @@ async def websocket_rcm(websocket: WebSocket):
                 connections = await db_call(connection_manager.get_all_connections)
                 mqtt.client.publish(
                     "/switch/cmd/root",
-                    json.dumps({"type": "connections", "data": connections}),
+                    json.dumps({"type": "connections", "data": mesh_switch_config(connections)}),
                 )
                 blind_pairs = await db_call(connection_manager.get_blind_pairs)
                 mqtt.client.publish(
@@ -719,7 +728,7 @@ async def websocket_rcm(websocket: WebSocket):
                     for button_id, button_type in buttons.items():
                         await db_call(connection_manager.set_button_type, int(switch_id), button_id, int(button_type))
 
-                mqtt.client.publish("/switch/cmd/root", cmd)
+                mqtt.client.publish("/switch/cmd/root", json.dumps({**cmd, "data": mesh_switch_config(cmd.get("data", {}))}))
 
                 continue
 

@@ -91,6 +91,41 @@ port = 5432
 > `token_endpoint_auth_method = "client_secret_post"` (others use
 > `client_secret_basic`).
 
+### Tuya Zigbee knob in RCM
+
+Turbacz subscribes to `zigbee2mqtt/tyua_knob` on its MQTT broker. Pair the knob
+in Zigbee2MQTT and set its friendly name to `tyua_knob` (the spelling is
+intentional). Both applications must use the same broker.
+
+The **tyua_knob** switch appears automatically in RCM. Connect its labeled
+actions to relay outputs using the usual connection lines, then choose a
+command from each action's dropdown: **Light: Toggle / On / Off** or
+**Blind: Up / Down / Stop**. For a blind, connect either output of an existing
+blind pair; Turbacz controls the whole pair. Multiple targets are supported.
+Connections and command choices are stored in PostgreSQL and survive restarts.
+Unconnected actions do nothing.
+
+For example, connect Click, Rotate left and Rotate right to a light; their
+defaults toggle, turn off and turn on that light. For a blind, connect those
+actions to its pair and select Stop, Up and Down respectively. Light commands
+cannot drive blind outputs directly.
+
+Use Zigbee2MQTT's `event` operation mode for single click, double-click, hold
+and rotation. The equivalent `command` mode actions are also supported;
+additional rows cover holding while rotating and releasing a hold. See the
+[Tuya knob action reference](https://www.zigbee2mqtt.io/devices/ERS-10TZBVK-AA.html).
+Retained device messages, battery-only reports, action resets and unknown
+actions never trigger outputs. Mesh firmware updates and ping/RSSI status do
+not apply to this Zigbee switch.
+
+Optional topic and enable settings (all action assignments remain in RCM):
+
+```toml
+[zigbee.tyua_knob]
+enabled = true
+topic = "zigbee2mqtt/tyua_knob"
+```
+
 ### PostgreSQL setup (local)
 
 On Ubuntu:

@@ -4,6 +4,8 @@ import json
 import math
 import re
 
+from turbacz.settings import config
+
 
 def number(value, low, high):
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -18,7 +20,11 @@ def integer(value, low, high):
 
 
 def validate_payload(topic, payload):
-    if topic == "/heating/metrics":
+    if topic == config.zigbee.tyua_knob.topic:
+        from turbacz.zigbee_knob import validate_knob_payload
+
+        validate_knob_payload(payload)
+    elif topic == "/heating/metrics":
         data = json.loads(payload)
         if not isinstance(data, dict):
             raise ValueError("Expected an object")

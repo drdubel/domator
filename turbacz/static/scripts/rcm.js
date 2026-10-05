@@ -18,6 +18,7 @@ const State = {
     // Status tracking
     devicesRssi: {},
     deviceRoles: {},
+    knobConfig: null,
     pingTimes: {},
     onlineRelays: new Set(),
     onlineSwitches: new Set(),
@@ -338,7 +339,12 @@ const wsManager = new WebSocketManager('/rcm/ws/', function (event) {
 
     // Handle different message types
     if (msg.type === "error") {
+        if (State.knobConfig) applyKnobControls(State.knobConfig)
         showToast(msg.message || 'Gateway request failed', true)
+        return
+    }
+    if (msg.type === "zigbee_knob_config") {
+        applyKnobControls(msg)
         return
     }
     if (msg.type === "update") {
@@ -2051,14 +2057,16 @@ async function loadConfiguration() {
     updateArrangementButton()
 
     try {
-        const [relaysData, outputsData, switchesData, connectionsData, buttonTypesData, blindPairsData] = await Promise.all([
+        const [relaysData, outputsData, switchesData, connectionsData, buttonTypesData, blindPairsData, knobConfig] = await Promise.all([
             fetchAPI('/lights/get_relays'),
             fetchAPI('/lights/get_outputs'),
             fetchAPI('/lights/get_switches'),
             fetchAPI('/lights/get_connections'),
             fetchAPI('/lights/get_all_buttons'),
-            fetchAPI('/lights/get_blind_pairs')
+            fetchAPI('/lights/get_blind_pairs'),
+            fetchAPI('/lights/get_zigbee_knob_config')
         ])
+        State.knobConfig = knobConfig
 
         const relays_config = relaysData || getDemoRelays()
         const outputs_config = outputsData || getDemoOutputs()
@@ -2476,6 +2484,56 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
     // Apply saved color after DOM is ready
     if (savedColor) {
         applyDeviceColor(switchId)
+    }
+    if (State.knobConfig?.switch_id === switchId) applyKnobControls(State.knobConfig)
+}
+
+function applyKnobControls(config) {
+    State.knobConfig = config
+    if (!config.enabled) return
+    const card = document.getElementById(`switch-${config.switch_id}`)
+    if (!card) return
+    card.classList.add('zigbee-knob')
+    card.querySelectorAll('.button-type-toggle, .status-indicator, .ping-time, .signal-icon, .update-btn, .delete-btn').forEach(element => {
+        element.hidden = true
+    })
+    const choices = [
+        ['toggle', 'Light: Toggle'], ['on', 'Light: On'], ['off', 'Light: Off'],
+        ['up', 'Blind: Up'], ['down', 'Blind: Down'], ['stop', 'Blind: Stop']
+    ]
+    for (const [buttonId, button] of Object.entries(config.buttons)) {
+        const row = document.getElementById(`switch-${config.switch_id}-btn-${buttonId}`)
+        if (!row) continue
+        row.querySelector('.button-name').textContent = button.label
+        let select = row.querySelector('.knob-command')
+        if (!select) {
+            select = document.createElement('select')
+            select.className = 'knob-command'
+            select.dataset.buttonId = buttonId
+            select.title = 'Choose the command for connected outputs. For blinds, connect either output of the pair.'
+            for (const [value, label] of choices) {
+                const option = document.createElement('option')
+                option.value = value
+                option.textContent = label
+                select.appendChild(option)
+            }
+            for (const event of ['pointerdown', 'mousedown', 'touchstart', 'click']) {
+                select.addEventListener(event, event => event.stopPropagation())
+            }
+            select.addEventListener('change', () => {
+                if (!wsManager.isConnected()) {
+                    select.value = State.knobConfig.buttons[buttonId].command
+                    showToast('Connect to Turbacz to save knob commands', true)
+                    return
+                }
+                select.disabled = true
+                wsManager.send(JSON.stringify({ type: 'zigbee_knob_command', button_id: buttonId, command: select.value }))
+            })
+            row.querySelector('.button-name').after(select)
+        }
+        select.setAttribute('aria-label', `${button.label} command`)
+        select.value = button.command
+        select.disabled = false
     }
 }
 
@@ -3450,6 +3508,7 @@ function editDeviceName(type, id) {
     document.getElementById('editNameInput').value = currentName
     document.getElementById('editNameModal').classList.add('active')
     document.getElementById('editAutoOffGroup').style.display = 'none'
+    document.getElementById('editButtonNumber').disabled = type === 'switch' && State.knobConfig?.switch_id === id
 
     if (type === 'switch') {
         document.getElementById('editButtonNumber').style.display = 'block'

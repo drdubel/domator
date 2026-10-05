@@ -514,6 +514,20 @@ body {
     z-index: 100;
 }
 
+.knob-command {
+    background: #1e293b;
+    color: #e2e8f0;
+    border: 1px solid #64748b;
+    border-radius: 4px;
+    padding: 4px;
+    margin-left: 8px;
+    cursor: pointer;
+}
+
+.zigbee-knob [hidden] {
+    display: none !important;
+}
+
 .switch-box.highlighted {
     border-left-color: var(--danger-color);
     z-index: 10020;

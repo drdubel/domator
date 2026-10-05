@@ -113,5 +113,18 @@ def test_second_instance_can_initialize_after_first_instance_reads():
                 two.create_tables()
                 assert two.get_relays() == {111: ("Relay", 8)}
                 assert second.info.transaction_status == TransactionStatus.IDLE
+                from turbacz.zigbee_knob import KNOB_BUTTONS, KNOB_SWITCH_ID
+
+                with patch.object(ConnectionManager, "_init_db", lambda self: setattr(self, "conn", first)):
+                    initialized = ConnectionManager()
+                assert initialized.get_switches()[KNOB_SWITCH_ID] == ("tyua_knob", len(KNOB_BUTTONS))
+                assert one.get_zigbee_knob_config()["buttons"]["d"]["command"] == "off"
+                one.set_zigbee_knob_command("d", "up")
+                one.rename_switch(KNOB_SWITCH_ID, "Living room knob", len(KNOB_BUTTONS))
+                with patch.object(ConnectionManager, "_init_db", lambda self: setattr(self, "conn", second)):
+                    restarted = ConnectionManager()
+                assert restarted.get_switches()[KNOB_SWITCH_ID] == ("Living room knob", len(KNOB_BUTTONS))
+                assert restarted.get_zigbee_knob_config()["buttons"]["d"]["command"] == "up"
+                assert second.info.transaction_status == TransactionStatus.IDLE
         finally:
             admin.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(schema))

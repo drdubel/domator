@@ -333,3 +333,60 @@ test('RCM Connections layout groups by wiring and keeps relay switches beside th
         assert.equal(run(dom, 'connections[9].a.length + connections[9].b.length + connections[10].a.length'), 3)
     } finally { dom.window.close() }
 })
+
+test('RCM knob actions have labels, save commands and restore server choices', () => {
+    const dom = page(fs.readFileSync(path.join(root, 'static/rcm.html'), 'utf8'))
+    try {
+        dom.window.jsPlumb = { ready() {} }
+        dom.window.sentCommands = []
+        dom.window.knobConfig = {
+            enabled: true, switch_id: 281474976710656,
+            buttons: {
+                a: { label: 'Click', command: 'toggle' },
+                b: { label: 'Double-click', command: 'toggle' },
+                c: { label: 'Hold', command: 'stop' },
+                d: { label: 'Rotate left', command: 'off' },
+                e: { label: 'Rotate right', command: 'on' },
+                f: { label: 'Hold + rotate left', command: 'up' },
+                g: { label: 'Hold + rotate right', command: 'down' },
+                h: { label: 'Release hold', command: 'stop' },
+                i: { label: 'Saturation move', command: 'toggle' }
+            }
+        }
+        run(dom, `${script('common.js')}\n${script('rcm.js')}\n
+            jsPlumbInstance = { draggable() {}, makeSource() {}, makeTarget() {}, repaintEverything() {} };
+            wsManager.isConnected = () => true;
+            wsManager.send = value => sentCommands.push(JSON.parse(value));
+            State.knobConfig = knobConfig;
+            createSwitch(knobConfig.switch_id, 'tyua_knob', 9, 0, 0);`)
+        const doc = dom.window.document
+        assert.equal(doc.querySelectorAll('.knob-command').length, 9)
+        const row = doc.getElementById('switch-281474976710656-btn-d')
+        assert.equal(row.querySelector('.button-name').textContent, 'Rotate left')
+        const select = row.querySelector('.knob-command')
+        assert.equal(select.value, 'off')
+        assert.deepEqual([...select.options].map(option => option.value), ['toggle', 'on', 'off', 'up', 'down', 'stop'])
+        assert.equal(row.querySelector('.button-type-toggle').hidden, true)
+        assert.equal(doc.querySelector('.update-btn-switch').hidden, true)
+        select.value = 'up'
+        select.dispatchEvent(new dom.window.Event('change'))
+        assert.equal(select.disabled, true)
+        assert.equal(JSON.stringify(dom.window.sentCommands), JSON.stringify([
+            { type: 'zigbee_knob_command', button_id: 'd', command: 'up' }
+        ]))
+        run(dom, `knobConfig.buttons.d.command = 'up'; applyKnobControls(knobConfig)`)
+        assert.equal(select.value, 'up')
+        assert.equal(select.disabled, false)
+        assert.equal(doc.querySelectorAll('.knob-command').length, 9)
+        run(dom, `editDeviceName('switch', knobConfig.switch_id)`)
+        assert.equal(doc.getElementById('editButtonNumber').disabled, true)
+        run(dom, `createSwitch(222, 'Wall switch', 3, 0, 0); editDeviceName('switch', 222)`)
+        assert.equal(doc.getElementById('editButtonNumber').disabled, false)
+        assert.equal(doc.getElementById('switch-222').querySelectorAll('.knob-command').length, 0)
+        run(dom, `wsManager.isConnected = () => false`)
+        select.value = 'down'
+        select.dispatchEvent(new dom.window.Event('change'))
+        assert.equal(select.value, 'up')
+        assert.equal(dom.window.sentCommands.length, 1)
+    } finally { dom.window.close() }
+})

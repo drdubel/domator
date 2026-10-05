@@ -16,6 +16,8 @@ from turbacz.security import RateLimiter
 from turbacz.settings import config
 from turbacz.state_manager import state_manager
 from turbacz.websocket import ws_manager
+from turbacz.zigbee import handle_knob_message
+from turbacz.zigbee_knob import mesh_switch_config
 
 logger = logging.getLogger(__name__)
 _device_task: asyncio.Task | None = None
@@ -56,6 +58,8 @@ def connect(client, flags, rc, properties):
     mqtt.client.subscribe("/heating/metrics")
     mqtt.client.subscribe("/relay/state/+")
     mqtt.client.subscribe("/switch/state/+")
+    if config.zigbee.tyua_knob.enabled:
+        mqtt.client.subscribe(config.zigbee.tyua_knob.topic)
 
     if config.ha.enabled:
         ha_bridge.reset_published_state()
@@ -74,6 +78,10 @@ def connect(client, flags, rc, properties):
 
 @mqtt.on_message()
 async def message(client, topic, payload, qos, properties):
+    # Zigbee2MQTT can retain device state, including the last action. Never
+    # replay that physical action when Turbacz reconnects to the broker.
+    if topic == config.zigbee.tyua_knob.topic and properties and properties.get("retain"):
+        return
     # Topic throttling bounds backend work. Publisher identity is only known
     # to the broker, which must enforce its own per-client quotas.
     if len(payload) > config.security.mqtt_max_bytes:
@@ -94,6 +102,11 @@ async def dispatch_message(topic, payload_str):
     """
     Handle incoming MQTT messages based on topic.
     """
+
+    if topic == config.zigbee.tyua_knob.topic:
+        if config.zigbee.tyua_knob.enabled:
+            await handle_knob_message(payload_str)
+        return
 
     if config.ha.enabled and topic.startswith(f"{config.ha.base_topic}/"):
         await ha_bridge.handle_command(topic, payload_str)
@@ -225,11 +238,11 @@ async def handle_root_state(payload_str):
         connections = await db_call(connection_manager.get_all_connections)
         logger.debug("Connections: %s", connections)  # Debug log
 
-        mqtt.client.publish("/switch/cmd/root", json.dumps({"type": "connections", "data": connections}))
+        mqtt.client.publish("/switch/cmd/root", json.dumps({"type": "connections", "data": mesh_switch_config(connections)}))
         blind_pairs = await db_call(connection_manager.get_blind_pairs)
         mqtt.client.publish("/switch/cmd/root", json.dumps({"type": "blind_pairs", "data": blind_pairs}))
         mqtt.client.publish(
-            "/switch/cmd/root", json.dumps({"type": "button_types", "data": await db_call(connection_manager.get_all_buttons)})
+            "/switch/cmd/root", json.dumps({"type": "button_types", "data": mesh_switch_config(await db_call(connection_manager.get_all_buttons))})
         )
 
         # Sync per-output auto-off timers to relay boards.

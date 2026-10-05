@@ -333,6 +333,8 @@ class HABridge:
     def _handle_heating_command(self, payload: str) -> None:
         try:
             target = float(payload)
+            from turbacz.validation import validate_command
+            validate_command("/heating/", f"t{target}", None)
         except (TypeError, ValueError):
             logger.warning("HA bridge got an invalid heating target %r", payload)
             return

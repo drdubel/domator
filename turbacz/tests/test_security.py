@@ -27,6 +27,7 @@ def application(monkeypatch, tmp_path, cm, client):
     )
     monkeypatch.setattr(config, "session_secret", "test-only-session-key")
     monkeypatch.setattr(config, "authorized", {"test@example.com"})
+    monkeypatch.setattr(config, "roles", {"test@example.com": {"admin"}})
     monkeypatch.setattr(
         config,
         "security",

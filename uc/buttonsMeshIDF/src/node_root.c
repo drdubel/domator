@@ -257,6 +257,8 @@ static bool button_targets_blind_pair(uint64_t from_id, char button,
  * @param msg  Pointer to the decoded application message.
  */
 void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
+    if (!mesh_message_valid(msg, sizeof(*msg))) return;
+    mesh_terminate_text(msg);
     registry_update(msg->src_id, from, NULL);
     ESP_LOGV(TAG, "Message from %" PRIu64 " (type=%c, len=%d)", msg->src_id,
              msg->msg_type, msg->data_len);
@@ -565,7 +567,9 @@ static void route_button_to_relays(uint64_t from_id, char button, int state) {
         ESP_LOGW(TAG, "Invalid button index: %d", button_idx);
         return;
     }
-    button_route_t* route = NULL;
+    route_target_t targets[MAX_ROUTES_PER_BUTTON];
+    int count = 0;
+    if (!g_connections_mutex) return;
     if (xSemaphoreTake(g_connections_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
         ESP_LOGE(TAG, "route_button_to_relays: mutex timeout");
         return;
@@ -574,21 +578,26 @@ static void route_button_to_relays(uint64_t from_id, char button, int state) {
         if (g_connections[i].device_id == from_id) {
             ESP_LOGI(TAG, "Found device index %d for device ID %" PRIu64, i,
                      from_id);
-            route = &g_connections[i].buttons[button_idx];
+            button_route_t* route = &g_connections[i].buttons[button_idx];
+            if (route->targets) {
+                count = route->num_targets;
+                if (count > MAX_ROUTES_PER_BUTTON) count = MAX_ROUTES_PER_BUTTON;
+                memcpy(targets, route->targets, count * sizeof(targets[0]));
+            }
             break;
         }
     }
     xSemaphoreGive(g_connections_mutex);
 
-    if (route == NULL) {
+    if (count == 0) {
         ESP_LOGI(TAG,
                  "No routing configured for button '%c' from device %" PRIu64,
                  button, from_id);
         return;
     }
 
-    for (int j = 0; j < route->num_targets; j++) {
-        route_target_t* target = &route->targets[j];
+    for (int j = 0; j < count; j++) {
+        route_target_t* target = &targets[j];
         mesh_addr_t dest = {0};
         if (registry_find(target->target_node_id, &dest)) {
             mesh_app_msg_t cmd = {0};
@@ -930,7 +939,7 @@ static void handle_nonJson_mqtt_root_command(const char* topic, int topic_len,
 static void parse_json_connections(cJSON* data) {
     int device_index = 0;
     cJSON* device_item = NULL;
-    xSemaphoreTake(g_connections_mutex, pdMS_TO_TICKS(100));
+    if (!g_connections_mutex || xSemaphoreTake(g_connections_mutex, pdMS_TO_TICKS(100)) != pdTRUE) return;
 
     cJSON_ArrayForEach(device_item, data) {
         if (device_index >= MAX_NODES) break;
@@ -944,21 +953,24 @@ static void parse_json_connections(cJSON* data) {
         memset(device, 0, sizeof(device_connections_t));
 
         // Set device_id from the JSON key
+        if (!device_item->string) continue;
         device->device_id = (uint64_t)strtoull(device_item->string, NULL, 10);
 
         cJSON* button_map = device_item;  // object with keys "a"-"x"
         cJSON* button_entry = NULL;
         cJSON_ArrayForEach(button_entry, button_map) {
             const char* button_name = button_entry->string;
+            if (!button_name || strlen(button_name) != 1) continue;
             int button_idx = button_name[0] - 'a';
             if (button_idx < 0 || button_idx >= MAX_BUTTONS_EXTENDED) continue;
 
             cJSON* targets_array =
                 button_entry;  // array of [number, string] arrays
             int num_targets = cJSON_GetArraySize(targets_array);
-            if (num_targets > 0) {
+            if (num_targets > 0 && num_targets <= MAX_ROUTES_PER_BUTTON) {
                 route_target_t* targets =
                     malloc(sizeof(route_target_t) * num_targets);
+                if (!targets) continue;
                 int t = 0;
                 cJSON* inner_array = NULL;
                 cJSON_ArrayForEach(inner_array, targets_array) {
@@ -1030,12 +1042,14 @@ static void parse_json_button_types(cJSON* data) {
         memset(device, 0, sizeof(button_types_t));
 
         // Set device_id from JSON key
+        if (!device_item->string) continue;
         device->device_id = (uint64_t)strtoull(device_item->string, NULL, 10);
 
         cJSON* button_map = device_item;  // object with keys "a"-"h"
         cJSON* button_entry = NULL;
         cJSON_ArrayForEach(button_entry, button_map) {
             const char* button_name = button_entry->string;
+            if (!button_name || strlen(button_name) != 1) continue;
             int button_idx = button_name[0] - 'a';  // 'a'-'h' -> 0-7
             if (button_idx < 0 || button_idx >= MAX_BUTTONS) continue;
 

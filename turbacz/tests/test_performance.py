@@ -57,7 +57,7 @@ async def test_mesh_reports_are_scraped_while_pool_only_serves_history(applicati
         metrics_client.get_metrics_client()
     assert len(requests) == 2
     assert all(request.method == "GET" for request in requests)
-    response = application.http.get("/metrics")
+    response = application.http.get("/metrics", headers={"Authorization": f"Bearer {application.token}"})
     assert response.status_code == 200
     assert 'node_info_uptime{' in response.text
     assert 'mesh_node_rssi{' in response.text

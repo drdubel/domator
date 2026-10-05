@@ -1,6 +1,7 @@
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 #include <credentials.h>
+#include "command_parser.h"
 
 #include <cmath>
 #include <cstddef>
@@ -22,7 +23,7 @@ char out_buff[5] = {0, 0, 0, 0, 0};
 char in_buff[5] = {0, 0, 0, 0, 0};
 int cmd_ptr;
 
-void callback(char* topic, uint8_t* payload, int length);
+void callback(char* topic, uint8_t* payload, unsigned int length);
 
 void wifi_connect() {
     WiFi.begin(ssid, password);
@@ -52,7 +53,7 @@ void mqtt_connect() {
 
 void ser_cmd(int in_byte) {
     int b;
-    if ((in_byte >= 'a') & (in_byte <= ('a' + NBLIND))) {
+    if ((in_byte >= 'a') & (in_byte < ('a' + NBLIND))) {
         in_buff[0] = in_byte;
         cmd_ptr = 1;
     } else if ((in_byte >= '0') & (in_byte <= '9') & (cmd_ptr > 0) &
@@ -61,7 +62,7 @@ void ser_cmd(int in_byte) {
         cmd_ptr++;
     }
     if (cmd_ptr > 3) {
-        if ((in_buff[0] >= 'a') & (in_buff[0] <= ('a' + NBLIND))) {
+        if ((in_buff[0] >= 'a') & (in_buff[0] < ('a' + NBLIND))) {
             in_buff[4] = 0;
             int new_pos = atoi(in_buff + 1);
             b = in_buff[0] - 'a';
@@ -76,22 +77,17 @@ void ser_cmd(int in_byte) {
     }
 }
 
-void callback(char* topic, uint8_t* payload, int length) {
+void callback(char* topic, uint8_t* payload, unsigned int length) {
     Serial.println("-----------------------");
     Serial.print("Message arrived in topic: ");
     Serial.println(topic);
     Serial.print("Message:");
-    if (length == 1) {
+    if (length == 1 && payload[0] == 'S') {
         for (int i = 0; i < NBLIND; i++) {
             Serial.write('A' + i);
         }
     } else {
-        int blind = payload[0];
-        int state = 0;
-        for (int i = 1; i < length; i++) {
-            state += (payload[length - i] - '0') * pow(10, i - 1);
-        }
-        sprintf(out_buff, "%c%03d", blind, state);
+        if (!parse_blind_command(payload, length, out_buff, sizeof(out_buff))) return;
         Serial.write(out_buff);
         Serial.flush();
     }

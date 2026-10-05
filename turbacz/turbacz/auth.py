@@ -33,8 +33,10 @@ oauth.register(config.oidc.provider, **register_kwargs)
 
 
 def create_jwt(data: dict) -> str:
+    from turbacz.authorization import user_roles
     now = datetime.now(timezone.utc)
     payload = data.copy()
+    payload["roles"] = sorted(user_roles(data["sub"]))
     payload.update(
         {
             "iat": now,
@@ -47,7 +49,10 @@ def create_jwt(data: dict) -> str:
 
 def verify_jwt(token: str) -> dict | None:
     try:
-        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG], options={"require": ["exp", "iat", "sub"]})
+        user = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG], options={"require": ["exp", "iat", "sub"]})
+        if user["sub"] not in config.authorized:
+            return None
+        return user
 
     except InvalidTokenError:
         return None

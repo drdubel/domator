@@ -1,4 +1,5 @@
 authorized = ["YOUR_AUTHORIZED_EMAIL"]
+roles = { "YOUR_AUTHORIZED_EMAIL" = ["admin"] }
 jwt_secret = "CHANGE_ME_TO_A_LONG_RANDOM_SECRET"
 session_secret = "CHANGE_ME_TO_A_LONG_RANDOM_SECRET"
 use_mqtt = true
@@ -7,7 +8,7 @@ use_mqtt = true
 host = "mosquitto"
 port = 1883
 username = "turbacz"
-password = "turbacz"
+password = "CHANGE_ME_TO_A_LONG_RANDOM_SECRET"
 
 [oidc]
 client_id = "YOUR_CLIENT_ID"
@@ -19,7 +20,7 @@ token_endpoint_auth_method = "client_secret_post"
 [psql]
 dbname = "turbacz"
 user = "turbacz"
-password = "turbacz"
+password = "CHANGE_ME_TO_A_LONG_RANDOM_SECRET"
 host = "postgres"
 port = 5432
 
@@ -50,6 +51,8 @@ allowed_origins = ["https://domator.example"]
 # ws_idle_seconds = 300
 
 [monitoring]
+# Must match monitoring/scrape_token for the Compose scraper (mode 0600).
+scrape_token = "CHANGE_ME_TO_A_LONG_RANDOM_SECRET"
 # Used only to query heating history. Mesh, heating and host metrics are all
 # exposed at /metrics and must be scraped by VictoriaMetrics/Prometheus.
 metrics = "http://victoriametrics:8428"
@@ -84,3 +87,7 @@ enabled = false
 # How often (seconds) to re-derive entities from the registry. The apply pass
 # is a diff, so a run with no changes publishes nothing.
 # resync_interval = 60
+
+# Allowlisted users without an assignment have viewer access only.
+# Admin includes all capabilities; ota permits firmware operations;
+# operator permits physical controls; viewer permits reads.

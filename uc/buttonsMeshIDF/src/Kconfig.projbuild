@@ -6,6 +6,12 @@
 # "creds" NVS partition and are written over the wire at programming time.
 #
 # See src/credentials.h and provisioning/README.md.
+config DOMATOR_DEBUG_TELNET
+    bool "Enable unauthenticated Telnet logs (development only)"
+    default n
+    help
+        Exposes the device log stream on TCP port 23 to anyone on the LAN.
+        Keep disabled on installed devices and release builds.
 #
 # One consequence worth keeping: the build no longer depends on the
 # installation, so a single image runs on every deployment.

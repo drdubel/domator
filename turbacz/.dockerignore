@@ -5,3 +5,16 @@
 **/__pycache__
 **/*.pyc
 tests
+
+# Credentials and runtime data never belong in a build context.
+.env
+.env.*
+turbacz.toml
+*.passwd
+firmware
+static/data/*/firmware.bin
+monitoring/scrape_token
+homeassistant
+*.bin
+*.elf
+*.map

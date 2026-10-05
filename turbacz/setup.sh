@@ -1,4 +1,14 @@
 #!/bin/bash
+set -e
+umask 077
+
+if [ -e turbacz.toml ] || [ -e .env ]; then
+    echo "Existing configuration found. Edit it in place; setup will not overwrite live secrets."
+    exit 1
+fi
+
+CONFIG_TMP=$(mktemp ./turbacz.toml.XXXXXX)
+trap 'rm -f "$CONFIG_TMP" "${SCRAPE_TMP:-}" "${ENV_TMP:-}" "${BROKER_TMP:-}"' EXIT
 
 echo "Domator Docker Setup"
 echo "==================="
@@ -53,14 +63,18 @@ MQTT_PASSWORD=$(openssl rand -base64 32)
 # images. Those images contain WiFi and MQTT credentials, so the download
 # endpoint is never anonymous. Must match CONFIG_OTA_TOKEN in the firmware.
 FIRMWARE_TOKEN=$(openssl rand -hex 32)
+SCRAPE_TOKEN=$(openssl rand -hex 32)
+POSTGRES_PASSWORD=$(openssl rand -hex 32)
+GRAFANA_ADMIN_PASSWORD=$(openssl rand -hex 32)
 
 # Home Assistant connects to the same broker as its own user, restricted by
 # mosquitto.acl to the homeassistant/ and domator/ trees.
 HA_MQTT_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=')
 
 # Create the turbacz.toml config file
-cat > turbacz.toml << EOF
+cat > "$CONFIG_TMP" << EOF
 authorized = ["$AUTHORIZED_EMAIL"]
+roles = { "$AUTHORIZED_EMAIL" = ["admin"] }
 jwt_secret = "$JWT_SECRET"
 session_secret = "$SESSION_SECRET"
 use_mqtt = true
@@ -81,7 +95,7 @@ token_endpoint_auth_method = "client_secret_post"
 [psql]
 dbname = "turbacz"
 user = "turbacz"
-password = "turbacz"
+password = "$POSTGRES_PASSWORD"
 host = "postgres"
 port = 5432
 
@@ -94,6 +108,7 @@ allow_insecure_http = $INSECURE_HTTP
 allowed_origins = ["$PUBLIC_ORIGIN"]
 
 [monitoring]
+scrape_token = "$SCRAPE_TOKEN"
 metrics = "http://victoriametrics:8428"
 collect_host_metrics = true
 host_metrics_scope = "container"
@@ -105,6 +120,17 @@ token = "$FIRMWARE_TOKEN"
 [ha]
 enabled = $HA_ENABLED
 EOF
+chmod 600 "$CONFIG_TMP"
+mv -f "$CONFIG_TMP" turbacz.toml
+mkdir -p monitoring
+SCRAPE_TMP=$(mktemp ./monitoring/scrape_token.XXXXXX)
+printf '%s' "$SCRAPE_TOKEN" > "$SCRAPE_TMP"
+chmod 600 "$SCRAPE_TMP"
+mv -f "$SCRAPE_TMP" monitoring/scrape_token
+ENV_TMP=$(mktemp ./.env.XXXXXX)
+printf 'POSTGRES_PASSWORD=%s\nGRAFANA_ADMIN_PASSWORD=%s\n' "$POSTGRES_PASSWORD" "$GRAFANA_ADMIN_PASSWORD" > "$ENV_TMP"
+chmod 600 "$ENV_TMP"
+mv -f "$ENV_TMP" .env
 
 echo "Configuration file created successfully!"
 echo ""
@@ -140,7 +166,7 @@ else
     echo "  must match sdkconfig.<target> -- copy it from there:"
     while [ -z "${MESH_PASSWORD:-}" ]; do
         read -r -p "> " MESH_PASSWORD
-        [ -z "$MESH_PASSWORD" ] && echo "  Required. Read it out of your sdkconfig and paste it here."
+        if [ -z "$MESH_PASSWORD" ]; then echo "  Required. Read it out of your sdkconfig and paste it here."; fi
     done
 
     echo "Heating controller password (uc/heating, credentials.h) -- blank to skip:"
@@ -149,27 +175,27 @@ else
     echo "Legacy blinds controller password (uc/blinds_wifi, credentials.h) -- blank to skip:"
     read -p "> " BLINDS_PASSWORD
 
-    : > mosquitto.passwd
-    chmod 600 mosquitto.passwd
+    BROKER_TMP=$(mktemp ./mosquitto.passwd.XXXXXX)
+    chmod 600 "$BROKER_TMP"
     {
         echo "turbacz:$MQTT_PASSWORD"
         echo "mesh_root:$MESH_PASSWORD"
-        [ -n "$HEATING_PASSWORD" ] && echo "heating-wifi:$HEATING_PASSWORD"
-        [ -n "$BLINDS_PASSWORD" ] && echo "blinds-wifi:$BLINDS_PASSWORD"
-        [ "$HA_ENABLED" = "true" ] && echo "homeassistant:$HA_MQTT_PASSWORD"
-    } >> mosquitto.passwd
+        if [ -n "$HEATING_PASSWORD" ]; then echo "heating-wifi:$HEATING_PASSWORD"; fi
+        if [ -n "$BLINDS_PASSWORD" ]; then echo "blinds-wifi:$BLINDS_PASSWORD"; fi
+        if [ "$HA_ENABLED" = "true" ]; then echo "homeassistant:$HA_MQTT_PASSWORD"; fi
+    } > "$BROKER_TMP"
 
     # mosquitto_passwd -U hashes the file in place. Mount the directory rather
     # than the file: -U writes a temp file and renames over the original, which
     # cannot be done to a bind-mounted file. Run as the invoking user so the
     # result stays writable on the host.
-    docker run --rm -v "$PWD:/work" -w /work --user "$(id -u):$(id -g)" \
-        eclipse-mosquitto:2.0 mosquitto_passwd -U mosquitto.passwd
-    if [ $? -ne 0 ]; then
-        echo "ERROR: could not hash mosquitto.passwd -- it still holds plaintext."
-        echo "Hash it manually with: mosquitto_passwd -U mosquitto.passwd"
+    if ! docker run --rm -v "$PWD:/work" -w /work --user "$(id -u):$(id -g)" \
+        eclipse-mosquitto:2.0 mosquitto_passwd -U "${BROKER_TMP#./}"; then
+        echo "ERROR: could not hash broker credentials; the temporary plaintext file will be removed."
         exit 1
     fi
+    chmod 600 "$BROKER_TMP"
+    mv -f "$BROKER_TMP" mosquitto.passwd
     echo "Broker credentials written to mosquitto.passwd"
 
     if [ "$HA_ENABLED" = "true" ]; then

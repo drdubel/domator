@@ -1,8 +1,10 @@
-from typing import Optional
+import os
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 from pydantic_settings import (
     BaseSettings,
+    NestedSecretsSettingsSource,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
     TomlConfigSettingsSource,
@@ -41,6 +43,7 @@ class PSQLSettings(BaseModel):
 
 
 class Monitoring(BaseModel):
+    scrape_token: str = ""
     # Query endpoint for heating history only; all telemetry is scraped at /metrics.
     metrics: str = "http://127.0.0.1:8428"
     labels: dict[str, str] = {}
@@ -94,10 +97,14 @@ class SecuritySettings(BaseModel):
     ws_max_items: int = Field(default=1024, ge=1, le=4096)
     ws_idle_seconds: float = Field(default=300, gt=0)
     ws_send_timeout: float = Field(default=5, gt=0)
+    mqtt_max_bytes: int = Field(default=65536, ge=1024, le=1048576)
+    mqtt_messages_per_minute: int = Field(default=600, ge=1)
+    history_requests_per_minute: int = Field(default=30, ge=1)
 
 
 class TurbaczSettings(BaseSettings):
     authorized: set[str] = set()
+    roles: dict[str, set[Literal["viewer", "operator", "admin", "ota"]]] = {}
     jwt_secret: str = ""
     session_secret: str = ""
     mqtt: MQTTServerSettings = MQTTServerSettings(password="")
@@ -110,7 +117,10 @@ class TurbaczSettings(BaseSettings):
     security: SecuritySettings = SecuritySettings()
     use_mqtt: bool = True
 
-    model_config = SettingsConfigDict(toml_file="turbacz.toml")
+    model_config = SettingsConfigDict(
+        toml_file="turbacz.toml", env_prefix="TURBACZ_", env_nested_delimiter="__",
+        env_file=None,
+    )
 
     @classmethod
     def settings_customise_sources(
@@ -121,7 +131,16 @@ class TurbaczSettings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
-        return (TomlConfigSettingsSource(settings_cls),)
+        return (
+            init_settings, env_settings, dotenv_settings,
+            NestedSecretsSettingsSource(
+                file_secret_settings,
+                secrets_dir=os.environ.get("TURBACZ_SECRETS_DIR"),
+            ),
+            TomlConfigSettingsSource(
+                settings_cls, toml_file=os.environ.get("TURBACZ_CONFIG_PATH", "turbacz.toml")
+            ),
+        )
 
 
 config = TurbaczSettings()

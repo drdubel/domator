@@ -96,6 +96,8 @@ class ConnectionManager:
         return run
 
     async def messages(self, websocket):
+        from turbacz.auth import websocket_auth
+        from turbacz.authorization import command_capability, permitted
         from turbacz.connection_manager import connection_manager
 
         while websocket in self.clients:
@@ -111,6 +113,10 @@ class ConnectionManager:
                     return
                 raise
             if message["type"] == "websocket.disconnect":
+                return
+            user = await websocket_auth(websocket)
+            if not user:
+                await self.close(websocket, 1008)
                 return
             raw = message.get("text")
             if raw is None:
@@ -132,6 +138,9 @@ class ConnectionManager:
             try:
                 cmd = json.loads(raw)
                 bounded_json(cmd, [config.security.ws_max_items])
+                if not permitted(user, command_capability(websocket.url.path, cmd)):
+                    await self.close(websocket, 1008)
+                    return
                 if cmd == {"type": "ping"}:
                     await self.send_personal_message({"type": "pong"}, websocket)
                     continue

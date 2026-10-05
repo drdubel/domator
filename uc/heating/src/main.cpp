@@ -7,6 +7,7 @@
 #include <PubSubClient.h>
 #include <SimpleTimer.h>
 #include <credentials.h>
+#include "command_parser.h"
 
 #include <string>
 
@@ -49,26 +50,31 @@ AutoPID myPID(&temp_mixed, &(pid_settings.target), &output, 0, 255,
 
 char out[256];
 
-void callback(char *topic, uint8_t *payload, int length) {
-    string message = "";
-    for (int i = 1; i < length; i++) {
-        message += (char)payload[i];
-    }
-    switch ((char)payload[0]) {
+void callback(char *topic, uint8_t *payload, unsigned int length) {
+    char command;
+    double value;
+    if (!parse_heating_command(payload, length, &command, &value)) return;
+    static unsigned long last_write = 0;
+    static bool written = false;
+    unsigned long now = millis();
+    if (written && now - last_write < 1000) return;
+    last_write = now;
+    written = true;
+    switch (command) {
         case 'p':
-            pid_settings.kp = stof(message);
+            pid_settings.kp = value;
             break;
         case 'i':
-            pid_settings.ki = stof(message);
+            pid_settings.ki = value;
             break;
         case 'd':
-            pid_settings.kd = stof(message);
+            pid_settings.kd = value;
             break;
         case 't':
-            pid_settings.target = stof(message);
+            pid_settings.target = value;
             break;
         case 'I':
-            myPID.setIntegral(stof(message));
+            myPID.setIntegral(value);
             break;
         default:
             return;

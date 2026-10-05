@@ -1,3 +1,9 @@
+if(CONFIG_DOMATOR_DEBUG_TELNET)
+    set(TELNET_SOURCE "telnet.c")
+else()
+    set(TELNET_SOURCE "telnet_disabled.c")
+endif()
+
 idf_component_register(
     SRCS
         "domator_mesh.c"
@@ -9,7 +15,7 @@ idf_component_register(
         "node_root.c"
         "node_relay.c"
         "health_ota.c"
-        "telnet.c"
+        ${TELNET_SOURCE}
     INCLUDE_DIRS
         "."
     REQUIRES

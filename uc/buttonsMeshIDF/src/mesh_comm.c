@@ -95,11 +95,18 @@ void mesh_rx_task(void* arg) {
             continue;
         }
 
-        if (rx_data.size < sizeof(mesh_app_msg_t)) {
+        if (rx_data.size != sizeof(mesh_app_msg_t)) {
             continue;
         }
 
-        mesh_app_msg_t* msg = (mesh_app_msg_t*)rx_data.data;
+        mesh_app_msg_t frame;
+        memcpy(&frame, rx_data.data, sizeof(frame));
+        mesh_app_msg_t* msg = &frame;
+        if (!mesh_message_valid(msg, rx_data.size)) {
+            esp_task_wdt_reset();
+            continue;
+        }
+        mesh_terminate_text(msg);
 
         if ((msg->target_type == DEVICE_TYPE_RELAY &&
              g_node_type != NODE_TYPE_RELAY_8 &&

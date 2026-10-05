@@ -3,23 +3,25 @@ import json
 import logging
 import os
 import secrets
+import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Optional
 
+import httpx2
 import sentry_sdk
+import turbacz.auth as auth
+import turbacz.broker  # noqa: F401  -- registers the MQTT on_connect/on_message handlers
 from aioprometheus.asgi.middleware import MetricsMiddleware
 from aioprometheus.asgi.starlette import metrics as render_metrics
 from fastapi import (
     Cookie,
     Depends,
     FastAPI,
-    File,
     Header,
     HTTPException,
     Query,
     Response,
-    UploadFile,
     WebSocket,
 )
 from fastapi.openapi.docs import (
@@ -30,15 +32,12 @@ from fastapi.openapi.docs import (
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
+from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
-from starlette.types import ASGIApp
-
-import turbacz.auth as auth
-import turbacz.broker  # noqa: F401  -- registers the MQTT on_connect/on_message handlers
+from turbacz.body_limit import CustomRequestSizeMiddleware
 from turbacz.connection_manager import connection_manager, connection_router
 from turbacz.database import db_call
 from turbacz.ha.bridge import ha_bridge
@@ -53,27 +52,6 @@ from turbacz.temperature_history import merge_temperature_series
 from turbacz.websocket import ws_manager
 
 logger = logging.getLogger(__name__)
-
-
-class CustomRequestSizeMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app: ASGIApp, max_content_size: int):
-        super().__init__(app)
-        self.max_content_size = max_content_size
-
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        try:
-            content_length = int(request.headers.get("content-length", 0))
-            if content_length < 0:
-                raise ValueError
-        except ValueError:
-            return JSONResponse({"detail": "Invalid Content-Length"}, status_code=400)
-        if content_length > self.max_content_size:
-            return Response(
-                content="Request body too large",
-                status_code=413,
-                media_type="text/plain",
-            )
-        return await call_next(request)
 
 
 MAX_REQUEST_SIZE = 10_000_000
@@ -164,6 +142,12 @@ def _require_authenticated_user(
 
 @app.get("/metrics", include_in_schema=False)
 async def prometheus_metrics(request: Request):
+    token = auth.bearer_token_from_header(request.headers.get("authorization"))
+    if not (
+        token and config.monitoring.scrape_token
+        and secrets.compare_digest(token, config.monitoring.scrape_token)
+    ) and not auth.get_current_user(token or request.cookies.get("access_token")):
+        raise HTTPException(401, "Unauthorized")
     if config.monitoring.collect_host_metrics:
         # Filesystem accounting can touch slow/network mounts. Keep a scrape
         # from stalling unrelated FastAPI requests.
@@ -274,40 +258,39 @@ async def heating(request: Request, access_token: Optional[str] = Cookie(None)):
     return RedirectResponse(url="/")
 
 
-@app.get("/api/temperatures")
+@app.get("/api/temperatures", dependencies=[Depends(_require_authenticated_user)])
 async def get_temperatures(
     request: Request,
     start: int = Query(..., ge=0),
     end: int = Query(..., ge=0),
-    step: int = Query(..., gt=0, le=3600),
+    step: int = Query(..., ge=4, le=3600),
 ):
-    if end < start or (end - start) // step + 1 > 10000:
-        raise HTTPException(status_code=400, detail="History range must contain at most 10000 points")
+    if end < start or end - start > 86400 or (end - start) // step + 1 > 10000:
+        raise HTTPException(status_code=400, detail="History range must be at most 24 hours and 10000 points")
     client = get_metrics_client()
-    response1 = await client.get(
-        f"{config.monitoring.metrics}/api/v1/query_range",
-        params={
-            "start": start,
-            "end": end,
-            "query": "water_temperature",
-            "step": step,
-        },
-    )
-
-    response2 = await client.get(
-        f"{config.monitoring.metrics}/api/v1/query_range",
-        params={
-            "start": start,
-            "end": end,
-            "query": "pid_target",
-            "step": step,
-        },
-    )
-
-    if response1.status_code != 200 or response2.status_code != 200:
-        return "connection not working"
-
-    return merge_temperature_series(response1.json()["data"]["result"], response2.json()["data"]["result"])
+    results = []
+    try:
+        for query in ("water_temperature", "pid_target"):
+            async with client.stream(
+                "GET", f"{config.monitoring.metrics}/api/v1/query_range",
+                params={"start": start, "end": end, "query": query, "step": step},
+                timeout=10,
+            ) as response:
+                response.raise_for_status()
+                content = bytearray()
+                async for chunk in response.aiter_bytes(65536):
+                    if len(content) + len(chunk) > 4_000_000:
+                        raise ValueError("History response too large")
+                    content.extend(chunk)
+            series = json.loads(content)["data"]["result"]
+            if not isinstance(series, list) or len(series) > 32:
+                raise ValueError("Too many history series")
+            if sum(len(s["values"]) for s in series) > 40000:
+                raise ValueError("Too many history points")
+            results.append(series)
+        return merge_temperature_series(*results)
+    except (httpx2.HTTPError, ValueError, KeyError, TypeError, RecursionError):
+        raise HTTPException(502, "Invalid or unavailable history upstream") from None
 
 
 @app.get("/blinds")
@@ -370,7 +353,6 @@ def _device_token_ok(presented: Optional[str]) -> bool:
 async def upload_firmware(
     request: Request,
     device: str,
-    file: UploadFile = File(...),
     access_token: Optional[str] = Cookie(None),
     authorization: Optional[str] = Header(None),
 ):
@@ -383,32 +365,41 @@ async def upload_firmware(
     if device not in FIRMWARE_DEVICES:
         return JSONResponse({"status": "error", "reason": "unknown device"}, status_code=400)
 
+    async with request.form(max_files=1, max_fields=0, max_part_size=1024) as form:
+        file = form.get("file")
+        if not isinstance(file, UploadFile):
+            raise HTTPException(422, "Expected one firmware file")
+        return await _store_firmware(file, device)
+
+
+async def _store_firmware(file: UploadFile, device: str):
     try:
-        contents = await file.read()
-
-        # ESP-IDF application images start with the 0xE9 magic byte. Refusing
-        # anything else keeps a stray upload from being flashed onto a device.
-        if not contents.startswith(b"\xe9"):
-            return JSONResponse(
-                {"status": "error", "reason": "not an ESP firmware image"},
-                status_code=400,
-            )
-
         save_path = _firmware_path(device)
         save_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Write to a sibling and rename, so a device downloading right now
-        # never reads a half-written image.
-        tmp_path = save_path.with_suffix(".bin.part")
-        tmp_path.write_bytes(contents)
-        tmp_path.replace(save_path)
-
-        logger.info("Successfully saved %d bytes to %s", len(contents), save_path)
-        return JSONResponse({"status": "ok", "device": device, "size": len(contents)})
+        tmp_path = None
+        size = 0
+        try:
+            with tempfile.NamedTemporaryFile(dir=save_path.parent, prefix=f".{device}-", delete=False) as output:
+                tmp_path = Path(output.name)
+                while chunk := await file.read(65536):
+                    if size == 0 and not chunk.startswith(b"\xe9"):
+                        return JSONResponse({"status": "error", "reason": "not an ESP firmware image"}, status_code=400)
+                    size += len(chunk)
+                    if size > MAX_REQUEST_SIZE:
+                        return JSONResponse({"detail": "Firmware too large"}, status_code=413)
+                    await asyncio.to_thread(output.write, chunk)
+            if not size:
+                return JSONResponse({"status": "error", "reason": "empty firmware image"}, status_code=400)
+            await asyncio.to_thread(tmp_path.replace, save_path)
+        finally:
+            if tmp_path is not None:
+                tmp_path.unlink(missing_ok=True)
+            await file.close()
+        return JSONResponse({"status": "ok", "device": device, "size": size})
 
     except Exception as e:
         logger.error(f"Error uploading firmware: {e}", exc_info=True)
-        return JSONResponse({"status": "error", "reason": str(e)}, status_code=500)
+        return JSONResponse({"status": "error", "reason": "Unable to save firmware"}, status_code=500)
 
 
 @app.get("/firmware/{device}.bin")
@@ -435,7 +426,7 @@ async def download_firmware(
     if not path.is_file():
         return JSONResponse({"detail": "no firmware uploaded for this device"}, status_code=404)
 
-    return FileResponse(path, media_type="application/octet-stream", filename=f"{device}.bin")
+    return FileResponse(path, media_type="application/octet-stream", filename=f"{device}.bin", headers={"Cache-Control": "private, no-store"})
 
 
 class BlindRequest(BaseModel):

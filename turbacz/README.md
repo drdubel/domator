@@ -247,3 +247,9 @@ Enable it with `[ha] enabled = true` in `turbacz.toml` (or answer yes in `setup.
 `docker compose up -d --build turbacz homeassistant`, then add the MQTT integration in Home
 Assistant with broker `mosquitto` port `1883`. See
 [docs/home_assistant.md](../docs/home_assistant.md).
+
+For the October security fixes, read the
+[issue review and existing-installation migration steps](../docs/issue-fixes-2026-10-05.md)
+before deployment. Existing users need explicit role assignments, monitoring
+needs a private scrape token, and Compose requires database/Grafana secrets.
+`setup.sh` is for new installations and refuses to overwrite existing secrets.

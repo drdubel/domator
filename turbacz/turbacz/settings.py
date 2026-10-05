@@ -43,7 +43,6 @@ class PSQLSettings(BaseModel):
 
 
 class Monitoring(BaseModel):
-    scrape_token: str = ""
     # Query endpoint for heating history only; all telemetry is scraped at /metrics.
     metrics: str = "http://127.0.0.1:8428"
     labels: dict[str, str] = {}

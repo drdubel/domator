@@ -9,7 +9,7 @@ must be reviewed, merged and deployed before their issues are closed.
 
 | Issue | Result in this change | Remaining work |
 | --- | --- | --- |
-| #90 | Authenticate metrics/history; dedicated scrape bearer token; history rate, interval, point and upstream response bounds. | Configure the scraper token and deploy. |
+| #90 | Authenticate history; history rate, interval, point and upstream response bounds. `/metrics` is public by explicit owner request. | Deploy. Metrics authentication is deferred by owner request. |
 | #100 | Viewer/operator/admin/OTA assignments, JWT role claims, HTTP mutation checks and per-message WebSocket authorization; role/allowlist changes use current configuration. | Assign existing users, restart and deploy. Admin includes all capabilities. Optional recent step-up authentication remains a follow-up. |
 | #101 | Exact frame size, per-type lengths and values, bounded text termination, unknown-type rejection, safe routing snapshots, allocation/mutex checks. Exhaustive host sanitizer test and fuzz target. | Build/flash and validate on ESP hardware. Sender authentication remains #103. |
 | #105 | Reject malformed commands, validate IDs/positions, bounded snprintf, accept only S as the all-blinds state query. | Build/flash and verify UART behavior on the ESP8266. |
@@ -39,9 +39,9 @@ Deployment steps for existing installations
    `roles = { "your-email@example.com" = ["admin"] }`. Add operators/viewers as
    appropriate; the `authorized` allowlist still applies. Unassigned users are
    viewers. Restart after configuration edits; no live file watcher exists.
-3. In `[monitoring]`, set a fresh random `scrape_token`; put the identical token
-   in `monitoring/scrape_token` and chmod it to 0600. Compose mounts it only
-   into VictoriaMetrics. Anonymous `/metrics` requests now return 401.
+3. `/metrics` intentionally accepts anonymous scrapes. No scrape token or
+   token file is required. Existing `monitoring.scrape_token` settings are
+   ignored; `/api/temperatures` remains authenticated.
 4. Create a private `.env` with `POSTGRES_PASSWORD` matching the CURRENT
    database password and `GRAFANA_ADMIN_PASSWORD`. Setting a Compose password
    does not change passwords inside existing PostgreSQL/Grafana volumes;

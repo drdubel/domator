@@ -51,8 +51,6 @@ allowed_origins = ["https://domator.example"]
 # ws_idle_seconds = 300
 
 [monitoring]
-# Must match monitoring/scrape_token for the Compose scraper (mode 0600).
-scrape_token = "CHANGE_ME_TO_A_LONG_RANDOM_SECRET"
 # Used only to query heating history. Mesh, heating and host metrics are all
 # exposed at /metrics and must be scraped by VictoriaMetrics/Prometheus.
 metrics = "http://victoriametrics:8428"

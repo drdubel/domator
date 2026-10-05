@@ -150,21 +150,14 @@ def test_large_upload_with_understated_length(application):
     assert not a.main.FIRMWARE_DIR.exists()
 
 
-def test_telemetry_auth_and_ranges(application, monkeypatch):
+def test_public_metrics_and_authenticated_history_ranges(application):
     a = application
-    assert a.http.get("/metrics").status_code == 401
-    assert a.http.get("/api/temperatures?start=0&end=3600&step=4").status_code == 401
-    monkeypatch.setattr(config.monitoring, "scrape_token", "scraper-secret")
-    assert (
-        a.http.get(
-            "/metrics", headers={"Authorization": "Bearer scraper-secret"}
-        ).status_code
-        == 200
-    )
+    assert a.http.get("/metrics").status_code == 200
     assert (
         a.http.get("/metrics", headers={"Authorization": "Bearer wrong"}).status_code
-        == 401
+        == 200
     )
+    assert a.http.get("/api/temperatures?start=0&end=3600&step=4").status_code == 401
     headers = {"Authorization": f"Bearer {a.token}"}
     for query in [
         "start=0&end=86401&step=100",
@@ -345,7 +338,7 @@ def test_setup_private_files_and_existing_config_protection(tmp_path):
         capture_output=True,
     )
     assert result.returncode == 0
-    for file in ["turbacz.toml", ".env", "monitoring/scrape_token", "mosquitto.passwd"]:
+    for file in ["turbacz.toml", ".env", "mosquitto.passwd"]:
         assert (tmp_path / file).stat().st_mode & 0o777 == 0o600
     before = (tmp_path / "turbacz.toml").read_bytes()
     result = subprocess.run(

@@ -264,6 +264,7 @@ Assistant with broker `mosquitto` port `1883`. See
 
 For the October security fixes, read the
 [issue review and existing-installation migration steps](../docs/issue-fixes-2026-10-05.md)
-before deployment. Existing users need explicit role assignments, monitoring
-needs a private scrape token, and Compose requires database/Grafana secrets.
+before deployment. Existing users need explicit role assignments, and Compose requires
+database/Grafana secrets. `/metrics` is public by operator request;
+`/api/temperatures` still requires authentication.
 `setup.sh` is for new installations and refuses to overwrite existing secrets.

@@ -8,7 +8,7 @@ if [ -e turbacz.toml ] || [ -e .env ]; then
 fi
 
 CONFIG_TMP=$(mktemp ./turbacz.toml.XXXXXX)
-trap 'rm -f "$CONFIG_TMP" "${SCRAPE_TMP:-}" "${ENV_TMP:-}" "${BROKER_TMP:-}"' EXIT
+trap 'rm -f "$CONFIG_TMP" "${ENV_TMP:-}" "${BROKER_TMP:-}"' EXIT
 
 echo "Domator Docker Setup"
 echo "==================="
@@ -63,7 +63,6 @@ MQTT_PASSWORD=$(openssl rand -base64 32)
 # images. Those images contain WiFi and MQTT credentials, so the download
 # endpoint is never anonymous. Must match CONFIG_OTA_TOKEN in the firmware.
 FIRMWARE_TOKEN=$(openssl rand -hex 32)
-SCRAPE_TOKEN=$(openssl rand -hex 32)
 POSTGRES_PASSWORD=$(openssl rand -hex 32)
 GRAFANA_ADMIN_PASSWORD=$(openssl rand -hex 32)
 
@@ -108,7 +107,6 @@ allow_insecure_http = $INSECURE_HTTP
 allowed_origins = ["$PUBLIC_ORIGIN"]
 
 [monitoring]
-scrape_token = "$SCRAPE_TOKEN"
 metrics = "http://victoriametrics:8428"
 collect_host_metrics = true
 host_metrics_scope = "container"
@@ -122,11 +120,6 @@ enabled = $HA_ENABLED
 EOF
 chmod 600 "$CONFIG_TMP"
 mv -f "$CONFIG_TMP" turbacz.toml
-mkdir -p monitoring
-SCRAPE_TMP=$(mktemp ./monitoring/scrape_token.XXXXXX)
-printf '%s' "$SCRAPE_TOKEN" > "$SCRAPE_TMP"
-chmod 600 "$SCRAPE_TMP"
-mv -f "$SCRAPE_TMP" monitoring/scrape_token
 ENV_TMP=$(mktemp ./.env.XXXXXX)
 printf 'POSTGRES_PASSWORD=%s\nGRAFANA_ADMIN_PASSWORD=%s\n' "$POSTGRES_PASSWORD" "$GRAFANA_ADMIN_PASSWORD" > "$ENV_TMP"
 chmod 600 "$ENV_TMP"

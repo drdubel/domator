@@ -105,7 +105,6 @@ services:
     volumes:
       - victoriametrics_data:/victoriametrics_data
       - ./monitoring/prometheus.yml:/etc/victoriametrics/prometheus.yml:ro
-      - ./monitoring/scrape_token:/etc/turbacz_scrape_token:ro
     restart: unless-stopped
 
 volumes:

@@ -142,12 +142,7 @@ def _require_authenticated_user(
 
 @app.get("/metrics", include_in_schema=False)
 async def prometheus_metrics(request: Request):
-    token = auth.bearer_token_from_header(request.headers.get("authorization"))
-    if not (
-        token and config.monitoring.scrape_token
-        and secrets.compare_digest(token, config.monitoring.scrape_token)
-    ) and not auth.get_current_user(token or request.cookies.get("access_token")):
-        raise HTTPException(401, "Unauthorized")
+    # Public scraping is intentionally enabled by the operator.
     if config.monitoring.collect_host_metrics:
         # Filesystem accounting can touch slow/network mounts. Keep a scrape
         # from stalling unrelated FastAPI requests.

@@ -18,7 +18,8 @@ const State = {
     // Status tracking
     devicesRssi: {},
     deviceRoles: {},
-    knobConfig: null,
+    zigbeeDevices: {},
+    zigbeeStates: {},
     pingTimes: {},
     onlineRelays: new Set(),
     onlineSwitches: new Set(),
@@ -339,12 +340,19 @@ const wsManager = new WebSocketManager('/rcm/ws/', function (event) {
 
     // Handle different message types
     if (msg.type === "error") {
-        if (State.knobConfig) applyKnobControls(State.knobConfig)
+        for (const device of Object.values(State.zigbeeDevices)) applyZigbeeControls(device)
         showToast(msg.message || 'Gateway request failed', true)
         return
     }
-    if (msg.type === "zigbee_knob_config") {
-        applyKnobControls(msg)
+    if (msg.type === "zigbee_devices") {
+        State.zigbeeDevices = msg.devices || {}
+        for (const device of Object.values(State.zigbeeDevices)) applyZigbeeControls(device)
+        return
+    }
+    if (msg.type === "zigbee_state") {
+        State.zigbeeStates[msg.switch_id] = { ...State.zigbeeStates[msg.switch_id], ...msg.state }
+        const device = State.zigbeeDevices[msg.switch_id]
+        if (device) applyZigbeeControls(device)
         return
     }
     if (msg.type === "update") {
@@ -2057,16 +2065,16 @@ async function loadConfiguration() {
     updateArrangementButton()
 
     try {
-        const [relaysData, outputsData, switchesData, connectionsData, buttonTypesData, blindPairsData, knobConfig] = await Promise.all([
+        const [relaysData, outputsData, switchesData, connectionsData, buttonTypesData, blindPairsData, zigbeeDevices] = await Promise.all([
             fetchAPI('/lights/get_relays'),
             fetchAPI('/lights/get_outputs'),
             fetchAPI('/lights/get_switches'),
             fetchAPI('/lights/get_connections'),
             fetchAPI('/lights/get_all_buttons'),
             fetchAPI('/lights/get_blind_pairs'),
-            fetchAPI('/lights/get_zigbee_knob_config')
+            fetchAPI('/lights/get_zigbee_devices')
         ])
-        State.knobConfig = knobConfig
+        State.zigbeeDevices = zigbeeDevices || {}
 
         const relays_config = relaysData || getDemoRelays()
         const outputs_config = outputsData || getDemoOutputs()
@@ -2247,7 +2255,8 @@ function getRssiIcon(rssi) {
 }
 
 function createSwitch(switchId, switchName, buttonCount, x, y) {
-    if (!Number.isSafeInteger(switchId) || switchId < 1 || !Number.isInteger(buttonCount) || buttonCount < 1 || buttonCount > 24) return
+    const zigbeeDevice = State.zigbeeDevices[switchId]
+    if (!Number.isSafeInteger(switchId) || switchId < 1 || !Number.isInteger(buttonCount) || buttonCount < (zigbeeDevice ? 0 : 1) || buttonCount > 24) return
     const savedPos = getSavedPosition(`switch-${switchId}`, x, y)
     const savedColor = getSavedColor(`switch-${switchId}`)
 
@@ -2485,18 +2494,28 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
     if (savedColor) {
         applyDeviceColor(switchId)
     }
-    if (State.knobConfig?.switch_id === switchId) applyKnobControls(State.knobConfig)
+    if (zigbeeDevice) applyZigbeeControls(zigbeeDevice)
 }
 
-function applyKnobControls(config) {
-    State.knobConfig = config
-    if (!config.enabled) return
+function applyZigbeeControls(config) {
+    State.zigbeeDevices[config.switch_id] = config
     const card = document.getElementById(`switch-${config.switch_id}`)
     if (!card) return
-    card.classList.add('zigbee-knob')
+    card.classList.add('zigbee-device')
     card.querySelectorAll('.button-type-toggle, .status-indicator, .ping-time, .signal-icon, .update-btn, .delete-btn').forEach(element => {
         element.hidden = true
     })
+    let details = card.querySelector('.zigbee-details')
+    if (!details) {
+        details = document.createElement('div')
+        details.className = 'zigbee-details'
+        card.querySelector('.device-header').after(details)
+    }
+    const state = State.zigbeeStates[config.switch_id] || {}
+    const fields = ['state', 'battery', 'temperature', 'humidity', 'linkquality']
+        .filter(field => state[field] !== undefined && state[field] !== null)
+        .map(field => `${field}: ${state[field]}`)
+    details.textContent = `Zigbee · ${config.topic}${fields.length ? ' · ' + fields.join(', ') : ''}`
     const choices = [
         ['toggle', 'Light: Toggle'], ['on', 'Light: On'], ['off', 'Light: Off'],
         ['up', 'Blind: Up'], ['down', 'Blind: Down'], ['stop', 'Blind: Stop']
@@ -2505,10 +2524,10 @@ function applyKnobControls(config) {
         const row = document.getElementById(`switch-${config.switch_id}-btn-${buttonId}`)
         if (!row) continue
         row.querySelector('.button-name').textContent = button.label
-        let select = row.querySelector('.knob-command')
+        let select = row.querySelector('.zigbee-command')
         if (!select) {
             select = document.createElement('select')
-            select.className = 'knob-command'
+            select.className = 'zigbee-command'
             select.dataset.buttonId = buttonId
             select.title = 'Choose the command for connected outputs. For blinds, connect either output of the pair.'
             for (const [value, label] of choices) {
@@ -2522,12 +2541,12 @@ function applyKnobControls(config) {
             }
             select.addEventListener('change', () => {
                 if (!wsManager.isConnected()) {
-                    select.value = State.knobConfig.buttons[buttonId].command
-                    showToast('Connect to Turbacz to save knob commands', true)
+                    select.value = State.zigbeeDevices[config.switch_id].buttons[buttonId].command
+                    showToast('Connect to Turbacz to save Zigbee commands', true)
                     return
                 }
                 select.disabled = true
-                wsManager.send(JSON.stringify({ type: 'zigbee_knob_command', button_id: buttonId, command: select.value }))
+                wsManager.send(JSON.stringify({ type: 'zigbee_command', switch_id: config.switch_id, button_id: buttonId, command: select.value }))
             })
             row.querySelector('.button-name').after(select)
         }
@@ -3508,7 +3527,7 @@ function editDeviceName(type, id) {
     document.getElementById('editNameInput').value = currentName
     document.getElementById('editNameModal').classList.add('active')
     document.getElementById('editAutoOffGroup').style.display = 'none'
-    document.getElementById('editButtonNumber').disabled = type === 'switch' && State.knobConfig?.switch_id === id
+    document.getElementById('editButtonNumber').disabled = type === 'switch' && Boolean(State.zigbeeDevices[id])
 
     if (type === 'switch') {
         document.getElementById('editButtonNumber').style.display = 'block'

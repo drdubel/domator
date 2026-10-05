@@ -39,7 +39,7 @@ def command_capability(path, command):
             "auto_off_update",
             "update",
             "button_types",
-            "zigbee_knob_command",
+            "zigbee_command",
         }:
             return "admin"
     if path.startswith(("/heating/", "/blinds/", "/lights/", "/rcm/")):

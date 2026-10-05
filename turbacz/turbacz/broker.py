@@ -16,7 +16,7 @@ from turbacz.security import RateLimiter
 from turbacz.settings import config
 from turbacz.state_manager import state_manager
 from turbacz.websocket import ws_manager
-from turbacz.zigbee import handle_knob_message
+from turbacz.zigbee import handle_zigbee_message
 from turbacz.zigbee_knob import mesh_switch_config
 
 logger = logging.getLogger(__name__)
@@ -58,8 +58,8 @@ def connect(client, flags, rc, properties):
     mqtt.client.subscribe("/heating/metrics")
     mqtt.client.subscribe("/relay/state/+")
     mqtt.client.subscribe("/switch/state/+")
-    if config.zigbee.tyua_knob.enabled:
-        mqtt.client.subscribe(config.zigbee.tyua_knob.topic)
+    if config.zigbee.enabled:
+        mqtt.client.subscribe(f"{config.zigbee.base_topic}/#")
 
     if config.ha.enabled:
         ha_bridge.reset_published_state()
@@ -78,10 +78,6 @@ def connect(client, flags, rc, properties):
 
 @mqtt.on_message()
 async def message(client, topic, payload, qos, properties):
-    # Zigbee2MQTT can retain device state, including the last action. Never
-    # replay that physical action when Turbacz reconnects to the broker.
-    if topic == config.zigbee.tyua_knob.topic and properties and properties.get("retain"):
-        return
     # Topic throttling bounds backend work. Publisher identity is only known
     # to the broker, which must enforce its own per-client quotas.
     if len(payload) > config.security.mqtt_max_bytes:
@@ -91,7 +87,11 @@ async def message(client, topic, payload, qos, properties):
     try:
         payload_str = payload.decode("utf-8")
         validate_payload(topic, payload_str)
-        await dispatch_message(topic, payload_str)
+        if topic.startswith(f"{config.zigbee.base_topic}/"):
+            if config.zigbee.enabled:
+                await handle_zigbee_message(topic, payload_str, retained=bool(properties and properties.get("retain")))
+        else:
+            await dispatch_message(topic, payload_str)
     except (UnicodeError, ValueError, TypeError, KeyError, OverflowError, RecursionError):
         logger.warning("Rejected malformed MQTT message")
     except Exception:
@@ -103,9 +103,9 @@ async def dispatch_message(topic, payload_str):
     Handle incoming MQTT messages based on topic.
     """
 
-    if topic == config.zigbee.tyua_knob.topic:
-        if config.zigbee.tyua_knob.enabled:
-            await handle_knob_message(payload_str)
+    if topic.startswith(f"{config.zigbee.base_topic}/"):
+        if config.zigbee.enabled:
+            await handle_zigbee_message(topic, payload_str)
         return
 
     if config.ha.enabled and topic.startswith(f"{config.ha.base_topic}/"):

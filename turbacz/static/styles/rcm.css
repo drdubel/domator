@@ -514,7 +514,7 @@ body {
     z-index: 100;
 }
 
-.knob-command {
+.zigbee-command {
     background: #1e293b;
     color: #e2e8f0;
     border: 1px solid #64748b;
@@ -524,8 +524,16 @@ body {
     cursor: pointer;
 }
 
-.zigbee-knob [hidden] {
+.zigbee-device [hidden] {
     display: none !important;
+}
+
+.zigbee-details {
+    color: #94a3b8;
+    font-size: 0.8rem;
+    max-width: 400px;
+    overflow-wrap: anywhere;
+    margin-bottom: 8px;
 }
 
 .switch-box.highlighted {

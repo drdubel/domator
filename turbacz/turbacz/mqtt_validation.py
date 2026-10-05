@@ -20,10 +20,10 @@ def integer(value, low, high):
 
 
 def validate_payload(topic, payload):
-    if topic == config.zigbee.tyua_knob.topic:
-        from turbacz.zigbee_knob import validate_knob_payload
+    if topic.startswith(f"{config.zigbee.base_topic}/"):
+        from turbacz.zigbee_devices import validate_zigbee_payload
 
-        validate_knob_payload(payload)
+        validate_zigbee_payload(topic, payload)
     elif topic == "/heating/metrics":
         data = json.loads(payload)
         if not isinstance(data, dict):

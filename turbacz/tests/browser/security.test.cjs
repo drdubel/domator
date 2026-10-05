@@ -340,7 +340,7 @@ test('RCM knob actions have labels, save commands and restore server choices', (
         dom.window.jsPlumb = { ready() {} }
         dom.window.sentCommands = []
         dom.window.knobConfig = {
-            enabled: true, switch_id: 281474976710656,
+            switch_id: 281474976710656, topic: "zigbee2mqtt/tyua_knob",
             buttons: {
                 a: { label: 'Click', command: 'toggle' },
                 b: { label: 'Double-click', command: 'toggle' },
@@ -357,13 +357,13 @@ test('RCM knob actions have labels, save commands and restore server choices', (
             jsPlumbInstance = { draggable() {}, makeSource() {}, makeTarget() {}, repaintEverything() {} };
             wsManager.isConnected = () => true;
             wsManager.send = value => sentCommands.push(JSON.parse(value));
-            State.knobConfig = knobConfig;
+            State.zigbeeDevices = { [knobConfig.switch_id]: knobConfig };
             createSwitch(knobConfig.switch_id, 'tyua_knob', 9, 0, 0);`)
         const doc = dom.window.document
-        assert.equal(doc.querySelectorAll('.knob-command').length, 9)
+        assert.equal(doc.querySelectorAll('.zigbee-command').length, 9)
         const row = doc.getElementById('switch-281474976710656-btn-d')
         assert.equal(row.querySelector('.button-name').textContent, 'Rotate left')
-        const select = row.querySelector('.knob-command')
+        const select = row.querySelector('.zigbee-command')
         assert.equal(select.value, 'off')
         assert.deepEqual([...select.options].map(option => option.value), ['toggle', 'on', 'off', 'up', 'down', 'stop'])
         assert.equal(row.querySelector('.button-type-toggle').hidden, true)
@@ -372,21 +372,58 @@ test('RCM knob actions have labels, save commands and restore server choices', (
         select.dispatchEvent(new dom.window.Event('change'))
         assert.equal(select.disabled, true)
         assert.equal(JSON.stringify(dom.window.sentCommands), JSON.stringify([
-            { type: 'zigbee_knob_command', button_id: 'd', command: 'up' }
+            { type: 'zigbee_command', switch_id: 281474976710656, button_id: 'd', command: 'up' }
         ]))
-        run(dom, `knobConfig.buttons.d.command = 'up'; applyKnobControls(knobConfig)`)
+        run(dom, `knobConfig.buttons.d.command = 'up'; applyZigbeeControls(knobConfig)`)
         assert.equal(select.value, 'up')
         assert.equal(select.disabled, false)
-        assert.equal(doc.querySelectorAll('.knob-command').length, 9)
+        assert.equal(doc.querySelectorAll('.zigbee-command').length, 9)
         run(dom, `editDeviceName('switch', knobConfig.switch_id)`)
         assert.equal(doc.getElementById('editButtonNumber').disabled, true)
         run(dom, `createSwitch(222, 'Wall switch', 3, 0, 0); editDeviceName('switch', 222)`)
         assert.equal(doc.getElementById('editButtonNumber').disabled, false)
-        assert.equal(doc.getElementById('switch-222').querySelectorAll('.knob-command').length, 0)
+        assert.equal(doc.getElementById('switch-222').querySelectorAll('.zigbee-command').length, 0)
         run(dom, `wsManager.isConnected = () => false`)
         select.value = 'down'
         select.dispatchEvent(new dom.window.Event('change'))
         assert.equal(select.value, 'up')
         assert.equal(dom.window.sentCommands.length, 1)
+    } finally { dom.window.close() }
+})
+
+test('RCM renders discovered Zigbee sensors and keeps command selectors scoped to each device', () => {
+    const dom = page(fs.readFileSync(path.join(root, 'static/rcm.html'), 'utf8'))
+    try {
+        dom.window.jsPlumb = { ready() {} }
+        dom.window.sentCommands = []
+        dom.window.devices = {
+            281474976710670: { switch_id: 281474976710670, topic: 'zigbee2mqtt/kitchen/sensor', buttons: {} },
+            281474976710671: { switch_id: 281474976710671, topic: 'zigbee2mqtt/first', buttons: { a: { label: 'Click', command: 'on' } } },
+            281474976710672: { switch_id: 281474976710672, topic: 'zigbee2mqtt/second', buttons: { a: { label: 'Click', command: 'off' } } }
+        }
+        run(dom, `${script('common.js')}\n${script('rcm.js')}\n
+            jsPlumbInstance = { draggable() {}, makeSource() {}, makeTarget() {}, repaintEverything() {} };
+            wsManager.isConnected = () => true;
+            wsManager.send = value => sentCommands.push(JSON.parse(value));
+            State.zigbeeDevices = devices;
+            State.zigbeeStates[281474976710670] = { temperature: 21.5, battery: 90 };
+            createSwitch(281474976710670, 'kitchen/sensor', 0, 0, 0);
+            createSwitch(281474976710671, 'first', 1, 0, 0);
+            createSwitch(281474976710672, 'second', 1, 0, 0);`)
+        const doc = dom.window.document
+        assert.equal(doc.querySelectorAll('.zigbee-device').length, 3)
+        const sensor = doc.getElementById('switch-281474976710670')
+        assert.equal(sensor.querySelectorAll('.button-item').length, 0)
+        assert.match(sensor.querySelector('.zigbee-details').textContent, /temperature: 21.5/)
+        const first = doc.getElementById('switch-281474976710671').querySelector('.zigbee-command')
+        const second = doc.getElementById('switch-281474976710672').querySelector('.zigbee-command')
+        assert.equal(first.value, 'on')
+        assert.equal(second.value, 'off')
+        second.value = 'toggle'
+        second.dispatchEvent(new dom.window.Event('change'))
+        assert.equal(JSON.stringify(dom.window.sentCommands), JSON.stringify([
+            { type: 'zigbee_command', switch_id: 281474976710672, button_id: 'a', command: 'toggle' }
+        ]))
+        assert.equal(first.value, 'on')
     } finally { dom.window.close() }
 })

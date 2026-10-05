@@ -1,10 +1,7 @@
 """Stable RCM button IDs for the Tuya knob, in event and command modes."""
 
-import json
+from turbacz.zigbee_devices import is_zigbee_id
 
-# Mesh device IDs are 48-bit MAC addresses. Reserve the first ID above that
-# range for this virtual switch; it is still exactly representable in JS.
-KNOB_SWITCH_ID = 1 << 48
 KNOB_BUTTONS = {
     "a": ("Click", "toggle"),
     "b": ("Double-click", "toggle"),
@@ -37,21 +34,5 @@ KNOB_COMMANDS = {"toggle", "on", "off", "up", "down", "stop"}
 def mesh_switch_config(data: dict) -> dict:
     """Virtual knob routing belongs to Turbacz, not the ESP32 mesh root."""
     return {
-        switch: value
-        for switch, value in data.items()
-        if str(switch) != str(KNOB_SWITCH_ID)
+        switch: value for switch, value in data.items() if not is_zigbee_id(int(switch))
     }
-
-
-def validate_knob_payload(payload: str) -> dict:
-    data = json.loads(payload)
-    if not isinstance(data, dict):
-        raise TypeError("Expected a Zigbee2MQTT object")
-    # Battery/linkquality reports and action resets carry no usable action.
-    if (
-        "action" in data
-        and data["action"] is not None
-        and not isinstance(data["action"], str)
-    ):
-        raise TypeError("Expected a string action")
-    return data

@@ -28,13 +28,9 @@ class MQTTServerSettings(BaseModel):
     password: str
 
 
-class ZigbeeKnobSettings(BaseModel):
-    enabled: bool = True
-    topic: str = Field(default="zigbee2mqtt/tyua_knob", min_length=1, pattern=r"^[^+#\x00]+$")
-
-
 class ZigbeeSettings(BaseModel):
-    tyua_knob: ZigbeeKnobSettings = Field(default_factory=ZigbeeKnobSettings)
+    enabled: bool = True
+    base_topic: str = Field(default="zigbee2mqtt", min_length=1, pattern=r"^[^/+#\x00](?:[^+#\x00]*[^/+#\x00])?$")
 
 
 class ServerSettings(BaseModel):

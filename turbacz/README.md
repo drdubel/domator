@@ -91,39 +91,41 @@ port = 5432
 > `token_endpoint_auth_method = "client_secret_post"` (others use
 > `client_secret_basic`).
 
-### Tuya Zigbee knob in RCM
+### Zigbee2MQTT devices in RCM
 
-Turbacz subscribes to `zigbee2mqtt/tyua_knob` on its MQTT broker. Pair the knob
-in Zigbee2MQTT and set its friendly name to `tyua_knob` (the spelling is
-intentional). Both applications must use the same broker.
+Turbacz subscribes to `zigbee2mqtt/#` on its MQTT broker. Zigbee2MQTT must use
+that same broker. Each device gets its own RCM card when Turbacz receives its
+state or availability, or discovers it in `zigbee2mqtt/bridge/devices`.
+Nothing is created on startup without device data. Previously created
+placeholder knob cards are hidden until an actual device is discovered.
 
-The **tyua_knob** switch appears automatically in RCM. Connect its labeled
-actions to relay outputs using the usual connection lines, then choose a
-command from each action's dropdown: **Light: Toggle / On / Off** or
-**Blind: Up / Down / Stop**. For a blind, connect either output of an existing
+Cards use the device's friendly name, including names such as
+`kitchen/sensor`. Bridge status/logging and `/set`, `/get`, and `/action`
+endpoints are not additional devices. Sensor cards have no action buttons
+unless the device advertises or sends actions. Retained messages can discover
+real devices but never replay a physical action. See the
+[Zigbee2MQTT topic reference](https://www.zigbee2mqtt.io/guide/usage/mqtt_topics_and_messages.html).
+
+Advertised and observed actions become labeled buttons (up to 24 per device).
+Connect those buttons to relay outputs using RCM's usual connection lines,
+then choose **Light: Toggle / On / Off** or **Blind: Up / Down / Stop** from
+each action's dropdown. For a blind, connect either output of an existing
 blind pair; Turbacz controls the whole pair. Multiple targets are supported.
-Connections and command choices are stored in PostgreSQL and survive restarts.
-Unconnected actions do nothing.
+Each device has independent connections and command choices, stored in
+PostgreSQL and preserved across restarts. Unconnected actions do nothing.
 
-For example, connect Click, Rotate left and Rotate right to a light; their
-defaults toggle, turn off and turn on that light. For a blind, connect those
-actions to its pair and select Stop, Up and Down respectively. Light commands
-cannot drive blind outputs directly.
+Tuya knobs work under any friendly name, including `tyua_knob`. Event and
+command mode aliases share the corresponding action button. Click defaults
+to Toggle; Rotate left/right default to Off/On. For a blind, choose Stop,
+Up and Down instead. Mesh firmware updates and ping/RSSI status do not apply
+to Zigbee cards.
 
-Use Zigbee2MQTT's `event` operation mode for single click, double-click, hold
-and rotation. The equivalent `command` mode actions are also supported;
-additional rows cover holding while rotating and releasing a hold. See the
-[Tuya knob action reference](https://www.zigbee2mqtt.io/devices/ERS-10TZBVK-AA.html).
-Retained device messages, battery-only reports, action resets and unknown
-actions never trigger outputs. Mesh firmware updates and ping/RSSI status do
-not apply to this Zigbee switch.
-
-Optional topic and enable settings (all action assignments remain in RCM):
+Optional integration settings (action assignments remain in RCM):
 
 ```toml
-[zigbee.tyua_knob]
+[zigbee]
 enabled = true
-topic = "zigbee2mqtt/tyua_knob"
+base_topic = "zigbee2mqtt"
 ```
 
 ### PostgreSQL setup (local)

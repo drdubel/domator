@@ -113,18 +113,44 @@ def test_second_instance_can_initialize_after_first_instance_reads():
                 two.create_tables()
                 assert two.get_relays() == {111: ("Relay", 8)}
                 assert second.info.transaction_status == TransactionStatus.IDLE
-                from turbacz.zigbee_knob import KNOB_BUTTONS, KNOB_SWITCH_ID
+                from turbacz.zigbee_devices import ZIGBEE_ID_START, zigbee_device_id
 
+                # A former startup placeholder must not appear as a real device.
+                one.add_switch(ZIGBEE_ID_START, "tyua_knob", 9)
                 with patch.object(ConnectionManager, "_init_db", lambda self: setattr(self, "conn", first)):
                     initialized = ConnectionManager()
-                assert initialized.get_switches()[KNOB_SWITCH_ID] == ("tyua_knob", len(KNOB_BUTTONS))
-                assert one.get_zigbee_knob_config()["buttons"]["d"]["command"] == "off"
-                one.set_zigbee_knob_command("d", "up")
-                one.rename_switch(KNOB_SWITCH_ID, "Living room knob", len(KNOB_BUTTONS))
+                assert initialized.get_zigbee_devices() == {}
+                assert ZIGBEE_ID_START not in initialized.get_switches()
+
+                topic = "zigbee2mqtt/tyua_knob"
+                device, changed = one.register_zigbee_device(topic, ["single", "rotate_left"])
+                sid = zigbee_device_id(topic)
+                assert changed and device["switch_id"] == sid
+                left = device["actions"]["rotate_left"]
+                assert device["buttons"][left]["command"] == "off"
+                one.set_zigbee_command(sid, left, "up")
+                one.add_connection(sid, left, 111, "a")
+                one.rename_switch(sid, "Living room knob", 2)
+                alias, changed = one.register_zigbee_device(topic, ["toggle", "brightness_step_down"])
+                assert alias["actions"]["toggle"] == device["actions"]["single"]
+                assert alias["actions"]["brightness_step_down"] == left
+                assert len(alias["buttons"]) == 2
+                assert alias["buttons"][left]["command"] == "up"
+                _, changed = one.register_zigbee_device(topic, ["single"])
+                assert not changed
+
+                sensor, _ = one.register_zigbee_device("zigbee2mqtt/kitchen/sensor")
+                assert sensor["buttons"] == {}
+                other, _ = one.register_zigbee_device("zigbee2mqtt/other_knob", ["rotate_left"])
+                assert other["switch_id"] != sid
+                assert other["buttons"][other["actions"]["rotate_left"]]["command"] == "off"
                 with patch.object(ConnectionManager, "_init_db", lambda self: setattr(self, "conn", second)):
                     restarted = ConnectionManager()
-                assert restarted.get_switches()[KNOB_SWITCH_ID] == ("Living room knob", len(KNOB_BUTTONS))
-                assert restarted.get_zigbee_knob_config()["buttons"]["d"]["command"] == "up"
+                assert restarted.get_switches()[sid] == ("Living room knob", 2)
+                assert restarted.get_switches()[sensor["switch_id"]][1] == 0
+                assert ZIGBEE_ID_START not in restarted.get_switches()
+                assert restarted.get_zigbee_devices()[sid]["buttons"][left]["command"] == "up"
+                assert restarted.get_all_connections()[sid][left] == [(111, "a")]
                 assert second.info.transaction_status == TransactionStatus.IDLE
         finally:
             admin.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(schema))

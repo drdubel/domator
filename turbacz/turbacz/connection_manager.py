@@ -1,3 +1,4 @@
+import json
 from threading import RLock
 from typing import Optional
 
@@ -8,7 +9,8 @@ from fastapi.responses import JSONResponse
 from turbacz.database import serialized_manager
 from turbacz.settings import config
 from turbacz.validation import relay_output
-from turbacz.zigbee_knob import KNOB_BUTTONS, KNOB_COMMANDS, KNOB_SWITCH_ID
+from turbacz.zigbee_devices import ZIGBEE_ID_END, ZIGBEE_ID_START, is_zigbee_id, validate_action, zigbee_device_id
+from turbacz.zigbee_knob import KNOB_ACTION_BUTTONS, KNOB_BUTTONS, KNOB_COMMANDS
 
 connection_router = APIRouter(prefix="/lights")
 
@@ -56,9 +58,6 @@ class ConnectionManager:
 
         if not self.get_sections():
             self.add_section("Default")
-
-        if config.zigbee.tyua_knob.enabled and KNOB_SWITCH_ID not in self.get_switches():
-            self.add_switch(KNOB_SWITCH_ID, "tyua_knob", len(KNOB_BUTTONS))
 
     def _init_db(self):
         self.conn = psycopg.connect(
@@ -165,6 +164,15 @@ class ConnectionManager:
                     button_id TEXT NOT NULL,
                     command TEXT NOT NULL CHECK (command IN ('toggle', 'on', 'off', 'up', 'down', 'stop')),
                     PRIMARY KEY (switch_id, button_id)
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS zigbee_devices (
+                    switch_id BIGINT PRIMARY KEY REFERENCES switches(id) ON DELETE CASCADE,
+                    topic TEXT UNIQUE NOT NULL,
+                    actions JSONB NOT NULL DEFAULT '{}'
                 );
                 """
             )
@@ -295,14 +303,23 @@ class ConnectionManager:
 
     def get_switches(self) -> dict[int, tuple[str, int]]:
         with self.conn.cursor() as cur:
-            cur.execute("SELECT id, name, buttons FROM switches;")
+            # Older versions created a placeholder knob on startup. Hide
+            # virtual switches until MQTT has actually identified a device.
+            cur.execute(
+                """
+                SELECT id, name, buttons FROM switches
+                WHERE id NOT BETWEEN %s AND %s
+                   OR id IN (SELECT switch_id FROM zigbee_devices);
+                """,
+                (ZIGBEE_ID_START, ZIGBEE_ID_END),
+            )
             switches = cur.fetchall()
 
         return {row[0]: (row[1], row[2]) for row in switches}
 
     def rename_switch(self, switch_id: int, switch_name: str, buttons: int):
-        if switch_id == KNOB_SWITCH_ID and buttons != len(KNOB_BUTTONS):
-            raise HTTPException(status_code=400, detail="The Zigbee knob has a fixed set of actions")
+        if is_zigbee_id(switch_id) and buttons != self.get_switches()[switch_id][1]:
+            raise HTTPException(status_code=400, detail="Zigbee actions are discovered through MQTT")
         with self.conn.cursor() as cur:
             for i in range(buttons, self.get_switches()[switch_id][1]):
                 button_id = chr(97 + i)
@@ -723,30 +740,76 @@ class ConnectionManager:
 
         self.conn.commit()
 
-    def get_zigbee_knob_config(self) -> dict:
+    def register_zigbee_device(self, topic: str, actions=()) -> tuple[dict, bool]:
+        """Create an actual MQTT device and grow its stable action buttons."""
+        if not topic.startswith(config.zigbee.base_topic + "/"):
+            raise ValueError("Invalid Zigbee device topic")
+        for action in actions:
+            validate_action(action)
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT switch_id, actions FROM zigbee_devices WHERE topic = %s;", (topic,))
+            row = cur.fetchone()
+            created = row is None
+            if created:
+                switch_id, mapping = zigbee_device_id(topic), {}
+                cur.execute(
+                    "INSERT INTO switches (id, name, buttons) VALUES (%s, %s, 0);",
+                    (switch_id, topic[len(config.zigbee.base_topic) + 1:]),
+                )
+                cur.execute(
+                    "INSERT INTO zigbee_devices (switch_id, topic) VALUES (%s, %s);",
+                    (switch_id, topic),
+                )
+            else:
+                switch_id, mapping = row
+            changed = created
+            for action in actions:
+                if not action or action in mapping:
+                    continue
+                group = KNOB_ACTION_BUTTONS.get(action)
+                alias = next((button for existing, button in mapping.items()
+                              if group is not None and KNOB_ACTION_BUTTONS.get(existing) == group), None)
+                if alias is None:
+                    count = len(set(mapping.values()))
+                    if count >= 24:
+                        continue
+                    alias = chr(97 + count)
+                    cur.execute(
+                        "INSERT INTO buttons (switch_id, button_id, type) VALUES (%s, %s, 0) ON CONFLICT DO NOTHING;",
+                        (switch_id, alias),
+                    )
+                mapping[action] = alias
+                changed = True
+            if changed:
+                cur.execute("UPDATE zigbee_devices SET actions = %s WHERE switch_id = %s;", (json.dumps(mapping), switch_id))
+                cur.execute("UPDATE switches SET buttons = %s WHERE id = %s;", (len(set(mapping.values())), switch_id))
+                self._registry_cache.clear()
+            return self._zigbee_device_config(switch_id, topic, mapping), changed
+
+    def _zigbee_device_config(self, switch_id: int, topic: str, actions: dict) -> dict:
         with self.conn.cursor() as cur:
             cur.execute(
                 "SELECT button_id, command FROM zigbee_knob_commands WHERE switch_id = %s;",
-                (KNOB_SWITCH_ID,),
+                (switch_id,),
             )
             commands = dict(cur.fetchall())
-        return {
-            "enabled": config.zigbee.tyua_knob.enabled,
-            "switch_id": KNOB_SWITCH_ID,
-            "buttons": {
-                button: {"label": label, "command": commands.get(button, default)}
-                for button, (label, default) in KNOB_BUTTONS.items()
-            },
-        }
+        buttons = {}
+        for action, button in actions.items():
+            label, default = KNOB_BUTTONS.get(KNOB_ACTION_BUTTONS.get(action), (action.replace("_", " "), "toggle"))
+            buttons[button] = {"label": label, "command": commands.get(button, default)}
+        return {"switch_id": switch_id, "topic": topic, "actions": actions, "buttons": buttons}
 
-    def set_zigbee_knob_command(self, button_id: str, command: str):
-        if (
-            not config.zigbee.tyua_knob.enabled
-            or button_id not in KNOB_BUTTONS
-            or command not in KNOB_COMMANDS
-            or KNOB_SWITCH_ID not in self.get_switches()
-        ):
-            raise ValueError("Invalid Zigbee knob command")
+    def get_zigbee_devices(self) -> dict:
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT switch_id, topic, actions FROM zigbee_devices;")
+            devices = cur.fetchall()
+        return {switch_id: self._zigbee_device_config(switch_id, topic, actions)
+                for switch_id, topic, actions in devices}
+
+    def set_zigbee_command(self, switch_id: int, button_id: str, command: str):
+        device = self.get_zigbee_devices().get(switch_id)
+        if not config.zigbee.enabled or device is None or button_id not in device["buttons"] or command not in KNOB_COMMANDS:
+            raise ValueError("Invalid Zigbee device command")
         with self.conn.cursor() as cur:
             cur.execute(
                 """
@@ -754,9 +817,8 @@ class ConnectionManager:
                 VALUES (%s, %s, %s)
                 ON CONFLICT (switch_id, button_id) DO UPDATE SET command = EXCLUDED.command;
                 """,
-                (KNOB_SWITCH_ID, button_id, command),
+                (switch_id, button_id, command),
             )
-        self.conn.commit()
 
     def get_buttons(self, switch_id: int) -> dict[str, int]:
         with self.conn.cursor() as cur:
@@ -1083,15 +1145,15 @@ def get_all_buttons(
     return JSONResponse(content=buttons)
 
 
-@connection_router.get("/get_zigbee_knob_config")
-def get_zigbee_knob_config(
+@connection_router.get("/get_zigbee_devices")
+def get_zigbee_devices(
     request: Request,
     access_token: str | None = Cookie(None),
 ):
     user = auth.get_current_user(auth.bearer_token_from_header(request.headers.get("authorization")) or access_token)
     if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
-    return connection_manager.get_zigbee_knob_config()
+    return connection_manager.get_zigbee_devices()
 
 
 @connection_router.post("/remove_connection")

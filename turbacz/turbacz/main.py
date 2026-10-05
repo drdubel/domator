@@ -622,10 +622,10 @@ async def websocket_rcm(websocket: WebSocket):
         async for cmd in ws_manager.messages(websocket):
             logger.debug("putting %s in command queue", cmd)
 
-            if cmd.get("type") == "zigbee_knob_command":
-                await db_call(connection_manager.set_zigbee_knob_command, cmd["button_id"], cmd["command"])
+            if cmd.get("type") == "zigbee_command":
+                await db_call(connection_manager.set_zigbee_command, int(cmd["switch_id"]), cmd["button_id"], cmd["command"])
                 await ws_manager.broadcast(
-                    {"type": "zigbee_knob_config", **await db_call(connection_manager.get_zigbee_knob_config)},
+                    {"type": "zigbee_devices", "devices": await db_call(connection_manager.get_zigbee_devices)},
                     "/rcm/ws/",
                 )
                 continue

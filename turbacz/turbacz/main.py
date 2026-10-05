@@ -710,7 +710,7 @@ def start():
     import uvicorn
 
     logging.basicConfig(level=logging.INFO)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpx2").setLevel(logging.WARNING)
     uvicorn.run(
         app,
         host=config.server.host,

@@ -4,7 +4,7 @@ from threading import RLock
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-import httpx
+import httpx2
 import pytest
 
 from turbacz import metrics_client
@@ -22,12 +22,12 @@ async def test_mesh_reports_are_scraped_while_pool_only_serves_history(applicati
     def respond(request):
         requests.append(request)
         if request.method == "POST":
-            return httpx.Response(204)
-        return httpx.Response(200, json={"data": {"result": []}})
+            return httpx2.Response(204)
+        return httpx2.Response(200, json={"data": {"result": []}})
 
-    pool = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    pool = httpx2.AsyncClient(transport=httpx2.MockTransport(respond))
     factory = MagicMock(return_value=pool)
-    monkeypatch.setattr(metrics_client.httpx, "AsyncClient", factory)
+    monkeypatch.setattr(metrics_client.httpx2, "AsyncClient", factory)
     monkeypatch.setattr(application.main.mqtt, "mqtt_startup", AsyncMock())
     monkeypatch.setattr(application.main.mqtt, "mqtt_shutdown", AsyncMock())
     monkeypatch.setattr(broker, "connection_manager", application.cm)
@@ -65,10 +65,10 @@ async def test_mesh_reports_are_scraped_while_pool_only_serves_history(applicati
 
 
 async def test_pool_closes_when_mqtt_startup_fails(application, monkeypatch):
-    pool = httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda r: httpx.Response(204))
+    pool = httpx2.AsyncClient(
+        transport=httpx2.MockTransport(lambda r: httpx2.Response(204))
     )
-    monkeypatch.setattr(metrics_client.httpx, "AsyncClient", lambda: pool)
+    monkeypatch.setattr(metrics_client.httpx2, "AsyncClient", lambda: pool)
     monkeypatch.setattr(
         application.main.mqtt, "mqtt_startup", AsyncMock(side_effect=OSError("offline"))
     )

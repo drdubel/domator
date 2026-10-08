@@ -11,7 +11,7 @@ services:
       postgres:
         condition: service_started
       mosquitto:
-        condition: service_started
+        condition: service_healthy
       victoriametrics:
         condition: service_started
     environment:
@@ -44,10 +44,27 @@ services:
       - "${DOMATOR_MQTT_BIND:-127.0.0.1}:1883:1883"
       - "127.0.0.1:9883:9883"
     volumes:
-      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
-      - ./mosquitto.acl:/mosquitto/config/mosquitto.acl
-      - ./mosquitto.passwd:/mosquitto/config/mosquitto.passwd
+      - type: bind
+        source: ./mosquitto.conf
+        target: /mosquitto/config/mosquitto.conf
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./mosquitto.acl
+        target: /mosquitto/config/mosquitto.acl
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./mosquitto.passwd
+        target: /mosquitto/config/mosquitto.passwd
+        bind:
+          create_host_path: false
       - mosquitto_data:/mosquitto/data
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "1883"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
     restart: unless-stopped
 
   homeassistant:
@@ -56,7 +73,7 @@ services:
       - "127.0.0.1:8123:8123"
     depends_on:
       mosquitto:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - ./homeassistant:/config
       - /etc/localtime:/etc/localtime:ro

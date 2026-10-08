@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import httpx2
 import jwt
 import pytest
 from fastapi import HTTPException
@@ -76,6 +77,40 @@ def application(monkeypatch, tmp_path, cm, client):
     return SimpleNamespace(
         main=main, auth=auth, http=http, token=token, cm=cm, mqtt=client
     )
+
+
+@pytest.mark.parametrize("path,method", [
+    ("/login", "authorize_redirect"),
+    ("/auth", "authorize_access_token"),
+])
+@pytest.mark.parametrize("error_type", [httpx2.ConnectTimeout, httpx2.ConnectError])
+def test_oidc_network_failure_is_unavailable(application, monkeypatch, caplog, path, method, error_type):
+    async def unavailable(*args, **kwargs):
+        raise error_type("sensitive-code-must-not-leak")
+
+    monkeypatch.setattr(application.auth.oauth.google, method, unavailable)
+    response = application.http.get(path, follow_redirects=False)
+    assert response.status_code == 503
+    assert "Login temporarily unavailable" in response.text
+    assert response.headers["cache-control"] == "no-store"
+    assert "access_token=" not in response.headers.get("set-cookie", "")
+    assert "sensitive-code-must-not-leak" not in response.text + caplog.text
+
+
+def test_oidc_network_failure_during_client_auth_fallback(application, monkeypatch):
+    monkeypatch.setattr(config.oidc, "token_endpoint_auth_method", None)
+    calls = 0
+
+    async def unavailable(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise application.auth.OAuthError(error="invalid_client")
+        raise httpx2.ConnectTimeout("unreachable")
+
+    monkeypatch.setattr(application.auth.oauth.google, "authorize_access_token", unavailable)
+    assert application.http.get("/auth", follow_redirects=False).status_code == 503
+    assert calls == 2
 
 
 def test_http_errors_and_authentication_status(application):

@@ -2,6 +2,13 @@
 set -e
 umask 077
 
+if [ -d mosquitto.passwd ]; then
+    echo "mosquitto.passwd is a directory, not a password file."
+    echo "For an existing installation, run: python3 repair-mqtt.py"
+    echo "For a new installation, remove the empty directory with rmdir mosquitto.passwd and retry."
+    exit 1
+fi
+
 if [ -e turbacz.toml ] || [ -e .env ]; then
     echo "Existing configuration found. Edit it in place; setup will not overwrite live secrets."
     exit 1

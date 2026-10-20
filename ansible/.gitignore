@@ -1,0 +1,5 @@
+# The repository root ignores secrets*; this one is encrypted with sops.
+!host_vars/*/secrets.sops.yml
+build/
+__pycache__/
+.venv/

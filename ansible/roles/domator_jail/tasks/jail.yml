@@ -1,0 +1,121 @@
+- name: Jail timezone
+  ansible.builtin.copy:
+    src: "/usr/share/zoneinfo/{{ domator_timezone }}"
+    dest: "{{ dj_path }}/etc/localtime"
+    remote_src: true
+    mode: "0444"
+
+- name: Jail resolv.conf
+  ansible.builtin.copy:
+    dest: "{{ dj_path }}/etc/resolv.conf"
+    content: |
+      # {{ ansible_managed }}
+      {% for ns in domator_dns %}
+      nameserver {{ ns }}
+      {% endfor %}
+    mode: "0644"
+
+- name: Jail rc.conf
+  community.general.sysrc:
+    path: "{{ dj_path }}/etc/rc.conf"
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+  loop: "{{ {'hostname': dj_name ~ '.virgo.dom.dry.pl', 'sendmail_enable': 'NONE',
+             'syslogd_flags': '-ss', 'clear_tmp_enable': 'YES'} | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+# FreeBSD-ports-kmods targets newer OSVERSIONs than this -STABLE world and
+# stops pkg at a prompt (as on the host).
+- name: Package repositories of the jail
+  ansible.builtin.copy:
+    dest: "{{ dj_path }}/usr/local/etc/pkg/repos/FreeBSD.conf"
+    content: |
+      # {{ ansible_managed }}
+      FreeBSD-ports-kmods: { enabled: no }
+    mode: "0644"
+
+- name: Check whether the jail runs
+  ansible.builtin.command: jls -j {{ dj_name }} jid
+  register: dj_jls
+  changed_when: false
+  failed_when: false
+
+# service jail start exits 0 even when the jail fails to come up.
+- name: Start the jail
+  ansible.builtin.command: service jail start {{ dj_name }}
+  when: dj_jls.rc != 0
+
+- name: Jail is running
+  block:
+    - name: Check the jail after start
+      ansible.builtin.command: jls -j {{ dj_name }} jid
+      changed_when: false
+  rescue:
+    - name: Read the jail console log
+      ansible.builtin.command: tail -n 20 /var/log/jail_console_{{ dj_name }}.log
+      register: dj_console
+      changed_when: false
+      failed_when: false
+
+    - name: Jail failed to start
+      ansible.builtin.fail:
+        msg: "{{ dj_console.stdout_lines }}"
+
+- name: Jail definition changed while running
+  ansible.builtin.debug:
+    msg: "/etc/jail.conf.d/{{ dj_name }}.conf changed: takes effect after doas service jail restart {{ dj_name }}"
+  when: dj_jail_conf is changed and dj_jls.rc == 0
+
+- name: Jail reaches the internet
+  ansible.builtin.command: jexec {{ dj_name }} fetch -qo /dev/null https://pkg.FreeBSD.org/
+  register: dj_net_check
+  retries: 5
+  delay: 3
+  until: dj_net_check.rc == 0
+  changed_when: false
+
+- name: Packages in the jail
+  community.general.pkgng:
+    name: "{{ domator_jail_pkgs }}"
+    jail: "{{ dj_name }}"
+    state: present
+
+- name: Read the jail's accounts
+  ansible.builtin.command: "jexec {{ dj_name }} sh -c 'cut -d: -f1 /etc/group; echo --; cut -d: -f1 /etc/passwd'"
+  register: dj_accounts
+  changed_when: false
+
+- name: Groups in the jail
+  ansible.builtin.command: jexec {{ dj_name }} pw groupadd {{ item.name }} -g {{ item.gid }}
+  loop: "{{ [domator_group] + domator_admins }}"   # admins get a group of their own name
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.name not in dj_accounts.stdout_lines[:dj_accounts.stdout_lines.index('--')]
+
+- name: Service user in the jail
+  ansible.builtin.command: >-
+    jexec {{ dj_name }} pw useradd {{ dj_name }} -u {{ dj_uid }} -g {{ domator_group.name }}
+    -m -d {{ dj_home }} -s /bin/sh -c "domator {{ dj_name }}"
+  when: dj_name not in dj_accounts.stdout_lines[dj_accounts.stdout_lines.index('--') + 1:]
+
+- name: Admins in the jail
+  ansible.builtin.command: >-
+    jexec {{ dj_name }} pw useradd {{ item.name }} -u {{ item.uid }} -g {{ item.name }}
+    -G wheel,{{ domator_group.name }} -m -s /bin/sh -c "domator admin"
+  loop: "{{ domator_admins }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.name not in dj_accounts.stdout_lines[dj_accounts.stdout_lines.index('--') + 1:]
+
+# Admins are root in the jail; the service user may only restart its service
+# (the deployer runs as that user).
+- name: doas.conf in the jail
+  ansible.builtin.copy:
+    dest: "{{ dj_path }}/usr/local/etc/doas.conf"
+    content: |
+      # {{ ansible_managed }}
+      permit nopass :wheel
+      permit nopass {{ dj_name }} as root cmd service args domator restart
+    mode: "0644"
+    validate: "doas -C %s"

@@ -1,0 +1,24 @@
+# {{ ansible_managed }}
+# Rules for the "{{ dj_name }}" jail. Hooked from /etc/pf.conf with
+# nat-anchor / anchor / load anchor "{{ dj_name }}" (virgo: pf_anchors).
+
+ext_if    = "{{ domator_pf_ext_if }}"
+jail_if   = "{{ dj_epair }}a"
+jail_ip   = "{{ dj_jail_ip }}"
+gw_ip     = "{{ dj_gw_ip }}"
+home_nets = "{{ domator_home_nets | join(', ') }}"
+
+nat on $ext_if inet from $jail_ip to any -> ($ext_if)
+
+# On virgo the jail reaches PostgreSQL and VictoriaMetrics (heating history)
+# on its own gateway, and the MQTT broker; nothing else at home.
+pass in quick on $jail_if inet proto icmp from $jail_ip to $gw_ip icmp-type echoreq keep state
+pass in quick on $jail_if inet proto tcp from $jail_ip to $gw_ip port { {{ domator_pg_port }}, {{ domator_vm_port }} } keep state
+pass in quick on $jail_if inet proto tcp from $jail_ip to {{ domator_mqtt_host }} port {{ domator_mqtt_port }} keep state
+# `self` is expanded at load time, possibly with a stale PPPoE address: also
+# list $gw_ip and the dynamic ($ext_if).
+block in log quick on $jail_if inet from $jail_ip to { self, ($ext_if), $gw_ip, $home_nets }
+pass in quick on $jail_if inet from $jail_ip to any keep state
+
+# nginx (app, deploy hook) and VictoriaMetrics (scrape) on virgo.
+pass out quick on $jail_if inet proto tcp from $gw_ip to $jail_ip port { {{ domator_app_port }}, {{ domator_hook_port }} } keep state

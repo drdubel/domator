@@ -1,0 +1,26 @@
+- name: Instance definition
+  ansible.builtin.assert:
+    that:
+      - dj_name is match('^[a-z][a-z0-9]*$')
+      - dj_branch | length > 0
+      - dj_uid | int >= 1000
+      - domator.net | int >= 51 and domator.net | int <= 99
+      - dj_domain is match('^[a-z0-9.-]+$')
+    fail_msg: "bad entry in domator_instances: {{ domator }}"
+    quiet: true
+
+# Names only: the values never reach the output.
+- name: Secrets of this instance
+  ansible.builtin.set_fact:
+    dj_missing_secrets: >-
+      {{ domator_secret_keys | reject('in', (domator_secrets[dj_name] | default({})).keys()) | list
+         + (['deploy_token (>= 32 characters)']
+            if (domator_secrets[dj_name].deploy_token | default('') | length) < 32 else []) }}
+  no_log: true
+
+- name: Require the secrets
+  ansible.builtin.fail:
+    msg: >-
+      secret_domator.{{ dj_name }} in host_vars/virgo/secrets.sops.yml lacks:
+      {{ dj_missing_secrets | unique | join(', ') }} (mise run secrets; README).
+  when: dj_missing_secrets | length > 0

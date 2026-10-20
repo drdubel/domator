@@ -1,0 +1,42 @@
+- name: Anchor directory
+  ansible.builtin.file:
+    path: "{{ dj_anchor_file | dirname }}"
+    state: directory
+    mode: "0755"
+
+- name: Anchor rules
+  ansible.builtin.template:
+    src: pf-anchor.j2
+    dest: "{{ dj_anchor_file }}"
+    mode: "0600"
+    validate: "pfctl -a {{ dj_name }} -nf %s"
+  register: dj_anchor
+
+- name: Read main pf.conf
+  ansible.builtin.slurp:
+    src: /etc/pf.conf
+  register: dj_pf_conf
+
+- name: Check that pf.conf hooks the anchor
+  ansible.builtin.set_fact:
+    dj_pf_hooked: >-
+      {{ (dj_pf_conf.content | b64decode) is search('(?m)^\s*nat-anchor\s+"' ~ dj_name ~ '"')
+         and (dj_pf_conf.content | b64decode) is search('(?m)^\s*anchor\s+"' ~ dj_name ~ '"')
+         and (dj_pf_conf.content | b64decode) is search('(?m)^\s*load\s+anchor\s+"' ~ dj_name ~ '"') }}
+
+# The router's main ruleset belongs to virgo: add {name: <jail>} to its
+# pf_anchors, deploy virgo's pf role and load pf.conf by hand.
+- name: Require the anchor hook in pf.conf
+  ansible.builtin.fail:
+    msg: >-
+      /etc/pf.conf does not hook the "{{ dj_name }}" anchor. In ~/git/dom/virgo add
+      {name: {{ dj_name }}} to pf_anchors, deploy the pf role, then
+      pfctl -nf /etc/pf.conf && pfctl -f /etc/pf.conf. Re-run afterwards.
+  when:
+    - domator_pf_require_hook | bool
+    - not dj_pf_hooked | bool
+
+# Replaces only this anchor's rules; the main ruleset and its states stay.
+- name: Load the anchor
+  ansible.builtin.command: pfctl -a {{ dj_name }} -f {{ dj_anchor_file }}
+  when: dj_anchor is changed

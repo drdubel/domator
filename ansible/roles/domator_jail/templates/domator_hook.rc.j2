@@ -1,0 +1,29 @@
+#!/bin/sh
+# {{ ansible_managed }}
+# PROVIDE: domator_hook
+# REQUIRE: LOGIN NETWORKING
+# KEYWORD: shutdown
+#
+# Deploy hook on {{ dj_jail_ip }}:{{ domator_hook_port }}; nginx on virgo publishes it as
+# https://{{ dj_domain }}/_deploy for GitHub Actions.
+
+. /etc/rc.subr
+
+name=domator_hook
+rcvar=domator_hook_enable
+load_rc_config $name
+: ${domator_hook_enable:="NO"}
+
+domator_hook_user="{{ dj_name }}"
+domator_hook_chdir="{{ dj_home }}"
+pidfile="/var/run/domator/hook.pid"
+command="/usr/sbin/daemon"
+command_args="-f -P ${pidfile} -R 5 -o /var/log/domator/hook.log {{ domator_python }} /usr/local/libexec/domator-deploy serve"
+start_precmd="domator_hook_precmd"
+
+domator_hook_precmd()
+{
+	install -d -o {{ dj_name }} -g {{ domator_group.name }} -m 0755 /var/run/domator
+}
+
+run_rc_command "$1"

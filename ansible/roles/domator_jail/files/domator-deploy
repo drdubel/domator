@@ -1,0 +1,281 @@
+#!/usr/local/bin/python3.14
+"""Deploy one domator instance inside its jail.
+
+    domator-deploy serve    HTTP hook behind nginx: POST /_deploy queues a
+                            deployment, GET /_deploy/status reports the last one
+    domator-deploy deploy   queue a deployment and run it now (Ansible, by hand)
+    domator-deploy run      run queued deployments, one at a time
+
+A deployment fetches the tip of the configured branch into a bare mirror,
+builds releases/<sha> (git archive + uv sync), points `current` at it,
+restarts the service and checks it over HTTP. If the check fails, `current`
+goes back to the previous release and the service is restarted again.
+
+Runs as the application user; only the restart goes through doas. The JSON
+config is /usr/local/etc/domator/deploy.json (--config to override).
+"""
+import argparse
+import fcntl
+import hmac
+import http.server
+import io
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import time
+import urllib.error
+import urllib.request
+
+DEFAULT_CONFIG = "/usr/local/etc/domator/deploy.json"
+SHA = re.compile(r"^[0-9a-f]{40}$")
+MAX_BODY = 4096
+
+
+class Deployer:
+    def __init__(self, config):
+        self.cfg = config
+        self.base = config["base"]
+        self.state = os.path.join(self.base, "state")
+        self.releases = os.path.join(self.base, "releases")
+        self.mirror = os.path.join(self.base, "repo.git")
+        self.current = os.path.join(self.base, "current")
+        os.makedirs(self.state, exist_ok=True)
+        os.makedirs(self.releases, exist_ok=True)
+
+    # -- state files ---------------------------------------------------------
+    def path(self, name):
+        return os.path.join(self.state, name)
+
+    def write_json(self, name, data):
+        tmp = self.path(f".{name}.tmp")
+        with open(tmp, "w") as fh:
+            json.dump(data, fh)
+            fh.write("\n")
+        os.replace(tmp, self.path(name))
+
+    def status(self, state, sha="", requested="", message=""):
+        self.write_json("status.json", {
+            "name": self.cfg["name"], "branch": self.cfg["branch"], "state": state,
+            "sha": sha, "requested": requested, "message": message,
+            "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        })
+        log(f"{state} {sha[:12]} {message}".rstrip())
+
+    def queue(self, requested=""):
+        self.write_json("pending.json", {"requested": requested})
+
+    # -- deployment ----------------------------------------------------------
+    def run(self):
+        """Drain the queue. Callers wait on the lock, so a request queued while
+        another deployment runs is picked up by the next one."""
+        with open(self.path("lock"), "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            ok = True
+            while os.path.exists(self.path("pending.json")):
+                with open(self.path("pending.json")) as fh:
+                    requested = json.load(fh).get("requested", "")
+                os.unlink(self.path("pending.json"))
+                ok = self.deploy(requested)
+            return ok
+
+    def deploy(self, requested):
+        sha = ""
+        try:
+            sha = self.fetch()
+            self.status("running", sha, requested)
+            if self.deployed() == sha:
+                self.status("ok", sha, requested, "already deployed")
+                return True
+            release = self.build(sha)
+        except (subprocess.CalledProcessError, OSError) as e:
+            self.status("failed", sha, requested, f"build: {e}")
+            return False
+        previous = self.deployed()
+        self.switch(release)
+        if self.restart() and self.healthy():
+            self.prune(keep={sha, previous})
+            self.status("ok", sha, requested)
+            return True
+        if previous:
+            self.switch(os.path.join(self.releases, previous))
+            self.restart()
+            self.status("rolled_back", sha, requested, f"health check failed, back on {previous[:12]}")
+        else:
+            self.status("failed", sha, requested, "health check failed, no previous release")
+        return False
+
+    def git(self, *args, **kw):
+        return subprocess.run(["git", f"--git-dir={self.mirror}", *args], check=True,
+                              capture_output=True, **kw).stdout
+
+    def fetch(self):
+        if not os.path.isdir(self.mirror):
+            subprocess.run(["git", "init", "--quiet", "--bare", self.mirror], check=True)
+        branch = self.cfg["branch"]
+        self.git("fetch", "--quiet", "--no-tags", self.cfg["repo"], f"+refs/heads/{branch}:refs/heads/{branch}")
+        return self.git("rev-parse", f"refs/heads/{branch}", text=True).strip()
+
+    def deployed(self):
+        try:
+            return os.path.basename(os.readlink(self.current))
+        except OSError:
+            return ""
+
+    def build(self, sha):
+        release = os.path.join(self.releases, sha)
+        done = os.path.join(release, ".complete")
+        if os.path.exists(done):
+            return release
+        # Built in place: the virtualenv's scripts carry absolute paths.
+        shutil.rmtree(release, ignore_errors=True)
+        os.makedirs(release)
+        try:
+            tree = self.git("archive", "--format=tar", f"{sha}:{self.cfg['subdir']}")
+            with tarfile.open(fileobj=io.BytesIO(tree)) as tar:
+                tar.extractall(release, filter="data")
+            os.symlink(self.cfg["config"], os.path.join(release, "turbacz.toml"))
+            env = os.environ | {"UV_PYTHON_DOWNLOADS": "never",
+                                "UV_CACHE_DIR": os.path.join(self.base, ".cache", "uv")}
+            result = subprocess.run([self.cfg.get("uv", "uv"), "sync", "--frozen", "--no-dev",
+                                     "--python", self.cfg["python"]],
+                                    cwd=release, env=env, capture_output=True, text=True)
+            if result.returncode:
+                log(result.stdout + result.stderr)
+                raise subprocess.CalledProcessError(result.returncode, "uv sync")
+        except BaseException:
+            shutil.rmtree(release, ignore_errors=True)
+            raise
+        open(done, "w").close()
+        return release
+
+    def switch(self, release):
+        tmp = self.current + ".new"
+        if os.path.lexists(tmp):
+            os.unlink(tmp)
+        os.symlink(release, tmp)
+        os.replace(tmp, self.current)
+
+    def restart(self):
+        result = subprocess.run(self.cfg["restart"], capture_output=True, text=True)
+        if result.returncode:
+            log(f"restart failed: {result.stdout}{result.stderr}".strip())
+        return result.returncode == 0
+
+    def healthy(self):
+        deadline = time.monotonic() + self.cfg.get("health_timeout", 90)
+        request = urllib.request.Request(self.cfg["health_url"], headers={"Host": self.cfg["health_host"]})
+        while time.monotonic() < deadline:
+            try:
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    if response.status < 500:
+                        return True
+            except urllib.error.HTTPError as e:
+                if e.code < 500:  # 401/403/404 still prove the app answers
+                    return True
+            except OSError:
+                pass
+            time.sleep(self.cfg.get("health_interval", 2))
+        return False
+
+    def prune(self, keep):
+        releases = sorted((e for e in os.scandir(self.releases) if e.is_dir() and SHA.match(e.name)),
+                          key=lambda e: e.stat().st_mtime, reverse=True)
+        for entry in releases[self.cfg.get("keep", 3):]:
+            if entry.name not in keep:
+                shutil.rmtree(entry.path, ignore_errors=True)
+
+
+def log(message):
+    print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} domator-deploy: {message}", file=sys.stderr, flush=True)
+
+
+def serve(config, config_path):
+    deployer = Deployer(config)
+    with open(config["token_file"]) as fh:
+        token = fh.read().strip()
+    if len(token) < 32:
+        sys.exit(f"{config['token_file']}: token missing or shorter than 32 characters")
+
+    class Hook(http.server.BaseHTTPRequestHandler):
+        server_version = "domator-deploy"
+        sys_version = ""
+
+        def reply(self, code, body):
+            data = json.dumps(body).encode() + b"\n"
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def authorized(self):
+            given = self.headers.get("Authorization", "")
+            if hmac.compare_digest(given.encode(), f"Bearer {token}".encode()):
+                return True
+            self.reply(401, {"error": "unauthorized"})
+            return False
+
+        def do_POST(self):
+            if self.path != "/_deploy":
+                return self.reply(404, {"error": "not found"})
+            if not self.authorized():
+                return
+            length = int(self.headers.get("Content-Length") or 0)
+            if length > MAX_BODY:
+                return self.reply(413, {"error": "body too large"})
+            try:
+                body = json.loads(self.rfile.read(length) or b"{}")
+                requested = body.get("sha", "") if isinstance(body, dict) else None
+            except ValueError:
+                requested = None
+            if requested is None or (requested and not SHA.match(requested)):
+                return self.reply(400, {"error": "expected {\"sha\": \"<40 hex>\"}"})
+            deployer.queue(requested)
+            # Detached: the deployment outlives this request and waits for the lock.
+            subprocess.Popen([sys.executable, os.path.abspath(__file__), "--config", config_path, "run"],
+                             start_new_session=True, stdin=subprocess.DEVNULL)
+            self.reply(202, {"queued": requested or config["branch"]})
+
+        def do_GET(self):
+            if self.path != "/_deploy/status":
+                return self.reply(404, {"error": "not found"})
+            if not self.authorized():
+                return
+            try:
+                with open(deployer.path("status.json")) as fh:
+                    self.reply(200, json.load(fh))
+            except FileNotFoundError:
+                self.reply(200, {"state": "none"})
+
+        def log_message(self, fmt, *args):
+            log(f"{self.headers.get('X-Real-IP') or self.client_address[0]} {fmt % args}")
+
+    server = http.server.ThreadingHTTPServer((config["listen"], config["port"]), Hook)
+    log("listening on %s:%d" % server.server_address[:2])
+    server.serve_forever()
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--config", default=DEFAULT_CONFIG)
+    parser.add_argument("command", choices=["serve", "deploy", "run"])
+    args = parser.parse_args(argv)
+    with open(args.config) as fh:
+        config = json.load(fh)
+    # Started by rc or jexec -U, HOME may still be root's: git and uv read it.
+    os.environ["HOME"] = config["base"]
+    if args.command == "serve":
+        serve(config, args.config)
+        return 0
+    deployer = Deployer(config)
+    if args.command == "deploy":
+        deployer.queue()
+    return 0 if deployer.run() else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

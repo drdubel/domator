@@ -1,0 +1,36 @@
+- name: "Facts of {{ domator.name }}"
+  ansible.builtin.set_fact:
+    dj_name: "{{ domator.name }}"
+    dj_branch: "{{ domator.branch }}"
+    dj_uid: "{{ domator.uid }}"
+    dj_domain: "{{ domator.domain }}"
+    dj_service: "{{ domator.service | default(true) | bool }}"
+    dj_db: "{{ domator.db | default(domator.name) }}"
+    dj_labels: "{{ domator.labels | default({}) }}"
+    dj_ha: "{{ domator.ha | default(false) | bool }}"
+    dj_epair: "epair{{ domator.net }}"
+    dj_gw_ip: "192.168.{{ domator.net }}.10"
+    dj_jail_ip: "192.168.{{ domator.net }}.11"
+    dj_path: "{{ domator_jails_root }}/{{ domator.name }}"
+    dj_home: "/home/{{ domator.name }}"
+    dj_anchor_file: "/etc/pf.anchors/{{ domator.name }}"
+
+# Read by /usr/local/libexec/domator-deploy (deploy.json).
+- name: "Deployer configuration of {{ domator.name }}"
+  ansible.builtin.set_fact:
+    dj_deploy_config:
+      name: "{{ dj_name }}"
+      branch: "{{ dj_branch }}"
+      repo: "{{ domator_repo }}"
+      subdir: "{{ domator_subdir }}"
+      base: "{{ dj_home }}"
+      python: "{{ domator_python }}"
+      uv: /usr/local/bin/uv
+      config: /usr/local/etc/domator/turbacz.toml
+      restart: [/usr/local/bin/doas, service, domator, restart]
+      health_url: "http://{{ dj_jail_ip }}:{{ domator_app_port }}/login"
+      health_host: "{{ dj_domain }}"
+      keep: 3
+      token_file: /usr/local/etc/domator/deploy.token
+      listen: "{{ dj_jail_ip }}"
+      port: "{{ domator_hook_port | int }}"

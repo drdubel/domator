@@ -1,0 +1,80 @@
+# One jail per domator instance on virgo. The role is applied once per entry of
+# domator_instances (site.yml loops with loop_var: domator):
+#   name     jail, service user, database and role, pf anchor
+#   branch   git branch deployed into the jail
+#   uid      service user inside the jail (turbacz keeps its host uid 1432)
+#   net      192.168.<net>.0/24 on epair<net>: host .10, jail .11
+#   domain   public vhost; GitHub Actions calls https://<domain>/_deploy
+#   service  false = prepare only: no app, hook, vhost or scrape (cutover)
+#   db       database name (default: name)
+#   labels   [monitoring] labels and scrape labels, e.g. {apartment: "59"}
+#   ha       [ha] enabled
+domator_instances: []
+
+domator_repo: https://github.com/drdubel/domator.git
+domator_subdir: turbacz
+domator_group: {name: domowe, gid: 1005}
+# Full access: own account in every jail, wheel + doas there, the doas-only
+# /usr/local/sbin/domator-jail wrapper on the host, and membership in every
+# instance's database role. uid/gid match virgo's accounts.
+domator_admins:
+  - {name: dry, uid: 1000, gid: 1000}
+  - {name: antek, uid: 1431, gid: 1432}
+
+# Jail root filesystems are clones of the host's world (dom.virgo.jailbase).
+domator_jails_root: /usr/local/jails
+domator_jexec: /usr/sbin/jexec
+domator_devfs_ruleset: 5          # devfsrules_jail_vnet
+domator_dns: [1.1.1.1, 1.0.0.1]
+domator_timezone: Europe/Warsaw
+
+# Host services the jails use, over their own epair. PostgreSQL must listen on
+# every 192.168.<net>.10 (virgo: postgresql_listen) and pg_hba must allow the
+# jail's address (postgresql_hba_extra).
+domator_pg_port: 5432
+domator_mqtt_host: 192.168.3.10
+domator_mqtt_port: 1883
+domator_vm_port: 8428
+
+domator_pf_ext_if: ppp0
+domator_pf_require_hook: true
+# The jails may reach the internet but nothing else at home.
+domator_home_nets: [192.168.3.0/24, 192.168.4.0/24, 192.168.5.0/24, 192.168.42.0/24]
+
+domator_app_port: 8000
+domator_hook_port: 9000
+domator_scrape_interval: 15s
+# Other targets of the scrape job (not in a jail here), e.g. flat 58.
+domator_scrape_extra: []
+
+domator_python: /usr/local/bin/python3.14
+domator_jail_pkgs:
+  - pkg
+  - ca_root_nss
+  - doas
+  - git
+  - python314
+  - uv
+  - postgresql18-client   # libpq for psycopg, psql for checks
+  # PyPI has no FreeBSD wheels: pydantic-core, cryptography (Rust), uvloop
+  # (bundled libuv, autotools), psutil (C) build from source.
+  - rust
+  - pkgconf
+  - gmake
+  - autoconf
+  - automake
+  - libtool
+
+# Per-instance secrets from secrets.sops.yml (secret_domator.<name>); only the
+# operator edits them (mise run secrets). Required keys:
+domator_secret_keys:
+  - authorized          # list of e-mail addresses allowed to log in
+  - jwt_secret
+  - session_secret
+  - mqtt_password
+  - oidc_client_id
+  - oidc_client_secret
+  - psql_password       # the database role's password (set in PostgreSQL by hand)
+  - firmware_token      # X-Firmware-Token, = CONFIG_OTA_TOKEN in the firmware
+  - deploy_token        # >= 32 characters, also the GitHub environment secret
+domator_secrets: "{{ secret_domator | default({}) }}"

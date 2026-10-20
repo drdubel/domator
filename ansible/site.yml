@@ -1,0 +1,23 @@
+# domator on virgo: one jail per instance (README.md). Run after virgo's own
+# playbook (~/git/dom/virgo), whose roles this one reuses.
+- name: domator jails on virgo
+  hosts: virgo
+  tasks:
+    - name: Instances
+      ansible.builtin.include_role:
+        name: domator_jail
+        apply:
+          tags: [jails]
+      loop: "{{ domator_instances }}"
+      loop_control:
+        loop_var: domator
+        label: "{{ domator.name }}"
+      tags: [always]
+
+    - name: Scrape job
+      ansible.builtin.include_role:
+        name: domator_jail
+        tasks_from: scrape
+        apply:
+          tags: [scrape]
+      tags: [always]

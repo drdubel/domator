@@ -1,0 +1,8 @@
+# site.yml includes the role dynamically, so --syntax-check never parses its
+# task files; this imports every task file statically. Never run, only checked.
+- name: Parse domator_jail
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - {ansible.builtin.import_role: {name: domator_jail}, when: false}
+    - {ansible.builtin.import_role: {name: domator_jail, tasks_from: scrape}, when: false}

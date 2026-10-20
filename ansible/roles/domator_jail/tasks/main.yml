@@ -1,0 +1,35 @@
+# One instance (loop_var: domator) of domator_instances.
+- name: Instance facts
+  ansible.builtin.include_tasks:
+    file: facts.yml
+    apply: {tags: [always]}
+  tags: [always]
+
+- name: Preflight
+  ansible.builtin.import_tasks: preflight.yml
+  tags: [always]
+
+- name: Host side (epair, jail root, jail.conf)
+  ansible.builtin.import_tasks: host.yml
+  tags: [host]
+
+- name: Firewall anchor
+  ansible.builtin.import_tasks: pf.yml
+  tags: [pf]
+
+- name: Database and access
+  ansible.builtin.import_tasks: db.yml
+  tags: [db]
+
+- name: Jail, packages and accounts
+  ansible.builtin.import_tasks: jail.yml
+  tags: [jail]
+
+- name: Application, deploy hook
+  ansible.builtin.import_tasks: app.yml
+  tags: [app]
+
+- name: Nginx vhost
+  ansible.builtin.import_tasks: web.yml
+  when: dj_service
+  tags: [web]

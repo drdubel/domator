@@ -1,0 +1,30 @@
+- name: Facts
+  ansible.builtin.include_tasks: "{{ role }}/tasks/facts.yml"
+
+- name: Output directory
+  ansible.builtin.file:
+    path: "{{ out }}/{{ dj_name }}"
+    state: directory
+    mode: "0755"
+
+- name: Templates
+  ansible.builtin.template:
+    src: "{{ role }}/templates/{{ item.src }}"
+    dest: "{{ out }}/{{ dj_name }}/{{ item.dest }}"
+    mode: "0644"
+  loop:
+    - {src: jail.conf.j2, dest: jail.conf}
+    - {src: pf-anchor.j2, dest: pf-anchor}
+    - {src: turbacz.toml.j2, dest: turbacz.toml}
+    - {src: domator.rc.j2, dest: domator.rc}
+    - {src: domator_hook.rc.j2, dest: domator_hook.rc}
+    - {src: domator-jail.sh.j2, dest: domator-jail}
+  vars:
+    dj_secret: "{{ secret_domator[dj_name] }}"
+    domator_secrets: "{{ secret_domator }}"
+
+- name: Deployer configuration
+  ansible.builtin.copy:
+    dest: "{{ out }}/{{ dj_name }}/deploy.json"
+    content: "{{ dj_deploy_config | to_nice_json }}\n"
+    mode: "0644"

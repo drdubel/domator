@@ -1,0 +1,19 @@
+# domator instances on virgo (roles/domator_jail/defaults/main.yml documents
+# the fields). Secrets: secret_domator.<name> in secrets.sops.yml.
+domator_instances:
+  - name: turbacz
+    branch: main
+    uid: 1432                 # the host's turbacz account
+    net: 51
+    domain: turbacz.dry.pl
+    labels: {apartment: "59"}
+    # turbacz still runs on the host (rc.d/turbacz): the jail is prepared but
+    # nothing starts until the cutover (README.md "Cutover").
+    service: false
+  - name: czupel
+    branch: czupel
+    uid: 1434
+    net: 52
+    domain: czupel.dry.pl
+    labels: {apartment: czupel}
+

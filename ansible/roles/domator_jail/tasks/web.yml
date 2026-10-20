@@ -1,0 +1,18 @@
+# file: the same name as the hand-made server.d/<name>.conf it replaces, so
+# there is never a second server block for the domain.
+- name: Vhost through virgo's extension point
+  ansible.builtin.include_role:
+    name: dom.virgo.nginx
+    tasks_from: vhost
+  vars:
+    nginx_vhost:
+      name: "{{ dj_domain }}"
+      file: "{{ dj_name }}"
+      proxy: "http://{{ dj_jail_ip }}:{{ domator_app_port }}"
+      websocket: true
+      locations:
+        # POST /_deploy and GET /_deploy/status (GitHub Actions)
+        - path: /_deploy
+          proxy: "http://{{ dj_jail_ip }}:{{ domator_hook_port }}"
+          websocket: false
+          read_timeout: 30s

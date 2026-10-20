@@ -1,4 +1,6 @@
 _*
+# ...except the tests package marker: tests import from .conftest.
+!turbacz/tests/__init__.py
 *.pyc
 **/__pycache__
 .env

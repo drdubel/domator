@@ -268,6 +268,8 @@ def main(argv=None):
         config = json.load(fh)
     # Started by rc or jexec -U, HOME may still be root's: git and uv read it.
     os.environ["HOME"] = config["base"]
+    # rc's PATH lacks /usr/local, where the jail has git and uv.
+    os.environ["PATH"] = "/usr/local/sbin:/usr/local/bin:" + os.environ.get("PATH", "/usr/sbin:/usr/bin:/sbin:/bin")
     if args.command == "serve":
         serve(config, args.config)
         return 0

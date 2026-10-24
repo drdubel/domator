@@ -153,6 +153,20 @@ class DeployTest(unittest.TestCase):
         self.assertEqual(left, sorted(shas[-2:]))
 
 
+class EnvironmentTest(DeployTest):
+    def test_path_reaches_usr_local_when_started_by_rc(self):
+        # rc starts the deployer with a PATH that lacks /usr/local (git, uv).
+        script = ("import importlib.machinery as m, os, sys\n"
+                  "d = m.SourceFileLoader('d', sys.argv[1]).load_module()\n"
+                  "d.serve = lambda *a: print(os.environ['PATH'])\n"
+                  "d.main(['--config', sys.argv[2], 'serve'])\n")
+        result = subprocess.run([sys.executable, "-c", script, str(DEPLOY), str(self.config)],
+                                capture_output=True, text=True, timeout=10,
+                                env=os.environ | {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(result.stdout.startswith("/usr/local/sbin:/usr/local/bin:"), result.stdout)
+
+
 class HookTest(DeployTest):
     def setUp(self):
         super().setUp()

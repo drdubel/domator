@@ -1,0 +1,11 @@
+# Battery remote only; network credentials remain in the creds partition.
+CONFIG_DOMATOR_BATTERY_ONLY=y
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+# Keep RTC time across deep sleep for heartbeat and long-press timing.
+CONFIG_NEWLIB_TIME_SYSCALL_USE_RTC_HRT=y
+# Suppress routine serial output on every deep-sleep boot.
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+CONFIG_LOG_MAXIMUM_LEVEL_WARN=y
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y

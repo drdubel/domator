@@ -53,7 +53,11 @@
 #define BUTTON_PRESS_OTA_THRESHOLD_MS 4000
 #define BUTTON_PRESS_OTA_INTERVAL_MS 150
 
+#ifdef CONFIG_IDF_TARGET_ESP32C6
+#define NUM_BUTTONS 4
+#else
 #define NUM_BUTTONS 7
+#endif
 #define MAX_QUEUE_SIZE 30
 #define MESH_TX_QUEUE_SIZE 20
 #define LOW_HEAP_THRESHOLD 40000
@@ -65,6 +69,14 @@
 #define ROUTING_MUTEX_TIMEOUT_MS 200
 #define STATS_MUTEX_TIMEOUT_MS 10
 
+// Beetle ESP32-C6 exposes GPIO4..7 in the RTC domain. GPIO0 is battery ADC.
+#ifdef CONFIG_IDF_TARGET_ESP32C6
+#define BUTTON_GPIO_0 4
+#define BUTTON_GPIO_1 5
+#define BUTTON_GPIO_2 6
+#define BUTTON_GPIO_3 7
+#define LED_GPIO 15
+#else
 // GPIO pin definitions for ESP32-C3 switch board
 #define BUTTON_GPIO_0 0
 #define BUTTON_GPIO_1 1
@@ -74,6 +86,7 @@
 #define BUTTON_GPIO_5 6
 #define BUTTON_GPIO_6 7
 #define LED_GPIO 8
+#endif
 
 // GPIO pin definitions for 8-relay board
 #define RELAY_8_PIN_0 32

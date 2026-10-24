@@ -1,0 +1,42 @@
+# The owner role keeps the password set by hand in PostgreSQL (virgo's
+# convention); the same value is psql_password in secrets.sops.yml. The jail
+# connects over TCP to {{ dj_gw_ip }} with scram (virgo: postgresql_listen,
+# postgresql_hba_extra).
+- name: Database through virgo's extension point
+  ansible.builtin.include_role:
+    name: dom.virgo.postgresql
+    tasks_from: database
+  vars:
+    postgresql_db: {name: "{{ dj_db }}", owner: "{{ dj_name }}"}
+
+# Admins log in on the host as themselves (peer over the Unix socket), so their
+# roles have no password; virgo lists them in postgresql_passwordless_roles.
+- name: Admin roles
+  community.postgresql.postgresql_user:
+    name: "{{ item.name }}"
+    role_attr_flags: LOGIN
+    state: present
+    no_password_changes: true
+    login_db: postgres
+    login_user: postgres
+    login_unix_socket: "{{ postgresql_unix_socket | default('/tmp') }}"
+    trust_input: false
+  loop: "{{ domator_admins }}"
+  loop_control:
+    label: "{{ item.name }}"
+  become: true
+  become_user: root
+
+# Membership in the owner role: everything the application may do, including
+# DDL on its tables (SET ROLE {{ dj_name }} for objects that must be owned by it).
+- name: Admins are members of {{ dj_name }}
+  community.postgresql.postgresql_membership:
+    groups: ["{{ dj_name }}"]
+    target_roles: "{{ domator_admins | map(attribute='name') | list }}"
+    state: present
+    login_db: postgres
+    login_user: postgres
+    login_unix_socket: "{{ postgresql_unix_socket | default('/tmp') }}"
+    trust_input: false
+  become: true
+  become_user: root

@@ -1,0 +1,22 @@
+#!/bin/sh
+# {{ ansible_managed }}
+# Shell or command in a domator jail as yourself; doas inside the jail gives root.
+#   doas domator-jail <jail> [command [args...]]
+# doas.conf permits this script (not jexec) for the admins below.
+jails="{{ domator_instances | map(attribute='name') | join(' ') }}"
+admins="{{ domator_admins | map(attribute='name') | join(' ') }}"
+
+die() { echo "domator-jail: $*" >&2; exit 64; }
+
+user=${DOAS_USER:-}
+[ "$(id -u)" -eq 0 ] && [ -n "$user" ] || die "run it through doas"
+case " $admins " in *" $user "*) ;; *) die "$user is not a domator admin" ;; esac
+[ $# -ge 1 ] || die "usage: doas domator-jail {$(echo $jails | tr ' ' '|')} [command...]"
+jail=$1
+shift
+case " $jails " in *" $jail "*) ;; *) die "unknown jail $jail (one of: $jails)" ;; esac
+
+if [ $# -eq 0 ]; then
+	exec {{ domator_jexec }} -l -U "$user" "$jail" /bin/sh -l
+fi
+exec {{ domator_jexec }} -l -U "$user" "$jail" "$@"

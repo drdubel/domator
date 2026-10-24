@@ -1,0 +1,5 @@
+all:
+  hosts:
+    virgo:
+      ansible_host: virgo.dom.dry.pl
+      ansible_user: dry

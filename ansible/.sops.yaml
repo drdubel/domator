@@ -1,0 +1,4 @@
+# Same age key as ~/git/dom/virgo and ~/git/errands.
+creation_rules:
+  - path_regex: host_vars/.*\.sops\.ya?ml$
+    age: age162wc2k7y8xqlcwequcpr3kd9eg7ms0qr9x2qfxtpnqt8czxcg9fsg0wh6t

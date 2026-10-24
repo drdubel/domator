@@ -1,0 +1,37 @@
+# Renders the role's files for every instance of host_vars/virgo into build/,
+# using the role's own facts and placeholder secrets (no sops, no host).
+- name: Render domator_jail files
+  hosts: localhost
+  gather_facts: false
+  become: false
+  vars_files:
+    - ../roles/domator_jail/defaults/main.yml
+    - ../host_vars/virgo/main.yml
+  vars:
+    out: "{{ playbook_dir }}/../build"
+    role: "{{ playbook_dir }}/../roles/domator_jail"
+  tasks:
+    - name: Placeholder secrets
+      ansible.builtin.set_fact:
+        secret_domator: >-
+          {{ secret_domator | default({}) | combine({item.name: {
+               'authorized': ['a@example.com', 'b@example.com'],
+               'jwt_secret': 'jwt-' ~ item.name, 'session_secret': 'sess"ion\\x',
+               'mqtt_password': 'mqtt-' ~ item.name, 'oidc_client_id': 'id-' ~ item.name,
+               'oidc_client_secret': 'oidc-' ~ item.name, 'psql_password': 'pg-' ~ item.name,
+               'firmware_token': 'fw-' ~ item.name, 'deploy_token': 'd' * 40}}) }}
+      loop: "{{ domator_instances }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # vars_files outrank play vars: override the role default here.
+    - name: Fake jexec for the wrapper test
+      ansible.builtin.set_fact:
+        domator_jexec: "{{ out }}/fake-jexec"
+
+    - name: Instance
+      ansible.builtin.include_tasks: render_instance.yml
+      loop: "{{ domator_instances }}"
+      loop_control:
+        loop_var: domator
+        label: "{{ domator.name }}"

@@ -1,0 +1,137 @@
+- name: Directories
+  ansible.builtin.file:
+    path: "{{ dj_path }}{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default(dj_uid) }}"
+    group: "{{ domator_group.gid }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: /usr/local/etc/domator, owner: 0, mode: "0750"}
+    - {path: /var/db/domator, mode: "0750"}
+    - {path: /var/db/domator/firmware, mode: "0750"}
+    - {path: /var/log/domator, mode: "0750"}
+  loop_control:
+    label: "{{ item.path }}"
+
+# The whole turbacz.toml: structure from the instance, secrets from sops.
+- name: turbacz.toml
+  ansible.builtin.template:
+    src: turbacz.toml.j2
+    dest: "{{ dj_path }}/usr/local/etc/domator/turbacz.toml"
+    owner: "0"
+    group: "{{ domator_group.gid }}"
+    mode: "0640"
+  vars:
+    dj_secret: "{{ domator_secrets[dj_name] }}"
+  register: dj_config
+  no_log: true
+  diff: false
+
+- name: Deploy token
+  ansible.builtin.copy:
+    dest: "{{ dj_path }}/usr/local/etc/domator/deploy.token"
+    content: "{{ domator_secrets[dj_name].deploy_token }}\n"
+    owner: "0"
+    group: "{{ domator_group.gid }}"
+    mode: "0640"
+  register: dj_token
+  no_log: true
+  diff: false
+
+- name: Deployer configuration
+  ansible.builtin.copy:
+    dest: "{{ dj_path }}/usr/local/etc/domator/deploy.json"
+    content: "{{ dj_deploy_config | to_nice_json }}\n"
+    mode: "0644"
+  register: dj_deploy_json
+
+- name: Deployer
+  ansible.builtin.copy:
+    src: domator-deploy
+    dest: "{{ dj_path }}/usr/local/libexec/domator-deploy"
+    mode: "0755"
+  register: dj_deployer
+
+- name: rc.d scripts
+  ansible.builtin.template:
+    src: "{{ item }}.rc.j2"
+    dest: "{{ dj_path }}/usr/local/etc/rc.d/{{ item }}"
+    mode: "0755"
+  loop: [domator, domator_hook]
+  register: dj_rc
+
+- name: Log rotation
+  ansible.builtin.copy:
+    dest: "{{ dj_path }}/etc/newsyslog.conf.d/domator.conf"
+    content: |
+      # {{ ansible_managed | default('Ansible managed') }}
+      # daemon(8) reopens its -o log on SIGHUP.
+      /var/log/domator/app.log	{{ dj_name }}:{{ domator_group.name }}	640  7  1000  *  JC  /var/run/domator/domator.pid
+      /var/log/domator/hook.log	{{ dj_name }}:{{ domator_group.name }}	640  7  1000  *  JC  /var/run/domator/hook.pid
+    mode: "0644"
+
+- name: Services at jail start
+  community.general.sysrc:
+    path: "{{ dj_path }}/etc/rc.conf"
+    name: "{{ item }}_enable"
+    value: "{{ 'YES' if dj_service else 'NO' }}"
+  loop: [domator, domator_hook]
+
+# Proves listen_addresses, pg_hba and the pf anchor before the app needs them.
+# No jexec -l: it would drop PGPASSWORD (kept out of the process list).
+- name: The jail reaches its database
+  ansible.builtin.command: >-
+    jexec -U {{ dj_name }} {{ dj_name }} psql -X -At -c 'select 1'
+    "host={{ dj_gw_ip }} port={{ domator_pg_port }} dbname={{ dj_db }} user={{ dj_name }} connect_timeout=5"
+  environment:
+    PGPASSWORD: "{{ domator_secrets[dj_name].psql_password }}"
+  register: dj_psql
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Database connection failed
+  ansible.builtin.fail:
+    msg: >-
+      {{ dj_name }} cannot log in to {{ dj_db }} at {{ dj_gw_ip }}:{{ domator_pg_port }}:
+      {{ dj_psql.stderr | default('') }}
+      Check virgo's postgresql_listen / postgresql_hba_extra, the pf anchor, and that
+      psql_password in sops is the role's password.
+  when: dj_psql.rc != 0
+
+- name: Running application
+  when: dj_service
+  block:
+    - name: Check for a deployed release
+      ansible.builtin.stat:
+        path: "{{ dj_path }}{{ dj_home }}/current"
+      register: dj_current
+
+    # Builds Rust/C extensions on the first run: minutes.
+    - name: First deployment of {{ dj_branch }}
+      ansible.builtin.command: jexec -l -U {{ dj_name }} {{ dj_name }} /usr/local/libexec/domator-deploy deploy
+      when: not dj_current.stat.exists
+      async: 3600
+      poll: 15
+
+    - name: Restart the application for its new configuration
+      ansible.builtin.command: jexec {{ dj_name }} service domator restart
+      when:
+        - dj_current.stat.exists
+        - dj_config is changed or dj_rc.results[0] is changed
+
+    - name: Restart the deploy hook
+      ansible.builtin.command: jexec {{ dj_name }} service domator_hook restart
+      when: dj_token is changed or dj_deploy_json is changed or dj_deployer is changed or dj_rc.results[1] is changed
+
+    - name: Start services that are not running
+      ansible.builtin.command: >-
+        jexec {{ dj_name }} sh -c 'service {{ item }} status >/dev/null 2>&1 || service {{ item }} start'
+      loop: [domator, domator_hook]
+      register: dj_started
+      changed_when: "'Starting' in dj_started.stdout"
+
+    - name: Both services run
+      ansible.builtin.command: jexec {{ dj_name }} service {{ item }} status
+      loop: [domator, domator_hook]
+      changed_when: false

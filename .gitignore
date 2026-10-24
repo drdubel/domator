@@ -1,5 +1,5 @@
 _*
-# Package marker required by the backend tests' relative imports.
+# ...except the tests package marker: tests import from .conftest.
 !turbacz/tests/__init__.py
 *.pyc
 **/__pycache__

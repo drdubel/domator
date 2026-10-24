@@ -1,0 +1,32 @@
+#!/bin/sh
+# {{ ansible_managed }}
+# PROVIDE: domator
+# REQUIRE: LOGIN NETWORKING
+# KEYWORD: shutdown
+#
+# turbacz from the release domator-deploy points {{ dj_home }}/current at.
+
+. /etc/rc.subr
+
+name=domator
+rcvar=domator_enable
+load_rc_config $name
+: ${domator_enable:="NO"}
+
+domator_user="{{ dj_name }}"
+domator_chdir="{{ dj_home }}/current"
+pidfile="/var/run/domator/domator.pid"
+command="/usr/sbin/daemon"
+command_args="-f -P ${pidfile} -R 5 -o /var/log/domator/app.log {{ dj_home }}/current/.venv/bin/turbacz"
+start_precmd="domator_precmd"
+
+domator_precmd()
+{
+	install -d -o {{ dj_name }} -g {{ domator_group.name }} -m 0755 /var/run/domator
+	if [ ! -x {{ dj_home }}/current/.venv/bin/turbacz ]; then
+		echo "no release deployed yet: domator-deploy deploy"
+		return 1
+	fi
+}
+
+run_rc_command "$1"

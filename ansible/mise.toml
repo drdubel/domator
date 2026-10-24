@@ -1,0 +1,36 @@
+[tools]
+uv = "latest"
+sops = "3.13.3"
+age = "1.3.2"
+
+[env]
+# The age private key lives in the desktop wallet (Secret Service), shared
+# with ~/git/dom/virgo and ~/git/errands.
+SOPS_AGE_KEY_CMD = "secret-tool lookup sops age-key repo errands"
+
+[tasks.check]
+description = "Syntax-check, render templates and run the tests locally"
+dir = "{{config_root}}"
+# No sops vars plugin: checks and rendered files never contain secrets.
+env = { ANSIBLE_VARS_ENABLED = "host_group_vars" }
+run = ["uv run ansible-playbook site.yml --syntax-check", "uv run ansible-playbook tests/syntax.yml --syntax-check", "uv run python tests/test_deploy.py", "uv run python tests/test_role.py"]
+
+[tasks.diff]
+description = "Dry run with diffs against virgo (extra args, e.g. --tags pf)"
+dir = "{{config_root}}"
+run = "uv run ansible-playbook site.yml --check --diff"
+
+[tasks.deploy-step]
+description = "Preview changes, then approve changed tasks (virgo's approve strategy)"
+dir = "{{config_root}}"
+run = "env ANSIBLE_STRATEGY=approve ANSIBLE_STRATEGY_PLUGINS=../../dom/virgo/ansible/plugins/strategy uv run ansible-playbook site.yml --diff --forks 1"
+
+[tasks.deploy]
+description = "Run the playbook (extra args go to ansible-playbook)"
+dir = "{{config_root}}"
+run = "uv run ansible-playbook site.yml"
+
+[tasks.secrets]
+description = "Edit the encrypted secrets with sops"
+dir = "{{config_root}}"
+run = "sops host_vars/virgo/secrets.sops.yml"

@@ -1,0 +1,66 @@
+# A permanent epair, not one made at jail start: PostgreSQL on the host binds
+# 192.168.<net>.10 at boot, before any jail runs. Creating a new interface
+# leaves the existing ones (and the SSH session) alone; nothing is restarted.
+- name: Epair in rc.conf
+  community.general.sysrc:
+    name: cloned_interfaces
+    value: "{{ dj_epair }}"
+    state: value_present
+
+- name: Host address of the epair in rc.conf
+  community.general.sysrc:
+    name: "ifconfig_{{ dj_epair }}a"
+    value: "inet {{ dj_gw_ip }}/24 up"
+
+- name: Check the epair
+  ansible.builtin.command: ifconfig {{ dj_epair }}a
+  register: dj_epair_check
+  changed_when: false
+  failed_when: false
+
+- name: Create the epair now
+  ansible.builtin.command: ifconfig {{ dj_epair }} create
+  when: dj_epair_check.rc != 0
+
+- name: Address the epair now
+  ansible.builtin.command: ifconfig {{ dj_epair }}a inet {{ dj_gw_ip }}/24 up
+  when: dj_epair_check.rc != 0 or ('inet ' ~ dj_gw_ip ~ ' ') not in dj_epair_check.stdout
+
+- name: Jail root from the host's world
+  ansible.builtin.include_role:
+    name: dom.virgo.jailbase
+    tasks_from: clone
+  vars:
+    jailbase_name: "{{ dj_name }}"
+
+- name: Jail root is where jail.conf expects it
+  ansible.builtin.assert:
+    that: jailbase_path == dj_path
+    fail_msg: "jailbase clones to {{ jailbase_path }}, domator_jails_root says {{ dj_path }}"
+    quiet: true
+
+- name: Jail definition
+  ansible.builtin.template:
+    src: jail.conf.j2
+    dest: "/etc/jail.conf.d/{{ dj_name }}.conf"
+    mode: "0644"
+  register: dj_jail_conf
+
+- name: Jails at boot
+  community.general.sysrc:
+    name: jail_enable
+    value: "YES"
+
+- name: This jail at boot
+  community.general.sysrc:
+    name: jail_list
+    value: "{{ dj_name }}"
+    state: value_present
+
+# Admin entry point: doas domator-jail <jail> [command]. doas.conf (virgo
+# base_doas_rules) allows dry and antek this wrapper only, not jexec itself.
+- name: domator-jail wrapper
+  ansible.builtin.template:
+    src: domator-jail.sh.j2
+    dest: /usr/local/sbin/domator-jail
+    mode: "0755"

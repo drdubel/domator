@@ -1,0 +1,23 @@
+# Once for all instances (site.yml): one scrape job, a target per running jail.
+- name: Scrape targets of the running jails
+  ansible.builtin.set_fact:
+    domator_scrape_targets: >-
+      {{ domator_scrape_targets | default([])
+         + [{'targets': ['192.168.' ~ item.net ~ '.11:' ~ domator_app_port],
+             'labels': item.labels | default({})}] }}
+  loop: "{{ domator_instances }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.service | default(true) | bool
+
+- name: Scrape job through virgo's extension point
+  ansible.builtin.include_role:
+    name: dom.virgo.victoriametrics
+    tasks_from: scrape
+  vars:
+    vm_scrape_name: domator
+    vm_scrape_configs:
+      - job_name: turbacz
+        scrape_interval: "{{ domator_scrape_interval }}"
+        static_configs: "{{ domator_scrape_targets | default([]) + domator_scrape_extra }}"
+  when: (domator_scrape_targets | default([]) + domator_scrape_extra) | length > 0

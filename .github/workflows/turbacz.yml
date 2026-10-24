@@ -1,0 +1,62 @@
+name: turbacz
+
+# Tests every change to turbacz; a push to main or czupel that passes them is
+# deployed to its jail on virgo (ansible/README.md "Deployment"). The jail
+# pulls the code itself: this workflow only calls https://<domain>/_deploy.
+on:
+  push:
+    branches: [main, czupel]
+    paths: [turbacz/**, .github/workflows/turbacz.yml]
+  pull_request:
+    paths: [turbacz/**, .github/workflows/turbacz.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: turbacz
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --frozen --python 3.14
+      - run: uv run --frozen pytest -q --ignore=tests/browser
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request' && (github.ref_name == 'main' || github.ref_name == 'czupel')
+    runs-on: ubuntu-latest
+    # Environments "turbacz" and "czupel" hold the DEPLOY_TOKEN secret and the
+    # DEPLOY_URL variable (https://<domain>/_deploy).
+    environment: ${{ github.ref_name == 'main' && 'turbacz' || 'czupel' }}
+    # A newer push to the same branch supersedes a deployment still waiting.
+    concurrency:
+      group: deploy-${{ github.ref_name }}
+      cancel-in-progress: true
+    steps:
+      - name: Deploy ${{ github.sha }}
+        env:
+          URL: ${{ vars.DEPLOY_URL }}
+          TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          auth="Authorization: Bearer $TOKEN"
+          curl -fsS --max-time 30 -X POST -H "$auth" -H 'Content-Type: application/json' \
+            -d "{\"sha\": \"$SHA\"}" "$URL"
+          echo
+          # The first build of a release compiles Rust/C extensions: allow 30 min.
+          for _ in $(seq 180); do
+            sleep 10
+            status=$(curl -fsS --max-time 30 -H "$auth" "$URL/status") || continue
+            [ "$(jq -r .requested <<<"$status")" = "$SHA" ] || continue
+            case "$(jq -r .state <<<"$status")" in
+              ok) echo "$status" | jq .; exit 0 ;;
+              failed|rolled_back) echo "$status" | jq .; exit 1 ;;
+            esac
+          done
+          echo "no result for $SHA after 30 minutes"; exit 1

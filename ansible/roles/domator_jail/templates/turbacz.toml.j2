@@ -1,0 +1,62 @@
+# {{ ansible_managed }}
+# turbacz settings of the "{{ dj_name }}" jail. Secrets come from
+# secret_domator.{{ dj_name }} in host_vars/virgo/secrets.sops.yml; change
+# them there, not here. Values are JSON strings, which TOML accepts.
+authorized = {{ dj_secret.authorized | list | to_json }}
+jwt_secret = {{ dj_secret.jwt_secret | to_json }}
+session_secret = {{ dj_secret.session_secret | to_json }}
+use_mqtt = true
+
+[mqtt]
+host = {{ domator_mqtt_host | to_json }}
+port = {{ domator_mqtt_port }}
+username = {{ dj_secret.mqtt_username | default(dj_name) | to_json }}
+password = {{ dj_secret.mqtt_password | to_json }}
+
+[oidc]
+client_id = {{ dj_secret.oidc_client_id | to_json }}
+client_secret = {{ dj_secret.oidc_client_secret | to_json }}
+allow_insecure_http = false
+redirect_uri = {{ ('https://' ~ dj_domain ~ '/auth') | to_json }}
+token_endpoint_auth_method = "client_secret_post"
+
+[psql]
+dbname = {{ dj_db | to_json }}
+user = {{ dj_name | to_json }}
+password = {{ dj_secret.psql_password | to_json }}
+host = {{ dj_gw_ip | to_json }}
+port = {{ domator_pg_port }}
+
+[server]
+host = {{ dj_jail_ip | to_json }}
+port = {{ domator_app_port }}
+# Only nginx on virgo may set X-Forwarded-*.
+forwarded_allow_ips = {{ dj_gw_ip | to_json }}
+
+[security]
+# VictoriaMetrics on virgo scrapes http://<jail ip>:<port>/metrics, so the
+# jail address is a valid Host too; the public domain is trusted through
+# oidc.redirect_uri. Without it the scrape gets 400 "Invalid Host".
+allowed_hosts = {{ ['localhost', '127.0.0.1', '::1', dj_jail_ip] | to_json }}
+allowed_origins = {{ ['https://' ~ dj_domain] | to_json }}
+
+[monitoring]
+metrics = {{ ('http://' ~ dj_gw_ip ~ ':' ~ domator_vm_port) | to_json }}
+host_metrics_scope = "container"
+{% if dj_secret.sentry_dsn | default('') | length > 0 %}
+sentry_dsn = {{ dj_secret.sentry_dsn | to_json }}
+{% endif %}
+{% if dj_labels | length > 0 %}
+
+[monitoring.labels]
+{% for key, value in dj_labels.items() %}
+{{ key }} = {{ value | string | to_json }}
+{% endfor %}
+{% endif %}
+
+[firmware]
+directory = "/var/db/domator/firmware"
+token = {{ dj_secret.firmware_token | to_json }}
+
+[ha]
+enabled = {{ dj_ha | lower }}

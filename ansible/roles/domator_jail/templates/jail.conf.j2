@@ -1,0 +1,24 @@
+# {{ ansible_managed }}
+# domator instance {{ dj_name }} (branch {{ dj_branch }}). The epair is permanent
+# (cloned_interfaces): the jail only takes its b side.
+{{ dj_name }} {
+    host.hostname = "{{ dj_name }}.virgo.dom.dry.pl";
+    path = "{{ dj_path }}";
+
+    vnet;
+    vnet.interface = "{{ dj_epair }}b";
+    # devfsrules_jail_vnet from /etc/defaults/devfs.rules
+    devfs_ruleset = {{ domator_devfs_ruleset }};
+    mount.devfs;
+    enforce_statfs = 2;
+    children.max = 0;
+    allow.raw_sockets;      # ping for diagnostics
+
+    exec.clean;
+    exec.consolelog = "/var/log/jail_console_{{ dj_name }}.log";
+    exec.start  = "/sbin/ifconfig lo0 inet 127.0.0.1/8 up";
+    exec.start += "/sbin/ifconfig {{ dj_epair }}b inet {{ dj_jail_ip }}/24 up";
+    exec.start += "/sbin/route -q add default {{ dj_gw_ip }}";
+    exec.start += "/bin/sh /etc/rc";
+    exec.stop = "/bin/sh /etc/rc.shutdown jail";
+}

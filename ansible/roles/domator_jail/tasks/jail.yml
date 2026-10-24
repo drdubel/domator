@@ -9,7 +9,7 @@
   ansible.builtin.copy:
     dest: "{{ dj_path }}/etc/resolv.conf"
     content: |
-      # {{ ansible_managed }}
+      # {{ ansible_managed | default('Ansible managed') }}
       {% for ns in domator_dns %}
       nameserver {{ ns }}
       {% endfor %}
@@ -27,11 +27,17 @@
 
 # FreeBSD-ports-kmods targets newer OSVERSIONs than this -STABLE world and
 # stops pkg at a prompt (as on the host).
+- name: Directory for the jail's pkg repositories
+  ansible.builtin.file:
+    path: "{{ dj_path }}/usr/local/etc/pkg/repos"
+    state: directory
+    mode: "0755"
+
 - name: Package repositories of the jail
   ansible.builtin.copy:
     dest: "{{ dj_path }}/usr/local/etc/pkg/repos/FreeBSD.conf"
     content: |
-      # {{ ansible_managed }}
+      # {{ ansible_managed | default('Ansible managed') }}
       FreeBSD-ports-kmods: { enabled: no }
     mode: "0644"
 
@@ -114,7 +120,7 @@
   ansible.builtin.copy:
     dest: "{{ dj_path }}/usr/local/etc/doas.conf"
     content: |
-      # {{ ansible_managed }}
+      # {{ ansible_managed | default('Ansible managed') }}
       permit nopass :wheel
       permit nopass {{ dj_name }} as root cmd service args domator restart
     mode: "0644"

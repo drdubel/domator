@@ -64,7 +64,7 @@
   ansible.builtin.copy:
     dest: "{{ dj_path }}/etc/newsyslog.conf.d/domator.conf"
     content: |
-      # {{ ansible_managed }}
+      # {{ ansible_managed | default('Ansible managed') }}
       # daemon(8) reopens its -o log on SIGHUP.
       /var/log/domator/app.log	{{ dj_name }}:{{ domator_group.name }}	640  7  1000  *  JC  /var/run/domator/domator.pid
       /var/log/domator/hook.log	{{ dj_name }}:{{ domator_group.name }}	640  7  1000  *  JC  /var/run/domator/hook.pid

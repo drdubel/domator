@@ -170,6 +170,17 @@ class SecurityMiddleware:
         cookie = connection.cookies.get("access_token")
         bearer = auth.bearer_token_from_header(connection.headers.get("authorization"))
         user = auth.get_current_user(bearer or cookie)
+        if unsafe and path not in {"/logout"}:
+            from turbacz.authorization import permitted
+            capability = "ota" if path.startswith("/upload/") else "operator" if path == "/setblind" else "admin"
+            if user and not permitted(user, capability):
+                return await reject(403, "Insufficient permissions")
+        if path == "/api/temperatures":
+            if not user:
+                return await reject(401, "Unauthorized")
+            limit = config.security.history_requests_per_minute
+            if not self.limiter.allow(("history-ip", ip), limit) or not self.limiter.allow(("history-user", user["sub"]), limit):
+                return await reject(429, "Too many history requests")
         if unsafe and cookie and not bearer:
             if not user:
                 return await reject(401, "Unauthorized")

@@ -23,8 +23,7 @@ COPY turbacz ./turbacz
 COPY docker-entrypoint.sh ./docker-entrypoint.sh
 
 RUN chmod +x /app/docker-entrypoint.sh \
-    && uv sync --frozen --no-dev \
-    && uv pip install --python /app/.venv/bin/python "psycopg[binary]==3.3.6"
+    && uv sync --frozen --no-dev
 
 EXPOSE 8000
 

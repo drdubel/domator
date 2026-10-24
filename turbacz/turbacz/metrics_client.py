@@ -2,12 +2,12 @@
 
 from contextlib import asynccontextmanager
 
-import httpx
+import httpx2
 
-_client: httpx.AsyncClient | None = None
+_client: httpx2.AsyncClient | None = None
 
 
-def get_metrics_client() -> httpx.AsyncClient:
+def get_metrics_client() -> httpx2.AsyncClient:
     if _client is None:
         raise RuntimeError("Metrics HTTP client has not been started")
     return _client
@@ -18,7 +18,7 @@ async def metrics_client_lifespan():
     global _client
     # Keep TLS verification and normal timeout defaults. Reusing the client
     # avoids reloading the trust store and reconnecting for each history query.
-    async with httpx.AsyncClient() as client:
+    async with httpx2.AsyncClient() as client:
         _client = client
         try:
             yield

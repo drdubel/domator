@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/auth/auth_service.dart';
 import '../../core/theme.dart';
+import '../../core/config.dart';
 import '../server_setup/server_setup_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -18,11 +19,17 @@ class _LoginScreenState extends State<LoginScreen> {
   String? _error;
 
   void _changeServer() {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ServerSetupScreen(onConfigured: () => Navigator.of(context).pop()),
-      ),
-    );
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => ServerSetupScreen(
+              onConfigured: () => Navigator.of(context).pop(),
+            ),
+          ),
+        )
+        .then((_) {
+          if (mounted) setState(() {});
+        });
   }
 
   Future<void> _login() async {
@@ -34,7 +41,7 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       await context.read<AuthService>().login();
     } catch (e) {
-      setState(() => _error = 'Sign in failed. Please try again.');
+      if (mounted) setState(() => _error = 'Sign in failed. Please try again.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -42,6 +49,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final message = _error ?? context.watch<AuthService>().message;
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: Center(
@@ -63,31 +71,51 @@ class _LoginScreenState extends State<LoginScreen> {
                       colors: [AppColors.primary, AppColors.accentPink],
                     ),
                   ),
-                  child: const Icon(Icons.villa_rounded, size: 36, color: Colors.white),
+                  child: const Icon(
+                    Icons.villa_rounded,
+                    size: 36,
+                    color: Colors.white,
+                  ),
                 ),
                 const SizedBox(height: 20),
-                Text('Turbacz', style: Theme.of(context).textTheme.headlineMedium),
+                Text(
+                  'Turbacz',
+                  style: Theme.of(context).textTheme.headlineMedium,
+                ),
                 const SizedBox(height: 4),
                 Text(
                   'Home Automation Control',
-                  style: GoogleFonts.manrope(color: AppColors.textSecondary, fontWeight: FontWeight.w500),
+                  style: GoogleFonts.manrope(
+                    color: AppColors.textSecondary,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
+                const SizedBox(height: 12),
+                Text(AppConfig.host ?? '', textAlign: TextAlign.center),
                 const SizedBox(height: 32),
-                if (_error != null) ...[
-                  Text(_error!, style: const TextStyle(color: AppColors.danger)),
+                if (message != null) ...[
+                  Text(
+                    message,
+                    style: const TextStyle(color: AppColors.danger),
+                  ),
                   const SizedBox(height: 16),
                 ],
                 FilledButton.icon(
                   onPressed: _loading ? null : _login,
                   icon: _loading
-                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
                       : const Icon(Icons.login),
                   label: const Text('Sign in with Google'),
                 ),
                 const SizedBox(height: 12),
-                TextButton(
+                OutlinedButton.icon(
                   onPressed: _loading ? null : _changeServer,
-                  child: const Text('Change server'),
+                  icon: const Icon(Icons.swap_horiz),
+                  label: const Text('Switch server'),
                 ),
               ],
             ),

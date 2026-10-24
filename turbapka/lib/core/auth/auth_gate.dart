@@ -17,16 +17,42 @@ class AuthGate extends StatefulWidget {
   State<AuthGate> createState() => _AuthGateState();
 }
 
-class _AuthGateState extends State<AuthGate> {
+class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      context.read<AuthService>().checkSession();
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
   bool _serverConfigured = AppConfig.isConfigured;
 
   @override
   Widget build(BuildContext context) {
     if (!_serverConfigured) {
-      return ServerSetupScreen(onConfigured: () => setState(() => _serverConfigured = true));
+      return ServerSetupScreen(
+        onConfigured: () => setState(() => _serverConfigured = true),
+      );
     }
 
     final auth = context.watch<AuthService>();
-    return auth.isLoggedIn ? widget.home : const LoginScreen();
+    return auth.isLoggedIn
+        ? KeyedSubtree(
+            key: ValueKey('${AppConfig.host}:${auth.token}'),
+            child: widget.home,
+          )
+        : const LoginScreen();
   }
 }

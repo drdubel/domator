@@ -24,9 +24,19 @@ class LightsService extends ChangeNotifier {
   /// Sections that currently have at least one light assigned — empty
   /// sections are hidden from the main list (but still offered as "Move
   /// to..." targets, via [sections]).
-  List<LightSection> get visibleSections => sections.where((s) => outputsInSection(s.id).isNotEmpty).toList();
+  List<LightSection> get visibleSections =>
+      sections.where((s) => outputsInSection(s.id).isNotEmpty).toList();
 
-  LightsService(String token) : _ws = WsClient(path: '/lights/ws', token: token) {
+  LightsService(
+    String token, {
+    void Function()? onAuthFailure,
+    void Function()? onConnectionError,
+  }) : _ws = WsClient(
+         path: '/lights/ws',
+         token: token,
+         onAuthFailure: onAuthFailure,
+         onConnectionError: onConnectionError,
+       ) {
     _loadSectionOrder();
     _ws.messages.listen(_handleMessage);
     _ws.connect();
@@ -56,13 +66,19 @@ class LightsService extends ChangeNotifier {
 
   void _applyConfiguration(Map<String, dynamic> msg) {
     final sectionsMap = (msg['sections'] as Map).cast<String, dynamic>();
-    final newSections = sectionsMap.entries
-        .map((e) => LightSection(id: int.parse(e.key), name: e.value as String))
-        .toList()
-      ..sort((a, b) => a.id.compareTo(b.id));
+    final newSections =
+        sectionsMap.entries
+            .map(
+              (e) =>
+                  LightSection(id: int.parse(e.key), name: e.value as String),
+            )
+            .toList()
+          ..sort((a, b) => a.id.compareTo(b.id));
 
     if (_sectionOrder.isNotEmpty) {
-      final orderIndex = {for (var i = 0; i < _sectionOrder.length; i++) _sectionOrder[i]: i};
+      final orderIndex = {
+        for (var i = 0; i < _sectionOrder.length; i++) _sectionOrder[i]: i,
+      };
       newSections.sort((a, b) {
         final ai = orderIndex[a.id] ?? _sectionOrder.length;
         final bi = orderIndex[b.id] ?? _sectionOrder.length;
@@ -81,16 +97,20 @@ class LightsService extends ChangeNotifier {
 
       for (final outputEntry in relayOutputs.entries) {
         final meta = outputEntry.value as List;
-        final existing = outputs.where((o) => o.relayId == relayId && o.outputId == outputEntry.key);
+        final existing = outputs.where(
+          (o) => o.relayId == relayId && o.outputId == outputEntry.key,
+        );
 
-        newOutputs.add(LightOutput(
-          relayId: relayId,
-          outputId: outputEntry.key,
-          name: meta[0] as String,
-          sectionId: meta[1] as int,
-          outputIdx: meta[2] as int,
-          isOn: existing.isNotEmpty ? existing.first.isOn : false,
-        ));
+        newOutputs.add(
+          LightOutput(
+            relayId: relayId,
+            outputId: outputEntry.key,
+            name: meta[0] as String,
+            sectionId: meta[1] as int,
+            outputIdx: meta[2] as int,
+            isOn: existing.isNotEmpty ? existing.first.isOn : false,
+          ),
+        );
       }
     }
 
@@ -138,10 +158,16 @@ class LightsService extends ChangeNotifier {
     final visibleIds = visible.map((s) => s.id).toSet();
     final hiddenSections = sections.where((s) => !visibleIds.contains(s.id));
 
-    _sectionOrder = [...reorderedVisible, ...hiddenSections].map((s) => s.id).toList();
+    _sectionOrder = [
+      ...reorderedVisible,
+      ...hiddenSections,
+    ].map((s) => s.id).toList();
 
-    final orderIndex = {for (var i = 0; i < _sectionOrder.length; i++) _sectionOrder[i]: i};
-    sections = List<LightSection>.from(sections)..sort((a, b) => orderIndex[a.id]!.compareTo(orderIndex[b.id]!));
+    final orderIndex = {
+      for (var i = 0; i < _sectionOrder.length; i++) _sectionOrder[i]: i,
+    };
+    sections = List<LightSection>.from(sections)
+      ..sort((a, b) => orderIndex[a.id]!.compareTo(orderIndex[b.id]!));
     notifyListeners();
 
     await _persistSectionOrder();
@@ -184,7 +210,10 @@ class LightsService extends ChangeNotifier {
 
     _ws.send({
       'type': 'layout_update',
-      'positions': [...sourceOutputs, ...targetOutputs].map(_toPositionEntry).toList(),
+      'positions': [
+        ...sourceOutputs,
+        ...targetOutputs,
+      ].map(_toPositionEntry).toList(),
       'relay_id': '${output.relayId}',
       'output_id': output.outputId,
       'section': '$newSectionId',
@@ -198,7 +227,11 @@ class LightsService extends ChangeNotifier {
   }
 
   Map<String, dynamic> _toPositionEntry(LightOutput o) {
-    return {'relay_id': '${o.relayId}', 'output_id': o.outputId, 'output_idx': o.outputIdx};
+    return {
+      'relay_id': '${o.relayId}',
+      'output_id': o.outputId,
+      'output_idx': o.outputIdx,
+    };
   }
 
   @override

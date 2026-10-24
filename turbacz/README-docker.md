@@ -194,6 +194,69 @@ Ethernet-only hosts, unsupported drivers, and disconnected interfaces without
 valid readings show no data. This optional collector depends on the driver's
 wireless-extension statistics and does not collect Wi-Fi on macOS or Windows.
 
+## Mosquitto exits with code 13: password path is a directory
+
+`Error: /mosquitto/config/mosquitto.passwd is not a file` means the mounted
+host path is a directory. Docker's short bind syntax creates a directory when
+the source is absent; Compose now disables this with `create_host_path: false`.
+The password file is not in Git, so a new checkout does not include it.
+
+Restore your backed-up `mosquitto.passwd` if available. Otherwise, recover it
+from the existing installation, from the `turbacz` directory:
+
+```bash
+docker compose stop turbacz homeassistant mosquitto
+python3 repair-mqtt.py
+docker compose up -d mosquitto turbacz homeassistant
+docker compose logs --tail=50 mosquitto turbacz
+curl -fsS http://localhost:8000/metrics
+```
+
+The recovery script requires Python 3.11+ and Docker. It reads the existing
+backend MQTT credentials from `turbacz.toml`; enter the passwords already used
+by your mesh, heating, blinds, and Home Assistant clients when prompted. Blank
+answers omit that client. It removes only an empty directory, hashes credentials
+in a private temporary file, and writes `mosquitto.passwd` with mode `0600`.
+The broker image's entrypoint sets its ownership to the container's Mosquitto
+user. Do not rerun `setup.sh` for an existing installation: it protects the
+configuration from being overwritten.
+
+Compose waits for the broker listener before starting Turbacz and Home
+Assistant. VictoriaMetrics may log connection refusals until Turbacz finishes
+startup. If MQTT hostname resolution still fails after the broker is healthy,
+check that `[mqtt].host` is `mosquitto` in `turbacz.toml` and the services share
+the Compose network. The IPv6 suggestion in the scrape error does not explain
+the refused IPv4 connection shown here.
+
+## Login fails with `httpx2.ConnectTimeout`
+
+If `/metrics` returns 200 but `/login` fails while Authlib loads server
+metadata, the backend cannot finish connecting to the sign-in provider.
+Google's default discovery URL is
+`https://accounts.google.com/.well-known/openid-configuration`.
+The app returns a 503 login error page for provider connection failures.
+
+Compare an HTTPS request on the Docker host with the same request inside
+the running service (use your configured discovery URL for another provider):
+
+```bash
+curl -fsS --connect-timeout 10 --max-time 20 https://accounts.google.com/.well-known/openid-configuration
+docker compose exec turbacz /app/.venv/bin/python -c 'import httpx2; r = httpx2.get("https://accounts.google.com/.well-known/openid-configuration", timeout=10); r.raise_for_status(); print(r.status_code)'
+docker compose exec turbacz /app/.venv/bin/python -c 'import socket; print(socket.getaddrinfo("accounts.google.com", 443, type=socket.SOCK_STREAM))'
+```
+
+If both HTTPS requests fail, check the host's Internet connectivity, DNS,
+outbound TCP port 443, and any required proxy. If only the container fails,
+check Docker bridge routing/firewall rules and its DNS configuration. The
+Compose service specifies public DNS servers; use reachable LAN resolvers
+if your network blocks public DNS. A successful lookup alone does not verify
+HTTPS connectivity. Retest the HTTPS request after applying the network fix.
+
+Increasing the timeout does not repair a blocked connection. OAuth client
+credentials and redirect URI validation happen separately from this discovery
+connection failure. The repeated Mosquitto connections from `127.0.0.1` with
+an unknown client are the TCP health check, which does not send an MQTT login.
+
 ## Troubleshooting dependency downloads on Armbian / Orange Pi
 
 If `uv sync` fails with `dns error` and `failed to lookup address information:

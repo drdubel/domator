@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
+
+import '../../core/auth/auth_service.dart';
 
 import '../../core/config.dart';
 import '../../core/theme.dart';
@@ -20,6 +23,7 @@ class ServerSetupScreen extends StatefulWidget {
 class _ServerSetupScreenState extends State<ServerSetupScreen> {
   final _controller = TextEditingController(text: AppConfig.host ?? '');
   String? _error;
+  bool _saving = false;
 
   @override
   void dispose() {
@@ -28,15 +32,31 @@ class _ServerSetupScreenState extends State<ServerSetupScreen> {
   }
 
   Future<void> _save() async {
+    if (_saving) return;
     final input = _controller.text.trim();
     if (input.isEmpty) {
       setState(() => _error = 'Enter your server address.');
       return;
     }
 
-    await AppConfig.setHost(input);
-    if (!mounted) return;
-    widget.onConfigured();
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await context.read<AuthService>().switchServer(input);
+      if (mounted) widget.onConfigured();
+    } catch (e) {
+      if (mounted) {
+        setState(
+          () => _error = e is FormatException
+              ? e.message
+              : 'Could not save the server. Please try again.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   @override
@@ -44,7 +64,7 @@ class _ServerSetupScreenState extends State<ServerSetupScreen> {
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: Center(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: GlassCard(
             padding: const EdgeInsets.all(36),
@@ -62,18 +82,52 @@ class _ServerSetupScreenState extends State<ServerSetupScreen> {
                       colors: [AppColors.primary, AppColors.accentPink],
                     ),
                   ),
-                  child: const Icon(Icons.dns_rounded, size: 36, color: Colors.white),
+                  child: const Icon(
+                    Icons.dns_rounded,
+                    size: 36,
+                    color: Colors.white,
+                  ),
                 ),
                 const SizedBox(height: 20),
-                Text('Connect to Turbacz', style: Theme.of(context).textTheme.headlineMedium),
+                Text(
+                  'Connect to Turbacz',
+                  style: Theme.of(context).textTheme.headlineMedium,
+                ),
                 const SizedBox(height: 4),
                 Text(
                   'Enter the address of your turbacz server',
                   textAlign: TextAlign.center,
-                  style: GoogleFonts.manrope(color: AppColors.textSecondary, fontWeight: FontWeight.w500),
+                  style: GoogleFonts.manrope(
+                    color: AppColors.textSecondary,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
                 const SizedBox(height: 24),
+                if (AppConfig.savedHosts.isNotEmpty) ...[
+                  const Text('Saved servers'),
+                  const SizedBox(height: 8),
+                  for (final host in AppConfig.savedHosts)
+                    Material(
+                      type: MaterialType.transparency,
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(
+                          host == AppConfig.host
+                              ? Icons.check_circle
+                              : Icons.dns_outlined,
+                        ),
+                        title: Text(host),
+                        enabled: !_saving,
+                        onTap: () {
+                          _controller.text = host;
+                          _save();
+                        },
+                      ),
+                    ),
+                  const SizedBox(height: 16),
+                ],
                 TextField(
+                  enabled: !_saving,
                   controller: _controller,
                   autocorrect: false,
                   keyboardType: TextInputType.url,
@@ -86,13 +140,16 @@ class _ServerSetupScreenState extends State<ServerSetupScreen> {
                 ),
                 if (_error != null) ...[
                   const SizedBox(height: 12),
-                  Text(_error!, style: const TextStyle(color: AppColors.danger)),
+                  Text(
+                    _error!,
+                    style: const TextStyle(color: AppColors.danger),
+                  ),
                 ],
                 const SizedBox(height: 24),
                 FilledButton.icon(
-                  onPressed: _save,
+                  onPressed: _saving ? null : _save,
                   icon: const Icon(Icons.arrow_forward),
-                  label: const Text('Continue'),
+                  label: Text(_saving ? 'Connecting…' : 'Continue'),
                 ),
               ],
             ),

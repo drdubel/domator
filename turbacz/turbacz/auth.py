@@ -1,16 +1,20 @@
 import html
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import httpx2
 import jwt
 from authlib.integrations.starlette_client import OAuth, OAuthError
 from fastapi import APIRouter, Cookie, HTTPException, Request, Response, WebSocket
 from jwt import InvalidTokenError
 from starlette.responses import HTMLResponse, RedirectResponse
+
 from turbacz.settings import config
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 JWT_ALG = "HS256"
 JWT_EXPIRE_MINUTES = 60 * 24 * 14  # 14 days
@@ -33,8 +37,10 @@ oauth.register(config.oidc.provider, **register_kwargs)
 
 
 def create_jwt(data: dict) -> str:
+    from turbacz.authorization import user_roles
     now = datetime.now(timezone.utc)
     payload = data.copy()
+    payload["roles"] = sorted(user_roles(data["sub"]))
     payload.update(
         {
             "iat": now,
@@ -47,7 +53,10 @@ def create_jwt(data: dict) -> str:
 
 def verify_jwt(token: str) -> dict | None:
     try:
-        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG], options={"require": ["exp", "iat", "sub"]})
+        user = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG], options={"require": ["exp", "iat", "sub"]})
+        if user["sub"] not in config.authorized:
+            return None
+        return user
 
     except InvalidTokenError:
         return None
@@ -91,12 +100,30 @@ async def websocket_auth(websocket: WebSocket) -> dict | None:
     return user
 
 
+def _provider_unavailable(error: httpx2.RequestError) -> HTMLResponse:
+    # Exception text can contain callback URLs with authorization codes.
+    logger.warning("OIDC provider request failed (%s)", type(error).__name__)
+    return HTMLResponse(
+        '<!DOCTYPE html><html><head><meta charset="UTF-8">'
+        '<title>Turbacz login unavailable</title>'
+        '<link rel="icon" href="/favicon.ico" type="image/x-icon">'
+        '</head><body><h1>Login temporarily unavailable</h1>'
+        '<p>We could not reach the sign-in provider. Please try signing in again shortly.</p>'
+        '<p><a href="/">Return to sign in</a></p></body></html>',
+        status_code=503,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @router.get("/login")
 async def login(request: Request, client: Optional[str] = None):
     request.session["mobile_login"] = client == "mobile"
 
     redirect_uri = config.oidc.redirect_uri or str(request.url_for("auth"))
-    return await oauth.google.authorize_redirect(request, redirect_uri)
+    try:
+        return await oauth.google.authorize_redirect(request, redirect_uri)
+    except httpx2.RequestError as error:
+        return _provider_unavailable(error)
 
 
 @router.get("/auth")
@@ -114,21 +141,33 @@ async def auth(request: Request):
     def _is_invalid_client(error: OAuthError) -> bool:
         return error.error == "invalid_client"
 
+    def _error_response(error: OAuthError) -> HTMLResponse:
+        return HTMLResponse(
+            '<!DOCTYPE html><html><head><meta charset="UTF-8">'
+            '<title>Turbacz login error</title>'
+            '<link rel="icon" href="/favicon.ico" type="image/x-icon">'
+            f'</head><body><h1>{_format_oauth_error(error)}</h1></body></html>'
+        )
+
     try:
         token = await oauth.google.authorize_access_token(request)
 
+    except httpx2.RequestError as error:
+        return _provider_unavailable(error)
     except OAuthError as error:
         if not config.oidc.token_endpoint_auth_method and _is_invalid_client(error):
             for method in ("client_secret_post", "client_secret_basic"):
                 try:
                     token = await oauth.google.authorize_access_token(request, token_endpoint_auth_method=method)
                     break
+                except httpx2.RequestError as connection_error:
+                    return _provider_unavailable(connection_error)
                 except OAuthError:
                     continue
             else:
-                return HTMLResponse(f"<h1>{_format_oauth_error(error)}</h1>")
+                return _error_response(error)
         else:
-            return HTMLResponse(f"<h1>{_format_oauth_error(error)}</h1>")
+            return _error_response(error)
 
     user = token.get("userinfo")
     is_mobile_login = request.session.pop("mobile_login", False)
@@ -187,6 +226,7 @@ async def main(request: Request, access_token: Optional[str] = Cookie(None)):
 @router.get("/csrf-token")
 async def get_csrf_token(request: Request):
     from starlette.responses import JSONResponse
+
     from turbacz.security import csrf_token
 
     token = request.cookies.get("access_token")

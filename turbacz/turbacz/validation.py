@@ -122,6 +122,20 @@ def validate_command(path, cmd, cm):
             integer(position.get("output_idx"), 0, 4096)
         return
     if path.startswith("/rcm/"):
+        if kind == "zigbee_command":
+            from turbacz.settings import config
+            from turbacz.zigbee_knob import KNOB_COMMANDS
+
+            device = cm.get_zigbee_devices().get(device_id(cmd.get("switch_id")))
+            if (
+                not config.zigbee.enabled
+                or device is None
+                or button_id(cmd.get("button_id")) not in device["buttons"]
+                or not isinstance(cmd.get("command"), str)
+                or cmd["command"] not in KNOB_COMMANDS
+            ):
+                raise ValueError("Invalid Zigbee device command")
+            return
         if kind in {
             "update",
             "update_root",

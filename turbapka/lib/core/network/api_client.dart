@@ -8,7 +8,9 @@ import '../config.dart';
 class ApiClient {
   final String token;
 
-  ApiClient(this.token);
+  final void Function()? onAuthFailure;
+
+  ApiClient(this.token, {this.onAuthFailure});
 
   Future<dynamic> getJson(String path, [Map<String, dynamic>? query]) async {
     final response = await http.get(
@@ -16,6 +18,7 @@ class ApiClient {
       headers: {'Authorization': 'Bearer $token'},
     );
 
+    if (response.statusCode == 401) onAuthFailure?.call();
     if (response.statusCode != 200) {
       throw ApiException(response.statusCode, response.body);
     }

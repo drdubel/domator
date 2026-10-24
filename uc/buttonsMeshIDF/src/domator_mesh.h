@@ -56,7 +56,6 @@
 #define NUM_BUTTONS 7
 #define MAX_QUEUE_SIZE 30
 #define MESH_TX_QUEUE_SIZE 20
-#define MESH_MSG_DATA_SIZE 512
 #define LOW_HEAP_THRESHOLD 40000
 #define CRITICAL_HEAP_THRESHOLD 20000
 #define MAX_NODES 64
@@ -108,22 +107,7 @@
 #define MAX_RELAYS_16 16
 #define NUM_RELAY_BUTTONS 8
 
-// Message types for mesh communication
-#define MSG_TYPE_BUTTON 'B'   // Button press from switch to root
-#define MSG_TYPE_STATUS 'S'   // Status update from nodes to root
-#define MSG_TYPE_COMMAND 'C'  // Command from root to relay (e.g., toggle relay)
-#define MSG_TYPE_ACK 'A'      // Acknowledgment for command receipt
-#define MSG_TYPE_RELAY_STATE 'R'   // Relay state confirmation
-#define MSG_TYPE_SYNC_REQUEST 'Y'  // Request state sync
-#define MSG_TYPE_CONFIG 'G'        // Configuration message
-#define MSG_TYPE_TYPE_INFO 'T'     // Message to convey device type info
-#define MSG_TYPE_OTA_START 'U'     // OTA update start packet
-#define MSG_TYPE_PING 'P'          // Ping message for health check'
-#define MSG_TYPE_ESPNOW 'E'        // Authenticated remote packet / return command
-
-// Device types for type info messages
-#define DEVICE_TYPE_SWITCH 'S'
-#define DEVICE_TYPE_RELAY 'R'
+#include "mesh_protocol.h"
 
 /** @brief Node role/type in the mesh network. */
 typedef enum {
@@ -140,16 +124,6 @@ typedef enum { BOARD_TYPE_8_RELAY = 0, BOARD_TYPE_16_RELAY } board_type_t;
 
 /** @brief Message transmission priority. */
 typedef enum { TX_PRIO_NORMAL = 0, TX_PRIO_HIGH } tx_priority_t;
-
-/** @brief Wire-format application message exchanged between mesh nodes. */
-typedef struct {
-    uint64_t src_id;
-    uint8_t msg_type;
-    uint16_t data_len;
-    uint32_t data_seq;
-    uint8_t target_type;
-    char data[MESH_MSG_DATA_SIZE];
-} __attribute__((packed)) mesh_app_msg_t;
 
 /** @brief Runtime counters for this device. */
 typedef struct {

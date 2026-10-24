@@ -144,3 +144,286 @@ test('RCM gateway controls follow reported roles and retain remote button cards'
         assert.ok(dom.window.document.getElementById('switch-222-btn-g'))
     } finally { dom.window.close() }
 })
+
+function rcmPage() {
+    const dom = page(fs.readFileSync(path.join(root, 'static/rcm.html'), 'utf8'))
+    dom.window.jsPlumb = { ready() {} }
+    run(dom, `${script('common.js')}\n${script('rcm.js')}\n
+        canvasElement = document.getElementById('canvas');
+        zoomLevelElement = document.getElementById('zoomLevel');
+        const handlers = {};
+        jsPlumbInstance = {
+            draggable() {}, makeSource() {}, makeTarget() {}, repaintEverything() {},
+            revalidate() {}, setZoom() {}, batch(callback) { callback() },
+            deleteEveryConnection() {}, deleteEveryEndpoint() {}, deleteConnection() {},
+            unbind() {}, bind(event, callback) { handlers[event] = callback },
+            connect({source, target}) {
+                return { sourceId: source.id, targetId: target.id, visible: true,
+                    setVisible(value) { this.visible = value } };
+            }
+        };
+        addConnectionHoverEffect = () => {};
+        wsManager.send = () => {};`)
+    return dom
+}
+
+test('RCM arrangements cycle, keep types separated, avoid overlaps and preserve saved positions', () => {
+    const dom = rcmPage()
+    try {
+        run(dom, `for (const id of [1, 2, 3]) {
+            createSwitch(id, 'Switch', 3, 0, 0);
+            createRelay(id, 'Relay', {}, 0, 0, 8);
+        }`)
+        const doc = dom.window.document
+        doc.querySelectorAll('.device-box').forEach((el, index) => {
+            Object.defineProperty(el, 'offsetWidth', { value: 320 + index * 10 })
+            Object.defineProperty(el, 'offsetHeight', { value: 200 + index * 70 })
+        })
+        for (const style of ['columns', 'grid', 'paired', 'connections', 'columns']) {
+            run(dom, 'cycleDeviceArrangement()')
+            assert.equal(dom.window.localStorage.getItem('rcm_arrangement_style'), style)
+            const switches = [...doc.querySelectorAll('.switch-box')]
+            const relays = [...doc.querySelectorAll('.relay-box')]
+            if (style === 'columns' || style === 'grid') {
+                assert.ok(Math.max(...switches.map(el => parseFloat(el.style.left) + el.offsetWidth))
+                    < Math.min(...relays.map(el => parseFloat(el.style.left))))
+            }
+            const cards = [...switches, ...relays]
+            cards.forEach((a, i) => cards.slice(i + 1).forEach(b => {
+                const x = el => parseFloat(el.style.left), y = el => parseFloat(el.style.top)
+                assert.ok(x(a) + a.offsetWidth <= x(b) || x(b) + b.offsetWidth <= x(a)
+                    || y(a) + a.offsetHeight <= y(b) || y(b) + b.offsetHeight <= y(a))
+            }))
+            if (style === 'paired' || style === 'connections') switches.forEach(sw => {
+                const relay = doc.getElementById(sw.id.replace('switch', 'relay'))
+                assert.equal(sw.style.top, relay.style.top)
+                assert.equal(parseFloat(sw.style.left) - parseFloat(relay.style.left) - relay.offsetWidth, 24)
+            })
+        }
+        run(dom, `document.getElementById('switch-1').style.left = '12345px';
+            saveDevicePositions(); arrangeDevices('grid', {preserveSaved: true, focus: false});`)
+        assert.equal(doc.getElementById('switch-1').style.left, '12345px')
+        assert.match(doc.getElementById('arrangeDevicesButton').textContent, /Columns/)
+    } finally { dom.window.close() }
+})
+
+test('RCM hides only unused relay-switch buttons and hides again after their last connection is removed', async () => {
+    const dom = rcmPage()
+    try {
+        run(dom, `createRelay(1, 'Relay', {}, 0, 0, 8);
+            createRelay(2, 'Relay', {}, 0, 0, 8);
+            createSwitch(1, 'Relay switch', 3, 0, 0);
+            createSwitch(9, 'Normal switch', 3, 0, 0);`)
+        const doc = dom.window.document
+        assert.equal(doc.getElementById('switch-1-btn-a').style.display, 'none')
+        assert.equal(doc.getElementById('switch-9-btn-a').style.display, 'flex')
+        run(dom, `showButton(1, 'a'); syncRelaySwitchButtons(1);`)
+        assert.equal(doc.getElementById('switch-1-btn-a').style.display, 'flex')
+        run(dom, `createConnection(1, 'a', 1, 'a'); createConnection(1, 'a', 2, 'b');
+            postForm = async () => ({success: true}); bindJsPlumbEvents();`)
+        assert.equal(doc.getElementById('switch-1-btn-a').style.display, 'flex')
+        assert.equal(run(dom, 'connections[1].a[0].connection.visible'), true)
+        await run(dom, `handlers.dblclick(connections[1].a[0].connection, {preventDefault() {}}); Promise.resolve()`)
+        assert.equal(doc.getElementById('switch-1-btn-a').style.display, 'flex')
+        await run(dom, `handlers.dblclick(connections[1].a[0].connection, {preventDefault() {}}); Promise.resolve()`)
+        assert.equal(doc.getElementById('switch-1-btn-a').style.display, 'none')
+        assert.equal(doc.getElementById('switch-1-show-hidden-btn').style.display, 'block')
+        assert.deepEqual(JSON.parse(dom.window.localStorage.getItem('rcm_hidden_buttons')), [])
+    } finally { dom.window.close() }
+})
+
+test('RCM initial load arranges switches left and retains connections on manually hidden buttons', async () => {
+    const dom = rcmPage()
+    try {
+        run(dom, `localStorage.setItem('rcm_hidden_buttons', JSON.stringify(['1-a']));
+            const pendingTimers = [];
+            window.setTimeout = callback => { pendingTimers.push(callback); return 0 };
+            fetchAPI = async path => ({
+                '/lights/get_relays': {1: ['Relay', 8]},
+                '/lights/get_switches': {1: ['Relay switch', 3], 9: ['Normal switch', 2]},
+                '/lights/get_connections': {1: {a: [[1, 'a']], b: [[1, 'b']]}},
+                '/lights/get_outputs': {}, '/lights/get_all_buttons': {}, '/lights/get_blind_pairs': {}
+            })[path];`)
+        await run(dom, 'loadConfiguration()')
+        run(dom, 'pendingTimers.splice(0).forEach(callback => callback())')
+        const doc = dom.window.document
+        assert.equal(doc.getElementById('switch-1-btn-a').style.display, 'none')
+        assert.equal(doc.getElementById('switch-1-btn-b').style.display, 'flex')
+        assert.equal(doc.getElementById('switch-1-btn-c').style.display, 'none')
+        assert.equal(doc.getElementById('switch-9-btn-a').style.display, 'flex')
+        assert.ok(parseFloat(doc.getElementById('switch-9').style.left) < parseFloat(doc.getElementById('relay-1').style.left))
+        assert.equal(run(dom, 'connections[1].a.length'), 1)
+        assert.equal(run(dom, 'connections[1].a[0].connection.visible'), false)
+        run(dom, "showButton(1, 'a')")
+        assert.equal(run(dom, 'connections[1].a[0].connection.visible'), true)
+    } finally { dom.window.close() }
+})
+
+test('RCM arrangements target a 16:9 footprint and fit measured cards within the viewport', () => {
+    const dom = rcmPage()
+    try {
+        run(dom, `for (let id = 1; id <= 24; id++) {
+            createSwitch(id, 'Switch', 3, 0, 0);
+            createRelay(id, 'Relay', {}, 0, 0, 8);
+        }`)
+        const cards = [...dom.window.document.querySelectorAll('.device-box')]
+        cards.forEach(el => {
+            Object.defineProperty(el, 'offsetWidth', { value: 320 })
+            Object.defineProperty(el, 'offsetHeight', { value: 600 })
+        })
+        const wrapper = dom.window.document.getElementById('canvas-wrapper')
+        Object.defineProperty(wrapper, 'clientWidth', { value: 1280 })
+        Object.defineProperty(wrapper, 'clientHeight', { value: 720 })
+        for (const style of ['columns', 'grid', 'paired', 'connections']) {
+            dom.window.layoutStyle = style
+            run(dom, 'arrangeDevices(layoutStyle)')
+            const minX = Math.min(...cards.map(el => parseFloat(el.style.left)))
+            const maxX = Math.max(...cards.map(el => parseFloat(el.style.left) + el.offsetWidth))
+            const minY = Math.min(...cards.map(el => parseFloat(el.style.top)))
+            const maxY = Math.max(...cards.map(el => parseFloat(el.style.top) + el.offsetHeight))
+            const ratio = (maxX - minX) / (maxY - minY)
+            assert.ok(Math.abs(ratio - 16 / 9) < 0.15, `${style} ratio: ${ratio}`)
+            const zoom = run(dom, 'zoomLevel'), panX = run(dom, 'panX'), panY = run(dom, 'panY')
+            assert.ok(minX * zoom + panX >= 39)
+            assert.ok(maxX * zoom + panX <= 1241)
+            assert.ok(minY * zoom + panY >= 39)
+            assert.ok(maxY * zoom + panY <= 681)
+        }
+    } finally { dom.window.close() }
+})
+
+test('RCM Connections layout groups by wiring and keeps relay switches beside their relays', () => {
+    const dom = rcmPage()
+    try {
+        run(dom, `createRelay(100, 'Relay A', {}, 0, 0, 8);
+            createRelay(200, 'Relay B', {}, 0, 0, 8);
+            createSwitch(100, 'Relay switch', 3, 0, 0);
+            createSwitch(9, 'Switch B', 3, 0, 0);
+            createSwitch(10, 'Switch A', 3, 0, 0);
+            createSwitch(11, 'Unconnected', 3, 0, 0);
+            createSwitch(12, 'Hidden', 3, 123, 456);
+            hiddenDevices.add('switch-12');
+            createConnection(9, 'a', 200, 'a');
+            createConnection(10, 'a', 100, 'a');`)
+        const doc = dom.window.document
+        doc.querySelectorAll('.device-box').forEach(el => {
+            Object.defineProperty(el, 'offsetWidth', { value: 320 })
+            Object.defineProperty(el, 'offsetHeight', { value: 300 })
+        })
+        run(dom, "arrangeDevices('connections')")
+        for (const [switchId, relayId] of [[9, 200], [10, 100]]) {
+            const sw = doc.getElementById(`switch-${switchId}`)
+            const relay = doc.getElementById(`relay-${relayId}`)
+            assert.equal(sw.style.top, relay.style.top)
+            assert.equal(parseFloat(relay.style.left) - parseFloat(sw.style.left) - sw.offsetWidth, 240)
+        }
+        const relaySwitch = doc.getElementById('switch-100'), relay = doc.getElementById('relay-100')
+        assert.equal(relaySwitch.style.top, relay.style.top)
+        assert.equal(parseFloat(relaySwitch.style.left) - parseFloat(relay.style.left) - relay.offsetWidth, 24)
+        assert.equal(doc.getElementById('switch-12').style.left, '123px')
+        assert.equal(doc.getElementById('switch-12').style.top, '456px')
+        // Joining two clusters keeps every card exactly once and without overlaps.
+        run(dom, "createConnection(9, 'b', 100, 'b'); arrangeDevices('connections')")
+        const cards = [...doc.querySelectorAll('.device-box')].filter(el => el.id !== 'switch-12')
+        cards.forEach((a, i) => cards.slice(i + 1).forEach(b => {
+            const x = el => parseFloat(el.style.left), y = el => parseFloat(el.style.top)
+            assert.ok(x(a) + a.offsetWidth <= x(b) || x(b) + b.offsetWidth <= x(a)
+                || y(a) + a.offsetHeight <= y(b) || y(b) + b.offsetHeight <= y(a))
+        }))
+        assert.equal(run(dom, 'connections[9].a.length + connections[9].b.length + connections[10].a.length'), 3)
+    } finally { dom.window.close() }
+})
+
+test('RCM knob actions have labels, save commands and restore server choices', () => {
+    const dom = page(fs.readFileSync(path.join(root, 'static/rcm.html'), 'utf8'))
+    try {
+        dom.window.jsPlumb = { ready() {} }
+        dom.window.sentCommands = []
+        dom.window.knobConfig = {
+            switch_id: 281474976710656, topic: "zigbee2mqtt/tyua_knob",
+            buttons: {
+                a: { label: 'Click', command: 'toggle' },
+                b: { label: 'Double-click', command: 'toggle' },
+                c: { label: 'Hold', command: 'stop' },
+                d: { label: 'Rotate left', command: 'off' },
+                e: { label: 'Rotate right', command: 'on' },
+                f: { label: 'Hold + rotate left', command: 'up' },
+                g: { label: 'Hold + rotate right', command: 'down' },
+                h: { label: 'Release hold', command: 'stop' },
+                i: { label: 'Saturation move', command: 'toggle' }
+            }
+        }
+        run(dom, `${script('common.js')}\n${script('rcm.js')}\n
+            jsPlumbInstance = { draggable() {}, makeSource() {}, makeTarget() {}, repaintEverything() {} };
+            wsManager.isConnected = () => true;
+            wsManager.send = value => sentCommands.push(JSON.parse(value));
+            State.zigbeeDevices = { [knobConfig.switch_id]: knobConfig };
+            createSwitch(knobConfig.switch_id, 'tyua_knob', 9, 0, 0);`)
+        const doc = dom.window.document
+        assert.equal(doc.querySelectorAll('.zigbee-command').length, 9)
+        const row = doc.getElementById('switch-281474976710656-btn-d')
+        assert.equal(row.querySelector('.button-name').textContent, 'Rotate left')
+        const select = row.querySelector('.zigbee-command')
+        assert.equal(select.value, 'off')
+        assert.deepEqual([...select.options].map(option => option.value), ['toggle', 'on', 'off', 'up', 'down', 'stop'])
+        assert.equal(row.querySelector('.button-type-toggle').hidden, true)
+        assert.equal(doc.querySelector('.update-btn-switch').hidden, true)
+        select.value = 'up'
+        select.dispatchEvent(new dom.window.Event('change'))
+        assert.equal(select.disabled, true)
+        assert.equal(JSON.stringify(dom.window.sentCommands), JSON.stringify([
+            { type: 'zigbee_command', switch_id: 281474976710656, button_id: 'd', command: 'up' }
+        ]))
+        run(dom, `knobConfig.buttons.d.command = 'up'; applyZigbeeControls(knobConfig)`)
+        assert.equal(select.value, 'up')
+        assert.equal(select.disabled, false)
+        assert.equal(doc.querySelectorAll('.zigbee-command').length, 9)
+        run(dom, `editDeviceName('switch', knobConfig.switch_id)`)
+        assert.equal(doc.getElementById('editButtonNumber').disabled, true)
+        run(dom, `createSwitch(222, 'Wall switch', 3, 0, 0); editDeviceName('switch', 222)`)
+        assert.equal(doc.getElementById('editButtonNumber').disabled, false)
+        assert.equal(doc.getElementById('switch-222').querySelectorAll('.zigbee-command').length, 0)
+        run(dom, `wsManager.isConnected = () => false`)
+        select.value = 'down'
+        select.dispatchEvent(new dom.window.Event('change'))
+        assert.equal(select.value, 'up')
+        assert.equal(dom.window.sentCommands.length, 1)
+    } finally { dom.window.close() }
+})
+
+test('RCM renders discovered Zigbee sensors and keeps command selectors scoped to each device', () => {
+    const dom = page(fs.readFileSync(path.join(root, 'static/rcm.html'), 'utf8'))
+    try {
+        dom.window.jsPlumb = { ready() {} }
+        dom.window.sentCommands = []
+        dom.window.devices = {
+            281474976710670: { switch_id: 281474976710670, topic: 'zigbee2mqtt/kitchen/sensor', buttons: {} },
+            281474976710671: { switch_id: 281474976710671, topic: 'zigbee2mqtt/first', buttons: { a: { label: 'Click', command: 'on' } } },
+            281474976710672: { switch_id: 281474976710672, topic: 'zigbee2mqtt/second', buttons: { a: { label: 'Click', command: 'off' } } }
+        }
+        run(dom, `${script('common.js')}\n${script('rcm.js')}\n
+            jsPlumbInstance = { draggable() {}, makeSource() {}, makeTarget() {}, repaintEverything() {} };
+            wsManager.isConnected = () => true;
+            wsManager.send = value => sentCommands.push(JSON.parse(value));
+            State.zigbeeDevices = devices;
+            State.zigbeeStates[281474976710670] = { temperature: 21.5, battery: 90 };
+            createSwitch(281474976710670, 'kitchen/sensor', 0, 0, 0);
+            createSwitch(281474976710671, 'first', 1, 0, 0);
+            createSwitch(281474976710672, 'second', 1, 0, 0);`)
+        const doc = dom.window.document
+        assert.equal(doc.querySelectorAll('.zigbee-device').length, 3)
+        const sensor = doc.getElementById('switch-281474976710670')
+        assert.equal(sensor.querySelectorAll('.button-item').length, 0)
+        assert.match(sensor.querySelector('.zigbee-details').textContent, /temperature: 21.5/)
+        const first = doc.getElementById('switch-281474976710671').querySelector('.zigbee-command')
+        const second = doc.getElementById('switch-281474976710672').querySelector('.zigbee-command')
+        assert.equal(first.value, 'on')
+        assert.equal(second.value, 'off')
+        second.value = 'toggle'
+        second.dispatchEvent(new dom.window.Event('change'))
+        assert.equal(JSON.stringify(dom.window.sentCommands), JSON.stringify([
+            { type: 'zigbee_command', switch_id: 281474976710672, button_id: 'a', command: 'toggle' }
+        ]))
+        assert.equal(first.value, 'on')
+    } finally { dom.window.close() }
+})

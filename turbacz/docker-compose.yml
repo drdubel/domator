@@ -11,13 +11,13 @@ services:
       postgres:
         condition: service_started
       mosquitto:
-        condition: service_started
+        condition: service_healthy
       victoriametrics:
         condition: service_started
     environment:
       - TURBACZ_CONFIG_PATH=/app/turbacz.toml
     volumes:
-      - ./turbacz.toml:/app/turbacz.toml
+      - ./turbacz.toml:/app/turbacz.toml:ro
       # Uploaded OTA images. A named volume, not a path under static/, so the
       # binaries (which embed WiFi/MQTT credentials) survive restarts without
       # ever being reachable through the public static mount.
@@ -33,7 +33,7 @@ services:
     environment:
       POSTGRES_DB: turbacz
       POSTGRES_USER: turbacz
-      POSTGRES_PASSWORD: turbacz
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
@@ -41,22 +41,39 @@ services:
   mosquitto:
     image: eclipse-mosquitto:2.0
     ports:
-      - "1883:1883"
-      - "9883:9883"
+      - "${DOMATOR_MQTT_BIND:-127.0.0.1}:1883:1883"
+      - "127.0.0.1:9883:9883"
     volumes:
-      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
-      - ./mosquitto.acl:/mosquitto/config/mosquitto.acl
-      - ./mosquitto.passwd:/mosquitto/config/mosquitto.passwd
+      - type: bind
+        source: ./mosquitto.conf
+        target: /mosquitto/config/mosquitto.conf
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./mosquitto.acl
+        target: /mosquitto/config/mosquitto.acl
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./mosquitto.passwd
+        target: /mosquitto/config/mosquitto.passwd
+        bind:
+          create_host_path: false
       - mosquitto_data:/mosquitto/data
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "1883"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
     restart: unless-stopped
 
   homeassistant:
-    image: ghcr.io/home-assistant/home-assistant:stable
+    image: ghcr.io/home-assistant/home-assistant:2026.9.4
     ports:
-      - "8123:8123"
+      - "127.0.0.1:8123:8123"
     depends_on:
       mosquitto:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - ./homeassistant:/config
       - /etc/localtime:/etc/localtime:ro
@@ -71,12 +88,12 @@ services:
     # current patched 13.2 release used by this dashboard.
     image: grafana/grafana:13.2.2
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       victoriametrics:
         condition: service_started
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}
       - GF_SECURITY_ADMIN_USER=admin
       # Grafana 13's unified-storage workers perform concurrent reads and
       # writes. SQLite's default rollback journal and zero query retries can
@@ -96,12 +113,12 @@ services:
     restart: unless-stopped
 
   victoriametrics:
-    image: victoriametrics/victoria-metrics:latest
+    image: victoriametrics/victoria-metrics:v1.153.0
     command:
       - -storageDataPath=/victoriametrics_data
       - -promscrape.config=/etc/victoriametrics/prometheus.yml
     ports:
-      - "8428:8428"
+      - "127.0.0.1:8428:8428"
     volumes:
       - victoriametrics_data:/victoriametrics_data
       - ./monitoring/prometheus.yml:/etc/victoriametrics/prometheus.yml:ro

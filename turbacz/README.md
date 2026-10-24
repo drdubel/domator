@@ -10,6 +10,20 @@ Stable version of project **Domator**.
 
 3. Enter ```turbacz``` directory and run ```uv sync```
 
+On FreeBSD, install the PostgreSQL client package providing system `libpq`
+before running `uv sync`. Turbacz uses pure Python Psycopg there because
+`psycopg-binary` does not provide FreeBSD wheels. Linux, macOS and Windows
+use the binary extra. See [Psycopg installation](https://www.psycopg.org/psycopg3/docs/basic/install.html#pure-python-installation).
+
+Check the PostgreSQL adapter without connecting to the database:
+
+```sh
+uv run --frozen python -c "import psycopg; print(psycopg.pq.__impl__)"
+```
+
+On FreeBSD this should print `python`; if `libpq` cannot be found, check that
+the PostgreSQL client library is installed and discoverable by the system loader.
+
 ### Run MQTT Server
 
 1. Install mosquitto:  
@@ -77,6 +91,43 @@ port = 5432
 > `token_endpoint_auth_method = "client_secret_post"` (others use
 > `client_secret_basic`).
 
+### Zigbee2MQTT devices in RCM
+
+Turbacz subscribes to `zigbee2mqtt/#` on its MQTT broker. Zigbee2MQTT must use
+that same broker. Each device gets its own RCM card when Turbacz receives its
+state or availability, or discovers it in `zigbee2mqtt/bridge/devices`.
+Nothing is created on startup without device data. Previously created
+placeholder knob cards are hidden until an actual device is discovered.
+
+Cards use the device's friendly name, including names such as
+`kitchen/sensor`. Bridge status/logging and `/set`, `/get`, and `/action`
+endpoints are not additional devices. Sensor cards have no action buttons
+unless the device advertises or sends actions. Retained messages can discover
+real devices but never replay a physical action. See the
+[Zigbee2MQTT topic reference](https://www.zigbee2mqtt.io/guide/usage/mqtt_topics_and_messages.html).
+
+Advertised and observed actions become labeled buttons (up to 24 per device).
+Connect those buttons to relay outputs using RCM's usual connection lines,
+then choose **Light: Toggle / On / Off** or **Blind: Up / Down / Stop** from
+each action's dropdown. For a blind, connect either output of an existing
+blind pair; Turbacz controls the whole pair. Multiple targets are supported.
+Each device has independent connections and command choices, stored in
+PostgreSQL and preserved across restarts. Unconnected actions do nothing.
+
+Tuya knobs work under any friendly name, including `tyua_knob`. Event and
+command mode aliases share the corresponding action button. Click defaults
+to Toggle; Rotate left/right default to Off/On. For a blind, choose Stop,
+Up and Down instead. Mesh firmware updates and ping/RSSI status do not apply
+to Zigbee cards.
+
+Optional integration settings (action assignments remain in RCM):
+
+```toml
+[zigbee]
+enabled = true
+base_topic = "zigbee2mqtt"
+```
+
 ### PostgreSQL setup (local)
 
 On Ubuntu:
@@ -91,6 +142,17 @@ sudo -u postgres psql -c "CREATE USER turbacz WITH PASSWORD 'turbacz';"
 sudo -u postgres psql -c "CREATE DATABASE turbacz OWNER turbacz;"
 ```
 3. Ensure your `turbacz.toml` `[psql]` section points to this database.
+
+Multiple Turbacz instances can point to the same PostgreSQL database. Database
+calls finish their transactions, including reads, so an idle instance does not
+hold table locks that block another instance's startup migrations. When upgrading
+from a version that left read transactions open, restart all instances.
+
+The database regression test can use a disposable PostgreSQL database:
+```bash
+TURBACZ_TEST_POSTGRES_DSN='dbname=turbacz_test' uv run pytest tests/test_database.py
+```
+It creates and removes a uniquely named schema within that database.
 
 ### Firmware / OTA
 
@@ -236,3 +298,10 @@ Enable it with `[ha] enabled = true` in `turbacz.toml` (or answer yes in `setup.
 `docker compose up -d --build turbacz homeassistant`, then add the MQTT integration in Home
 Assistant with broker `mosquitto` port `1883`. See
 [docs/home_assistant.md](../docs/home_assistant.md).
+
+For the October security fixes, read the
+[issue review and existing-installation migration steps](../docs/issue-fixes-2026-10-05.md)
+before deployment. Existing users need explicit role assignments, and Compose requires
+database/Grafana secrets. `/metrics` is public by operator request;
+`/api/temperatures` still requires authentication.
+`setup.sh` is for new installations and refuses to overwrite existing secrets.

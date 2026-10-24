@@ -1,0 +1,6 @@
+# Copy to key.properties (gitignored); chmod 600 key.properties.
+# Paths are relative to android/ unless absolute.
+storeFile=/absolute/path/to/release.jks
+storePassword=replace-me
+keyAlias=upload
+keyPassword=replace-me

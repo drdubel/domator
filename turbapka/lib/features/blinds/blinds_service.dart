@@ -13,10 +13,20 @@ class BlindsService extends ChangeNotifier {
 
   List<BlindPair> pairs = [];
   final List<LegacyBlind> legacyBlinds = [
-    for (final (id, name) in legacyBlindDefinitions) LegacyBlind(id: id, name: name),
+    for (final (id, name) in legacyBlindDefinitions)
+      LegacyBlind(id: id, name: name),
   ];
 
-  BlindsService(String token) : _ws = WsClient(path: '/blinds/ws', token: token) {
+  BlindsService(
+    String token, {
+    void Function()? onAuthFailure,
+    void Function()? onConnectionError,
+  }) : _ws = WsClient(
+         path: '/blinds/ws',
+         token: token,
+         onAuthFailure: onAuthFailure,
+         onConnectionError: onConnectionError,
+       ) {
     _ws.messages.listen(_handleMessage);
     _ws.connect();
   }

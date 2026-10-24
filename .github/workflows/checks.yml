@@ -1,0 +1,70 @@
+name: Tests and parser sanitizers
+on:
+  pull_request:
+  push:
+    branches: [main, czupel]
+permissions:
+  contents: read
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: turbacz
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: 0.12.17
+          python-version: '3.14'
+      - run: uv sync --frozen
+      - run: uv run --frozen pytest -q
+      - run: uv run --frozen ruff check --select E9,F63,F7,F82 turbacz tests
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: turbacz/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm test
+  flutter:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: turbapka
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: '3.44.4'
+      - run: flutter pub get --enforce-lockfile
+      - run: flutter analyze
+      - run: flutter test
+  firmware-parsers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - run: |
+          clang -fsanitize=address,undefined -I uc/buttonsMeshIDF/src uc/buttonsMeshIDF/tests/mesh_protocol_test.c -o /tmp/mesh-test
+          /tmp/mesh-test
+          clang -fsanitize=address,undefined -I uc/buttonsMeshIDF/src uc/buttonsMeshIDF/tests/remote_protocol_test.c -o /tmp/remote-test
+          /tmp/remote-test
+          clang++ -std=c++11 -fsanitize=address,undefined -I uc/blinds_wifi/src uc/blinds_wifi/tests/command_parser_test.cpp -o /tmp/blind-test
+          /tmp/blind-test
+          clang++ -std=c++11 -fsanitize=address,undefined -I uc/heating/src uc/heating/tests/command_parser_test.cpp -o /tmp/heating-test
+          /tmp/heating-test
+          clang -fsanitize=fuzzer,address,undefined -I uc/buttonsMeshIDF/src uc/buttonsMeshIDF/tests/mesh_protocol_fuzz.c -o /tmp/mesh-fuzz
+          mkdir -p /tmp/mesh-corpus
+          python3 - <<'PYTHON'
+          import struct
+          from pathlib import Path
+          for kind, data in [('B', b'a1'), ('R', b'A1'), ('P', b'00'), ('T', b'S'), ('Y', b''), ('U', b''), ('C', b'a1'), ('S', b'{}'), ('E', b'x' * 250)]:
+              Path('/tmp/mesh-corpus', kind).write_bytes(struct.pack('<QBHIB512s', 1, ord(kind), len(data), 0, 0, data))
+          PYTHON
+          /tmp/mesh-fuzz /tmp/mesh-corpus -runs=100000 -max_len=528

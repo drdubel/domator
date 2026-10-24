@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RCM</title>
+    <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
     <script src="https://cdn.jsdelivr.net/npm/jsplumb@2.15.6/dist/js/jsplumb.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="/sentry-config.js"></script>
@@ -55,6 +56,10 @@
                     <button class="toolbar-btn btn-show-hidden" onclick="showAllHiddenDevices()"
                         title="Show all hidden devices">
                         <span>👁️</span> <span class="btn-text">Show</span>
+                    </button>
+                    <button id="arrangeDevicesButton" class="toolbar-btn btn-arrange" onclick="cycleDeviceArrangement()"
+                        title="Click to cycle Columns, Grid, Paired and Connections layouts.">
+                        <span>▦</span> <span class="btn-text">Arrange</span>
                     </button>
                     <button class="toolbar-btn btn-reset-positions" onclick="resetAllPositions()"
                         title="Reset all device card positions to default layout">

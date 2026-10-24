@@ -9,7 +9,7 @@ domator_instances:
     labels: {apartment: "59"}
     # turbacz still runs on the host (rc.d/turbacz): the jail is prepared but
     # nothing starts until the cutover (README.md "Cutover").
-    service: false
+    service: true
   - name: czupel
     branch: czupel
     uid: 1434

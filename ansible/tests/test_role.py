@@ -47,6 +47,8 @@ class RenderedTest(unittest.TestCase):
                                              "forwarded_allow_ips": f"192.168.{net}.10"})
             self.assertEqual(cfg["oidc"]["redirect_uri"], f"https://{inst['domain']}/auth")
             self.assertEqual(cfg["security"]["allowed_origins"], [f"https://{inst['domain']}"])
+            # VictoriaMetrics scrapes the jail by IP (scrape.yml).
+            self.assertIn(f"192.168.{net}.11", cfg["security"]["allowed_hosts"])
             self.assertEqual(cfg["mqtt"]["host"], "192.168.3.10")
             self.assertEqual(cfg["mqtt"]["username"], name)
             self.assertEqual(cfg["monitoring"]["metrics"], f"http://192.168.{net}.10:8428")

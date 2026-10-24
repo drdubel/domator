@@ -34,6 +34,10 @@ port = {{ domator_app_port }}
 forwarded_allow_ips = {{ dj_gw_ip | to_json }}
 
 [security]
+# VictoriaMetrics on virgo scrapes http://<jail ip>:<port>/metrics, so the
+# jail address is a valid Host too; the public domain is trusted through
+# oidc.redirect_uri. Without it the scrape gets 400 "Invalid Host".
+allowed_hosts = {{ ['localhost', '127.0.0.1', '::1', dj_jail_ip] | to_json }}
 allowed_origins = {{ ['https://' ~ dj_domain] | to_json }}
 
 [monitoring]

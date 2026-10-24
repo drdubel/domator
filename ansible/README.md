@@ -96,9 +96,8 @@ secret_domator:
     ...
 ```
 
-`mise run secrets` edits it. The values for turbacz are those of today's
-`/home/turbacz/git/domator/turbacz/turbacz.toml`; the Google OAuth client
-must also list `https://czupel.dry.pl/auth` as a redirect URI.
+`mise run secrets` edits it. The Google OAuth client
+must list `https://czupel.dry.pl/auth` as a redirect URI.
 
 ## First installation
 
@@ -116,22 +115,6 @@ ssh virgo doas pfctl -nf /etc/pf.conf && ssh virgo doas pfctl -f /etc/pf.conf
 # 3. everything: packages, accounts, config, czupel's first deployment
 mise run deploy-step
 ```
-
-## Cutover of turbacz
-
-`turbacz` has `service: false` while turbacz still runs on the host: the jail
-is ready, but nothing in it starts and nginx still points at the host. Only
-one turbacz may talk to the broker at a time.
-
-1. Copy the OTA images:
-   `doas cp -Rp /home/turbacz/git/domator/turbacz/firmware/. /usr/local/jails/turbacz/var/db/domator/firmware/`.
-2. Stop the host instance: `doas service turbacz stop && doas sysrc turbacz_enable=NO`.
-3. Set `service: true` for turbacz and run `mise run deploy-step`: first
-   deployment, vhost to the jail, scrape target.
-4. Check https://turbacz.dry.pl, then remove `/usr/local/etc/rc.d/turbacz`.
-
-Back: `service: false`, deploy, `doas service turbacz start` on the host and
-restore the old vhost from `~/git/dom/virgo/inventory/files`.
 
 ## Tests
 

@@ -31,8 +31,6 @@ class InstancesTest(unittest.TestCase):
         self.assertEqual(INSTANCES["turbacz"]["uid"], 1432)
         self.assertEqual(len({i["net"] for i in INSTANCES.values()}), len(INSTANCES))
         self.assertEqual(len({i["uid"] for i in INSTANCES.values()}), len(INSTANCES))
-        # turbacz still runs on the host until the cutover.
-        self.assertIs(INSTANCES["turbacz"]["service"], False)
 
 
 class RenderedTest(unittest.TestCase):

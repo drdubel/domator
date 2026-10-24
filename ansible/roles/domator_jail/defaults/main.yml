@@ -5,7 +5,7 @@
 #   uid      service user inside the jail (turbacz keeps its host uid 1432)
 #   net      192.168.<net>.0/24 on epair<net>: host .10, jail .11
 #   domain   public vhost; GitHub Actions calls https://<domain>/_deploy
-#   service  false = prepare only: no app, hook, vhost or scrape (cutover)
+#   service  false = prepare only: no app, hook, vhost or scrape (default true)
 #   db       database name (default: name)
 #   labels   [monitoring] labels and scrape labels, e.g. {apartment: "59"}
 #   ha       [ha] enabled

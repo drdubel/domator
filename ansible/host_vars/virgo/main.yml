@@ -7,9 +7,6 @@ domator_instances:
     net: 51
     domain: turbacz.dry.pl
     labels: {apartment: "59"}
-    # turbacz still runs on the host (rc.d/turbacz): the jail is prepared but
-    # nothing starts until the cutover (README.md "Cutover").
-    service: true
   - name: czupel
     branch: czupel
     uid: 1434

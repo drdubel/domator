@@ -19,6 +19,21 @@ def integer(value, low, high):
         raise ValueError("Expected a bounded integer")
 
 
+def normalize_payload(topic, payload):
+    """Accept the single C-string terminator emitted by older mesh roots.
+
+    Limit compatibility to button frames; embedded/repeated NUL bytes and
+    other telemetry must still fail their normal validation.
+    """
+    if (
+        topic.startswith("/switch/state/")
+        and topic != "/switch/state/root"
+        and re.fullmatch(r"[a-x](?:[01])?\x00", payload)
+    ):
+        return payload[:-1]
+    return payload
+
+
 def validate_payload(topic, payload):
     if topic.startswith(f"{config.zigbee.base_topic}/"):
         from turbacz.zigbee_devices import validate_zigbee_payload

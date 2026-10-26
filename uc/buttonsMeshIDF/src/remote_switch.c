@@ -11,6 +11,9 @@
 #include "esp_system.h"
 #include <sys/time.h>
 #include "driver/gpio.h"
+#ifdef CONFIG_IDF_TARGET_ESP32C6
+#include "driver/usb_serial_jtag.h"
+#endif
 #include "esp_now.h"
 #include "esp_random.h"
 #include "esp_sleep.h"
@@ -370,6 +373,29 @@ static REMOTE_RETAIN uint32_t button_count;
 static bool radio_running, radio_initialized;
 static bool ping_pending;
 static uint16_t pending_ping;
+static bool remote_diagnostics;
+
+static bool remote_service_buttons(void);
+
+static void remote_led_set(bool on) {
+#ifndef CONFIG_DOMATOR_REMOTE_ACTIVITY_LED
+    on = false;
+#endif
+    ESP_ERROR_CHECK(gpio_set_level(LED_GPIO, on ? REMOTE_LED_ON_LEVEL : REMOTE_LED_OFF_LEVEL));
+}
+
+void remote_switch_led_init(void) {
+#ifndef CONFIG_IDF_TARGET_ESP32C6
+    gpio_deep_sleep_hold_dis();
+#endif
+    // Beetle V1.1 GPIO15 -> resistor -> blue LED -> GND is active HIGH.
+    // Set the output register before releasing a retained pad to avoid a flash.
+    gpio_config_t led = {.pin_bit_mask = 1ULL << LED_GPIO, .mode = GPIO_MODE_OUTPUT};
+    ESP_ERROR_CHECK(gpio_config(&led));
+    ESP_ERROR_CHECK(gpio_set_level(LED_GPIO, REMOTE_LED_OFF_LEVEL));
+    ESP_ERROR_CHECK(gpio_hold_dis(LED_GPIO));
+    ESP_ERROR_CHECK(gpio_sleep_sel_dis(LED_GPIO));
+}
 
 /* gettimeofday uses the RTC across deep sleep; esp_timer resets on each boot.
  * ISRs keep using esp_timer (IRAM safe), with a fixed per-boot offset. */
@@ -423,14 +449,20 @@ static bool remote_send(char type, const void* data, size_t len) {
     };
     packet.payload[0] = type;
     memcpy(packet.payload + 1, data, len);
-    gpio_set_level(LED_GPIO, 0);
+    remote_led_set(true);
+    int64_t started = esp_timer_get_time();
     for (int attempt = 0; attempt < REMOTE_ATTEMPTS; attempt++) {
         if (!send_now(gateway_mac, &packet)) continue;
         int64_t deadline = esp_timer_get_time() + REMOTE_ACK_WAIT_MS * 1000;
         while (esp_timer_get_time() < deadline) {
+            // Commit inputs into a separate FIFO while waiting for this ACK.
+            // A button callback must never recursively transmit another packet.
+            remote_service_buttons();
             received_t rx;
             int64_t wait_us = deadline - esp_timer_get_time();
-            TickType_t wait_ticks = pdMS_TO_TICKS((wait_us > 0 ? wait_us : 1) / 1000 + 1);
+            int wait_ms = (wait_us > 0 ? wait_us : 1) / 1000 + 1;
+            if (wait_ms > 5) wait_ms = 5;
+            TickType_t wait_ticks = pdMS_TO_TICKS(wait_ms);
             if (xQueueReceive(now_rx, &rx, wait_ticks) != pdTRUE) continue;
             if (memcmp(rx.mac, gateway_mac, 6) || !authentic(&rx.packet) ||
                 rx.packet.device_id != g_device_id) continue;
@@ -439,45 +471,89 @@ static bool remote_send(char type, const void* data, size_t len) {
             if (rx.packet.kind == REMOTE_ACK && rx.packet.session == packet.session &&
                 rx.packet.sequence == packet.sequence) {
                 g_stats.mesh_send_success++;
-                gpio_set_level(LED_GPIO, 1);
+                remote_led_set(false);
+                if (remote_diagnostics && type == MSG_TYPE_BUTTON)
+                    ESP_LOGW(TAG, "Button %.*s acknowledged, seq=%lu, radio=%lld ms", (int)len,
+                        (const char*)data, (unsigned long)packet.sequence,
+                        (long long)((esp_timer_get_time() - started) / 1000));
                 return true;
             }
         }
     }
-    gpio_set_level(LED_GPIO, 1);
+    remote_led_set(false);
     g_stats.mesh_send_failed++;
     ESP_LOGW(TAG, "No root acknowledgment for remote event %lu", (unsigned long)packet.sequence);
+    if (type == MSG_TYPE_BUTTON)
+        ESP_LOGW(TAG, "Undelivered button %.*s", (int)len, (const char*)data);
     return false;
 }
 
 typedef struct { int index, value; int64_t at; } button_edge_t;
+typedef struct { char payload[3]; uint8_t length; } button_tx_t;
 static QueueHandle_t button_edges;
+static QueueHandle_t button_tx;
+static volatile bool button_edge_overflow;
+static const remote_button_timing_t button_timing = {
+    BUTTON_DEBOUNCE_MS * 1000, LONG_PRESS_THRESHOLD_MS * 1000,
+    BUTTON_PRESS_OTA_INTERVAL_MS * 1000, BUTTON_PRESS_OTA_THRESHOLD_MS * 1000,
+};
 
 static void IRAM_ATTR remote_button_isr(void* arg) {
     int i = (int)(intptr_t)arg;
     button_edge_t edge = {i, gpio_get_level(g_button_pins[i]), remote_time()};
     BaseType_t woken = pdFALSE;
-    xQueueSendFromISR(button_edges, &edge, &woken);
+    if (xQueueSendFromISR(button_edges, &edge, &woken) != pdTRUE)
+        button_edge_overflow = true;
     if (woken) portYIELD_FROM_ISR();
 }
 
-static void commit_button(int i) {
-    remote_button_event_t event = remote_button_commit(&buttons[i],
-        LONG_PRESS_THRESHOLD_MS * 1000, BUTTON_PRESS_OTA_INTERVAL_MS * 1000,
-        BUTTON_PRESS_OTA_THRESHOLD_MS * 1000);
+static void queue_button_event(int i, remote_button_event_t event) {
     if (event.ota) g_ota_requested = true;
     button_count++;
-    char payload[3] = {'a' + i, event.value ? '1' : '0', event.long_press ? '1' : '0'};
-    remote_send(MSG_TYPE_BUTTON, payload, event.value ? 2 : 3);
+    button_tx_t tx = {.payload = {'a' + i, event.value ? '1' : '0', event.long_press ? '1' : '0'},
+                      .length = event.value ? 2 : 3};
+    if (xQueueSend(button_tx, &tx, 0) != pdTRUE)
+        ESP_LOGE(TAG, "Button transmit queue full: lost %.*s", tx.length, tx.payload);
+    if (remote_diagnostics)
+        ESP_LOGW(TAG, "GPIO%d button %c debounced=%d, long=%d", g_button_pins[i],
+            'a' + i, event.value, event.long_press);
+}
+
+static void commit_button(int i) {
+    remote_button_event_t event = remote_button_commit(&buttons[i], button_timing.long_press_us,
+        button_timing.ota_interval_us, button_timing.ota_hold_us);
+    queue_button_event(i, event);
 }
 
 static void observe_button(int i, int value, int64_t at) {
-    remote_button_t* b = &buttons[i];
-    if (value == b->candidate) return;
-    // Preserve a complete debounced press queued during another radio send.
-    if (remote_button_ready(b, at, BUTTON_DEBOUNCE_MS * 1000)) commit_button(i);
-    b->candidate = value;
-    b->changed = at;
+    if (remote_diagnostics && at >= buttons[i].changed && value != buttons[i].candidate)
+        ESP_LOGW(TAG, "GPIO%d button %c raw=%d at=%lld ms", g_button_pins[i],
+            'a' + i, value, (long long)(at / 1000));
+    remote_button_event_t event;
+    if (remote_button_observe(&buttons[i], value, at, &button_timing, &event))
+        queue_button_event(i, event);
+}
+
+/* This function never transmits or waits on the network. All pins get sampled
+ * before the sender handles the next FIFO event, regardless of GPIO order. */
+static bool remote_service_buttons(void) {
+    if (button_edge_overflow) {
+        button_edge_overflow = false;
+        ESP_LOGW(TAG, "Button edge queue overflow; resampling inputs");
+    }
+    button_edge_t edge;
+    while (xQueueReceive(button_edges, &edge, 0) == pdTRUE)
+        observe_button(edge.index, edge.value, edge.at);
+    bool bouncing = false;
+    for (int i = 0; i < NUM_BUTTONS; i++) {
+        int64_t now = remote_time();
+        observe_button(i, gpio_get_level(g_button_pins[i]), now);
+        if (buttons[i].candidate != buttons[i].stable) {
+            if (remote_button_ready(&buttons[i], now, button_timing.debounce_us)) commit_button(i);
+            else bouncing = true;
+        }
+    }
+    return bouncing;
 }
 
 static void remote_status(void) {
@@ -530,19 +606,11 @@ void remote_switch_run(void) {
     int64_t usb_awake_until = resume ? 0 : esp_timer_get_time() + BATTERY_USB_GRACE_US;
 #endif
     ota_check_rollback_on_boot();
-    // Both boards use a discrete active-low LED (C3 GPIO8, Beetle GPIO15).
-#ifndef CONFIG_IDF_TARGET_ESP32C6
-    gpio_deep_sleep_hold_dis();
-#endif
-    ESP_ERROR_CHECK(gpio_hold_dis(LED_GPIO));
-    gpio_config_t led = {.pin_bit_mask = 1ULL << LED_GPIO, .mode = GPIO_MODE_OUTPUT};
-    ESP_ERROR_CHECK(gpio_config(&led));
-    gpio_set_level(LED_GPIO, 1);
-    // IDF's GPIO sleep workaround isolates pads by default. Keep the
-    // active-low LED driven high instead of floating in sleep.
-    ESP_ERROR_CHECK(gpio_sleep_sel_dis(LED_GPIO));
+    remote_switch_led_init();
     button_edges = xQueueCreate(64, sizeof(button_edge_t));
+    button_tx = xQueueCreate(64, sizeof(button_tx_t));
     configASSERT(button_edges);
+    configASSERT(button_tx);
     ESP_ERROR_CHECK(gpio_install_isr_service(ESP_INTR_FLAG_IRAM));
     for (int i = 0; i < NUM_BUTTONS; i++) {
 #ifdef CONFIG_IDF_TARGET_ESP32C6
@@ -570,37 +638,46 @@ void remote_switch_run(void) {
         do { remote_session = esp_random(); } while (!remote_session);
     }
     while (true) {
-        button_edge_t edge;
-        while (xQueueReceive(button_edges, &edge, 0) == pdTRUE)
-            observe_button(edge.index, edge.value, edge.at);
-        bool bouncing = false;
-        for (int i = 0; i < NUM_BUTTONS; i++) {
-            int64_t now = remote_time();
-            observe_button(i, gpio_get_level(g_button_pins[i]), now);
-            if (buttons[i].candidate != buttons[i].stable) {
-                if (now - buttons[i].changed < BUTTON_DEBOUNCE_MS * 1000) bouncing = true;
-                else commit_button(i);
-            }
+#ifdef CONFIG_IDF_TARGET_ESP32C6
+        bool debug_usb = usb_serial_jtag_is_connected();
+        if (debug_usb && !remote_diagnostics) {
+            ESP_LOGW(TAG, "USB button diagnostics enabled; GPIO4=a GPIO5=b GPIO6=c GPIO7=d");
+            for (int i = 0; i < NUM_BUTTONS; i++)
+                ESP_LOGW(TAG, "GPIO%d initial level=%d", g_button_pins[i], gpio_get_level(g_button_pins[i]));
+        }
+        remote_diagnostics = debug_usb;
+#endif
+        bool bouncing = remote_service_buttons();
+        button_tx_t tx;
+        if (xQueueReceive(button_tx, &tx, 0) == pdTRUE) {
+            remote_send(MSG_TYPE_BUTTON, tx.payload, tx.length);
+            continue;
         }
         int64_t now = remote_time();
         if (!bouncing && now >= next_status) {
             remote_status();
             next_status = now + REMOTE_HEARTBEAT_US;
         }
+        if (uxQueueMessagesWaiting(button_tx)) continue;
         // Process queued ping exchanges without recursive radio transactions.
-        for (int round = 0; ping_pending && round < PING_PONG_NUMBER + 1; round++) {
+        for (int round = 0; ping_pending && !uxQueueMessagesWaiting(button_tx) &&
+             round < PING_PONG_NUMBER + 1; round++) {
             ping_pending = false;
             remote_send(MSG_TYPE_PING, &pending_ping, sizeof(pending_ping));
         }
         if (g_ota_requested) {
             g_ota_in_progress = true;
-            gpio_set_level(LED_GPIO, 0);
+            remote_led_set(true);
             if (now_started) esp_now_deinit();
             now_started = false;
             mesh_disconnect_and_ota();
             esp_restart(); // Failed/unconfigured OTA must not leave radio awake.
         }
-        if (uxQueueMessagesWaiting(button_edges)) continue;
+        if (uxQueueMessagesWaiting(button_edges) || uxQueueMessagesWaiting(button_tx)) continue;
+        bool usb_awake = false;
+#ifdef CONFIG_IDF_TARGET_ESP32C6
+        usb_awake = battery_usb_keeps_awake(&usb_awake_until);
+#endif
         if (radio_running) {
             // Briefly drain downlink (OTA/ping) arriving beside the root ACK.
             received_t rx;
@@ -611,18 +688,22 @@ void remote_switch_run(void) {
                     rx.packet.device_id == g_device_id) handle_remote_command(&rx.packet);
             }
             if (g_ota_requested || ping_pending) continue;
-            ESP_ERROR_CHECK(esp_wifi_stop());
-            radio_running = false;
+            if (!usb_awake) {
+                ESP_ERROR_CHECK(esp_wifi_stop());
+                radio_running = false;
+            }
         }
         // USB requires clocks that BOTH manual sleep modes would stop. Keep
         // servicing buttons/heartbeats while attached to a computer so USB
         // provisioning and firmware uploads can reset into the downloader.
-#ifdef CONFIG_IDF_TARGET_ESP32C6
-        if (battery_usb_keeps_awake(&usb_awake_until)) {
-            vTaskDelay(pdMS_TO_TICKS(10));
+        if (usb_awake) {
+            vTaskDelay(pdMS_TO_TICKS(2));
             continue;
         }
-#endif
+        // Wi-Fi stop/draining can receive more edges. Settle them before
+        // arming sleep; pending transmissions must not wait for a heartbeat.
+        bouncing = remote_service_buttons();
+        if (uxQueueMessagesWaiting(button_edges) || uxQueueMessagesWaiting(button_tx)) continue;
         for (int i = 0; i < NUM_BUTTONS; i++) {
             ESP_ERROR_CHECK(gpio_intr_disable(g_button_pins[i]));
             ESP_ERROR_CHECK(gpio_wakeup_enable(g_button_pins[i], buttons[i].candidate ?
@@ -653,9 +734,8 @@ void remote_switch_run(void) {
         ESP_ERROR_CHECK(esp_sleep_enable_timer_wakeup(remaining > 0 ? remaining : 1));
         esp_err_t err = ESP_OK;
         if (!uxQueueMessagesWaiting(button_edges)) {
-            // Latch the physical pad high, not just its awake GPIO register.
-            // Release after waking so transmission/OTA indications still work.
-            ESP_ERROR_CHECK(gpio_set_level(LED_GPIO, 1));
+            // Latch the board-specific OFF level across sleep.
+            remote_led_set(false);
             ESP_ERROR_CHECK(gpio_hold_en(LED_GPIO));
 #ifdef CONFIG_IDF_TARGET_ESP32C6
             if (!bouncing && !interactive && remaining > 250000) {

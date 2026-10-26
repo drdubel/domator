@@ -145,6 +145,64 @@ test('RCM gateway controls follow reported roles and retain remote button cards'
     } finally { dom.window.close() }
 })
 
+test('RCM remote badge aligns with identity and stays hidden for powered switches', () => {
+    const dom = rcmPage()
+    try {
+        const style = dom.window.document.createElement('style')
+        style.textContent = fs.readFileSync(path.join(root, 'static/styles/rcm.css'), 'utf8')
+        dom.window.document.head.appendChild(style)
+        run(dom, `State.deviceRoles[222] = {type: 'remote'};
+            createSwitch(222, 'Battery switch', 4, 0, 0);
+            createSwitch(333, 'Powered switch', 3, 0, 0);`)
+        const doc = dom.window.document
+        const remote = doc.querySelector('[data-remote-switch="222"]')
+        assert.equal(remote.hidden, false)
+        assert.equal(remote.closest('.device-header-identity').querySelector('.device-id').textContent, 'ID: 222')
+        assert.equal(dom.window.getComputedStyle(remote).display, 'inline-flex')
+        assert.equal(dom.window.getComputedStyle(remote.parentElement).alignItems, 'center')
+        assert.equal(dom.window.getComputedStyle(doc.querySelector('.device-header-actions')).alignItems, 'center')
+        assert.equal(dom.window.getComputedStyle(doc.querySelector('[data-remote-switch="333"]')).display, 'none')
+        assert.equal(dom.window.getComputedStyle(doc.querySelector('[data-gateway-switch="222"]')).display, 'none')
+    } finally { dom.window.close() }
+})
+
+test('RCM remote clicks flash all inputs and repeated clicks restart only their own timer', () => {
+    const dom = rcmPage()
+    try {
+        run(dom, `State.deviceRoles[222] = {type: 'remote'};
+            createSwitch(222, 'Battery switch', 4, 0, 0);`)
+        const pending = new Map()
+        let timerId = 0
+        dom.window.setTimeout = (callback, delay) => {
+            assert.equal(delay, 5000)
+            pending.set(++timerId, callback)
+            return timerId
+        }
+        dom.window.clearTimeout = id => pending.delete(id)
+        const click = button => {
+            dom.window.buttonMessage = {type: 'switch_state', switch_id: 222, button_id: button}
+            run(dom, 'wsManager.onMessage({data: JSON.stringify(buttonMessage)})')
+        }
+        for (const button of ['a', 'b', 'c']) {
+            click(button)
+            assert.ok(dom.window.document.getElementById(`switch-222-btn-${button}`).classList.contains('button-activity'))
+        }
+        assert.equal(pending.size, 3)
+        const oldBTimer = run(dom, 'State.buttonHighlightTimers.get("222-b")')
+        click('b')
+        assert.equal(pending.size, 3)
+        assert.equal(pending.has(oldBTimer), false)
+        const newBTimer = run(dom, 'State.buttonHighlightTimers.get("222-b")')
+        pending.get(newBTimer)()
+        assert.equal(dom.window.document.getElementById('switch-222-btn-b').classList.contains('button-activity'), false)
+        assert.ok(dom.window.document.getElementById('switch-222-btn-a').classList.contains('button-activity'))
+        assert.ok(dom.window.document.getElementById('switch-222-btn-c').classList.contains('button-activity'))
+        run(dom, 'appSettings.enableButtonHighlightAnimation = false')
+        click('d')
+        assert.equal(dom.window.document.getElementById('switch-222-btn-d').classList.contains('button-activity'), false)
+    } finally { dom.window.close() }
+})
+
 function rcmPage() {
     const dom = page(fs.readFileSync(path.join(root, 'static/rcm.html'), 'utf8'))
     dom.window.jsPlumb = { ready() {} }

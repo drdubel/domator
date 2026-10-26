@@ -349,13 +349,13 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
                     char payload[2] = {button, '\0'};
                     ESP_LOGI(TAG, "Publishing button status to MQTT: %s",
                              payload);
-                    esp_mqtt_client_publish(g_mqtt_client, topic, payload, 2, 1,
+                    esp_mqtt_client_publish(g_mqtt_client, topic, payload, 1, 1,
                                             0);
                 } else {
                     char payload[3] = {button, state + '0', '\0'};
                     ESP_LOGI(TAG, "Publishing button status to MQTT: %s",
                              payload);
-                    esp_mqtt_client_publish(g_mqtt_client, topic, payload, 3, 1,
+                    esp_mqtt_client_publish(g_mqtt_client, topic, payload, 2, 1,
                                             0);
                 }
             }

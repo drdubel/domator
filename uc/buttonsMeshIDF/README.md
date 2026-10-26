@@ -17,7 +17,7 @@ existing ESP-NOW gateway/root; it never joins ESP-MESH itself.
 Internal pulldowns keep unconnected inputs low; unused buttons need no wiring.
 These are raw GPIO numbers, not Arduino digital aliases. GPIO0 is connected to
 the battery voltage divider, GPIO9 is BOOT, GPIO12/13 are USB, and GPIO15 is
-the active-low onboard LED. Leave the button pins free of other peripherals
+the active-high blue onboard LED (LOW is off). Leave the button pins free of other peripherals
 and JTAG probes. The larger FireBeetle 2 DFR1075 has a different exposed pinout.
 
 ## Battery connection
@@ -114,9 +114,13 @@ the next transmission/heartbeat; the double-press/hold gesture is also retained.
   sleep. ESP-NOW uses the fixed provisioned channel: no discovery scan, Wi-Fi
   association, MQTT connection, or mesh maintenance on the battery device.
 - The LED is held off during sleep. Routine boot/application logging is reduced.
-  Radio ACK waits block on the receive queue; retries remain bounded at three
-  45 ms windows. The one-minute heartbeat preserves the backend's 150-second
-  remote timeout and queued OTA delivery.
+  C6 activity flashes are disabled by default (`DOMATOR_REMOTE_ACTIVITY_LED`);
+  the blue LED is driven LOW from startup, including while unprovisioned.
+  Button capture/debounce puts events into a FIFO independently of transmission;
+  ACK waits keep servicing all inputs, and the sender never recursively sends
+  from an input callback. Retries remain bounded at three 45 ms windows. The
+  one-minute heartbeat preserves the backend's 150-second remote timeout and
+  queued OTA delivery.
 - ESP32-C3 builds retain their seven GPIOs and light-sleep lifecycle.
 
 Deep sleep adds a cold boot before debounce/radio work. A pulse that ends before
@@ -125,6 +129,32 @@ not a pulse counter. Minimum tap duration, press/release latency, long-held
 switches, simultaneous buttons, the OTA gesture, failed ACKs, gateway outages,
 and actual average current must be checked on hardware. No sub-200 ms latency
 or battery-life figure has been measured for this implementation.
+
+The green charging LED is connected directly to the TP4057 charger and USB
+power, not to a GPIO. DFRobot documents blinking as **battery not connected**
+while powered by USB, steady on as charging, and off when charging is complete
+or external power is absent. Firmware cannot switch that indicator off. It
+does not create an always-on LED load when running from the battery with USB
+and VIN disconnected.
+
+## Diagnosing a missed button over USB
+
+Connect to a computer, reset the board, then run `pio device monitor -e esp32c6`
+with the correct monitor port. C6 firmware automatically logs USB-only button
+diagnostics at WARN level, including the GPIO-to-button mapping, raw input
+changes, debounced events and root acknowledgments. It keeps the radio running
+while attached to the host to avoid radio restarts between press and release.
+
+Each press/release should show `GPIO5 button b raw=1` / `raw=0`, then debounced
+events and `Button b1 acknowledged` / `Button b00 acknowledged` for a short tap
+(GPIO4=a, GPIO5=b, GPIO6=c, GPIO7=d). The exact timestamps and sequence numbers
+vary. No raw changes indicate an input/wiring problem; raw changes without a
+debounced event indicate a pulse shorter than the 50 ms debounce or contact
+bounce. `No root acknowledgment` / `Undelivered button` identifies radio/gateway
+delivery trouble. If both edges are acknowledged but the relay still does not
+respond, check that the device's a/b/c mappings and button types are correct in
+RCM. A root ACK confirms processing, not relay actuation. Queue overflows are
+reported explicitly. Diagnostic tracing stops when the USB host disconnects.
 
 References: [DFRobot board documentation](https://wiki.dfrobot.com/dfr1117/),
 [official V1.0/V1.1 schematics](https://dfimg.dfrobot.com/wiki/19405/DFR1117_beetle-esp32-c6_schematics_V1.1.zip),

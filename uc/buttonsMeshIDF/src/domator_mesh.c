@@ -315,6 +315,9 @@ void detect_hardware_type(void) {
  *     for relay boards).
  */
 void app_main(void) {
+#ifdef CONFIG_DOMATOR_BATTERY_ONLY
+    remote_switch_led_init();
+#endif
     ESP_LOGI(TAG, "Domator Mesh starting...");
 
     esp_err_t ret = nvs_flash_init();

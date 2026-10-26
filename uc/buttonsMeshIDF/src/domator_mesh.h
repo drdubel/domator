@@ -76,6 +76,8 @@
 #define BUTTON_GPIO_2 6
 #define BUTTON_GPIO_3 7
 #define LED_GPIO 15
+#define REMOTE_LED_ON_LEVEL 1
+#define REMOTE_LED_OFF_LEVEL 0
 #else
 // GPIO pin definitions for ESP32-C3 switch board
 #define BUTTON_GPIO_0 0
@@ -86,6 +88,8 @@
 #define BUTTON_GPIO_5 6
 #define BUTTON_GPIO_6 7
 #define LED_GPIO 8
+#define REMOTE_LED_ON_LEVEL 0
+#define REMOTE_LED_OFF_LEVEL 1
 #endif
 
 // GPIO pin definitions for 8-relay board
@@ -266,6 +270,7 @@ extern mesh_addr_t g_broadcast_addr;
 void mesh_network_init(void);
 void mesh_tx_init(void);
 void remote_switch_run(void);
+void remote_switch_led_init(void);
 void remote_gateway_load(void);
 void remote_gateway_init(void);
 bool remote_gateway_enabled(void);

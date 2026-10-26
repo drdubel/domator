@@ -11,7 +11,7 @@ from turbacz.database import db_call
 from turbacz.ha.bridge import ha_bridge
 from turbacz.mesh_metrics import record_node_metrics
 from turbacz.mqtt_client import mqtt
-from turbacz.mqtt_validation import validate_payload
+from turbacz.mqtt_validation import normalize_payload, validate_payload
 from turbacz.security import RateLimiter
 from turbacz.settings import config
 from turbacz.state_manager import state_manager
@@ -85,7 +85,7 @@ async def message(client, topic, payload, qos, properties):
     if not _message_limiter.allow(topic, config.security.mqtt_messages_per_minute):
         return
     try:
-        payload_str = payload.decode("utf-8")
+        payload_str = normalize_payload(topic, payload.decode("utf-8"))
         validate_payload(topic, payload_str)
         if topic.startswith(f"{config.zigbee.base_topic}/"):
             if config.zigbee.enabled:

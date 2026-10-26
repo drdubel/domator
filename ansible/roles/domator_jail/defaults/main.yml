@@ -68,7 +68,7 @@ domator_jail_pkgs:
 # Per-instance secrets from secrets.sops.yml (secret_domator.<name>); only the
 # operator edits them (mise run secrets). Required keys:
 domator_secret_keys:
-  - authorized          # list of e-mail addresses allowed to log in
+  - roles               # {e-mail: [viewer|operator|admin|ota]}; the keys are the e-mail addresses allowed to log in
   - jwt_secret
   - session_secret
   - mqtt_password

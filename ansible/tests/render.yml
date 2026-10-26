@@ -15,7 +15,7 @@
       ansible.builtin.set_fact:
         secret_domator: >-
           {{ secret_domator | default({}) | combine({item.name: {
-               'authorized': ['a@example.com', 'b@example.com'],
+               'roles': {'a@example.com': ['admin'], 'b@example.com': ['operator']},
                'jwt_secret': 'jwt-' ~ item.name, 'session_secret': 'sess"ion\\x',
                'mqtt_password': 'mqtt-' ~ item.name, 'oidc_client_id': 'id-' ~ item.name,
                'oidc_client_secret': 'oidc-' ~ item.name, 'psql_password': 'pg-' ~ item.name,

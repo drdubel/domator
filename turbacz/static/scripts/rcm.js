@@ -33,6 +33,8 @@ const State = {
     currentEditTarget: null,
     highlightedDevice: null,
     isLoadingConnections: false,
+    configurationVersion: 0,
+    pendingConnectionRemovals: new Map(),
     isCardDragging: false,
 
     // Caching
@@ -1367,6 +1369,7 @@ function setDeviceColor(switchId, color) {
         conn.setPaintStyle({ stroke: color, strokeWidth: 3 })
     })
 
+    refreshHighlights()
     saveDeviceColors()
     closeColorPicker()
 }
@@ -1395,6 +1398,7 @@ function applyDeviceColor(switchId) {
         deviceConnections.forEach(conn => {
             conn.setPaintStyle({ stroke: color, strokeWidth: 3 })
         })
+        refreshHighlights()
     }, 150)
 }
 
@@ -1461,173 +1465,133 @@ async function postForm(endpoint, data, sendUpdate = true) {
     }
 }
 
-function bindJsPlumbEvents() {
-    console.log('Binding jsPlumb events...')
+function connectionDetails(connection) {
+    const source = connection.sourceId.match(/^switch-(\d+)-btn-(\w+)$/)
+    const target = connection.targetId.match(/^relay-(\d+)-output-(\w+)$/)
+    if (!source || !target) return null
+    return { switch_id: Number(source[1]), button_id: source[2],
+        relay_id: Number(target[1]), output_id: target[2] }
+}
 
-    jsPlumbInstance.unbind("connection")
-    jsPlumbInstance.unbind("connectionDetached")
+function refreshHighlights() {
+    if (highlightedDevice) highlightDevice(highlightedDevice)
+}
 
-    jsPlumbInstance.bind("connection", function (info, originalEvent) {
-        console.log('Connection event fired, originalEvent:', originalEvent, 'isLoadingConnections:', isLoadingConnections)
+async function removeConnection(connection, sendUpdate = true) {
+    const details = connectionDetails(connection)
+    if (!details) return false
+    const key = `${connection.sourceId}:${connection.targetId}`
+    if (State.pendingConnectionRemovals.has(key)) return State.pendingConnectionRemovals.get(key)
 
-        if (originalEvent && !isLoadingConnections) {
-            const sourceId = info.sourceId
-            const targetId = info.targetId
+    const removal = (async () => {
+        const result = await postForm('/lights/remove_connection', details, false)
+        if (!result) return false
 
-            const switchMatch = sourceId.match(/switch-(\d+)-btn-(\w+)/)
-            const relayMatch = targetId.match(/relay-(\d+)-output-(\w+)/)
-
-            if (switchMatch && relayMatch) {
-                const switchId = parseInt(switchMatch[1])
-                const buttonId = switchMatch[2]
-                const relayId = parseInt(relayMatch[1])
-                const outputId = relayMatch[2]
-
-                console.log('User created connection:', { switchId, buttonId, relayId, outputId })
-
-                postForm('/lights/add_connection', {
-                    switch_id: switchId,
-                    button_id: buttonId,
-                    relay_id: relayId,
-                    output_id: outputId
-                }).then(result => {
-                    if (result) {
-                        if (!connections[switchId]) connections[switchId] = {}
-                        if (!connections[switchId][buttonId]) connections[switchId][buttonId] = []
-                        connections[switchId][buttonId].push({
-                            relayId,
-                            outputId,
-                            connection: info.connection
-                        })
-
-                        // Update lookup map
-                        const switchDeviceId = `switch-${switchId}`
-                        const relayDeviceId = `relay-${relayId}`
-                        if (!connectionLookupMap[switchDeviceId]) connectionLookupMap[switchDeviceId] = []
-                        if (!connectionLookupMap[relayDeviceId]) connectionLookupMap[relayDeviceId] = []
-                        connectionLookupMap[switchDeviceId].push(info.connection)
-                        connectionLookupMap[relayDeviceId].push(info.connection)
-
-                        State.revealedAutoButtons.delete(`${switchId}-${buttonId}`)
-                        syncRelaySwitchButtons(switchId)
-                        console.log('Connection saved successfully')
-                    } else {
-                        console.error('Failed to save connection')
-                        jsPlumbInstance.deleteConnection(info.connection)
-                    }
-                })
-            }
+        const { switch_id: switchId, button_id: buttonId, relay_id: relayId, output_id: outputId } = details
+        // A configuration refresh may have replaced the connection while the request was pending.
+        const targets = connections[switchId]?.[buttonId] || []
+        const removed = targets.filter(target => target.relayId === relayId && target.outputId === outputId)
+        if (connections[switchId]?.[buttonId]) {
+            connections[switchId][buttonId] = targets.filter(target => !removed.includes(target))
         }
-    })
-
-    jsPlumbInstance.bind("connectionDetached", function (info, originalEvent) {
-        if (originalEvent && !isLoadingConnections) {
-            const sourceId = info.sourceId
-            const targetId = info.targetId
-
-            const switchMatch = sourceId.match(/switch-(\d+)-btn-(\w+)/)
-            const relayMatch = targetId.match(/relay-(\d+)-output-(\w+)/)
-
-            if (switchMatch && relayMatch) {
-                const switchId = parseInt(switchMatch[1])
-                const buttonId = switchMatch[2]
-                const relayId = parseInt(relayMatch[1])
-                const outputId = relayMatch[2]
-
-                console.log('Connection removed:', { switchId, buttonId, relayId, outputId })
-
-                postForm('/lights/remove_connection', {
-                    switch_id: switchId,
-                    button_id: buttonId,
-                    relay_id: relayId,
-                    output_id: outputId
-                }).then(result => {
-                    if (result) {
-                        if (connections[switchId] && connections[switchId][buttonId]) {
-                            connections[switchId][buttonId] = connections[switchId][buttonId].filter(
-                                conn => !(conn.relayId === relayId && conn.outputId === outputId)
-                            )
-                        }
-
-                        // Update lookup map
-                        const switchDeviceId = `switch-${switchId}`
-                        const relayDeviceId = `relay-${relayId}`
-                        if (connectionLookupMap[switchDeviceId]) {
-                            connectionLookupMap[switchDeviceId] = connectionLookupMap[switchDeviceId].filter(
-                                c => !(c.sourceId === sourceId && c.targetId === targetId)
-                            )
-                        }
-                        if (connectionLookupMap[relayDeviceId]) {
-                            connectionLookupMap[relayDeviceId] = connectionLookupMap[relayDeviceId].filter(
-                                c => !(c.sourceId === sourceId && c.targetId === targetId)
-                            )
-                        }
-
-                        syncRelaySwitchButtons(switchId)
-                        console.log('Connection removed successfully')
-                    } else {
-                        console.error('Failed to remove connection from API')
-                    }
-                })
-            }
+        const removedConnections = new Set([connection, ...removed.map(target => target.connection)])
+        const liveConnections = new Set(jsPlumbInstance.getAllConnections())
+        removedConnections.forEach(conn => {
+            if (liveConnections.has(conn)) jsPlumbInstance.deleteConnection(conn)
+        })
+        for (const deviceId of [`switch-${switchId}`, `relay-${relayId}`]) {
+            connectionLookupMap[deviceId] = (connectionLookupMap[deviceId] || [])
+                .filter(conn => !removedConnections.has(conn))
         }
-    })
+        syncRelaySwitchButtons(switchId)
+        refreshHighlights()
+        if (sendUpdate) wsManager.send(JSON.stringify({ type: 'update' }))
+        return true
+    })()
+    State.pendingConnectionRemovals.set(key, removal)
+    try {
+        return await removal
+    } finally {
+        State.pendingConnectionRemovals.delete(key)
+    }
+}
 
-    jsPlumbInstance.bind("click", function (connection, e) {
-        const { x, y } = { x: e.offsetX, y: e.offsetY }
-        // Optional: implement a small distance check to ensure correct connection
-        console.log("Clicked connection:", connection.sourceId, "->", connection.targetId)
-    })
-
-    jsPlumbInstance.bind("dblclick", function (connection, e) {
-        e.preventDefault()
-
-        const sourceId = connection.sourceId
-        const targetId = connection.targetId
-
-        const switchMatch = sourceId.match(/switch-(\d+)-btn-(\w+)/)
-        const relayMatch = targetId.match(/relay-(\d+)-output-(\w+)/)
-
-        if (switchMatch && relayMatch) {
-            const switchId = parseInt(switchMatch[1])
-            const buttonId = switchMatch[2]
-            const relayId = parseInt(relayMatch[1])
-            const outputId = relayMatch[2]
-
-            console.log('Double-clicked connection, removing:', { switchId, buttonId, relayId, outputId })
-
-            postForm('/lights/remove_connection', {
-                switch_id: switchId,
-                button_id: buttonId,
-                relay_id: relayId,
-                output_id: outputId
-            }).then(result => {
-                if (result) {
-                    jsPlumbInstance.deleteConnection(connection)
-
-                    if (connections[switchId] && connections[switchId][buttonId]) {
-                        connections[switchId][buttonId] = connections[switchId][buttonId].filter(
-                            conn => !(conn.relayId === relayId && conn.outputId === outputId)
-                        )
-                    }
-
-                    // Update lookup map
-                    const switchDeviceId = `switch-${switchId}`
-                    const relayDeviceId = `relay-${relayId}`
-                    if (connectionLookupMap[switchDeviceId]) {
-                        connectionLookupMap[switchDeviceId] = connectionLookupMap[switchDeviceId].filter(c => c !== connection)
-                    }
-                    if (connectionLookupMap[relayDeviceId]) {
-                        connectionLookupMap[relayDeviceId] = connectionLookupMap[relayDeviceId].filter(c => c !== connection)
-                    }
-
-                    syncRelaySwitchButtons(switchId)
-                    console.log('Connection removed successfully')
-                } else {
-                    console.error('Failed to remove connection from API')
+async function removeAllDeviceConnections(deviceId) {
+    const device = document.getElementById(deviceId)
+    if (!device || isLoadingConnections) return
+    // Use the saved routes, including connections hidden with devices or buttons.
+    const routes = []
+    for (const [switchId, buttons] of Object.entries(connections)) {
+        for (const targets of Object.values(buttons)) {
+            for (const target of targets) {
+                if (deviceId === `switch-${switchId}` || deviceId === `relay-${target.relayId}`) {
+                    routes.push(target.connection)
                 }
-            })
+            }
         }
+    }
+    if (!routes.length) {
+        showToast('This device has no connections')
+        return
+    }
+    if (appSettings.confirmBeforeDelete && !confirm(`Remove all ${routes.length} connections from this device?`)) return
+
+    const button = device.querySelector('.disconnect-btn')
+    if (button?.disabled) return
+    if (button) button.disabled = true
+    try {
+        const results = await Promise.all(routes.map(conn => removeConnection(conn, false)))
+        const removed = results.filter(Boolean).length
+        if (removed) wsManager.send(JSON.stringify({ type: 'update' }))
+        showToast(removed === routes.length ? 'All device connections removed'
+            : `Removed ${removed} of ${routes.length} connections. Please retry.`, removed !== routes.length)
+    } finally {
+        if (button) button.disabled = false
+    }
+}
+
+function bindJsPlumbEvents() {
+    // Refreshes must replace every handler, including double-click deletion.
+    for (const event of ['connection', 'connectionDetached', 'click', 'dblclick']) {
+        jsPlumbInstance.unbind(event)
+    }
+
+    jsPlumbInstance.bind('connection', async function (info, originalEvent) {
+        addConnectionHoverEffect(info.connection)
+        if (!originalEvent || isLoadingConnections) return
+        const details = connectionDetails(info.connection)
+        if (!details) return
+        const version = State.configurationVersion
+        const result = await postForm('/lights/add_connection', details, false)
+        if (result) {
+            if (version === State.configurationVersion) {
+                const { switch_id: switchId, button_id: buttonId, relay_id: relayId, output_id: outputId } = details
+                if (!connections[switchId]) connections[switchId] = {}
+                if (!connections[switchId][buttonId]) connections[switchId][buttonId] = []
+                connections[switchId][buttonId].push({ relayId, outputId, connection: info.connection })
+                for (const id of [`switch-${switchId}`, `relay-${relayId}`]) {
+                    if (!connectionLookupMap[id]) connectionLookupMap[id] = []
+                    connectionLookupMap[id].push(info.connection)
+                }
+                State.revealedAutoButtons.delete(`${switchId}-${buttonId}`)
+                syncRelaySwitchButtons(switchId)
+                refreshHighlights()
+            }
+            wsManager.send(JSON.stringify({ type: 'update' }))
+        } else {
+            jsPlumbInstance.deleteConnection(info.connection)
+        }
+    })
+
+    jsPlumbInstance.bind('connectionDetached', async function (info, originalEvent) {
+        if (!originalEvent || isLoadingConnections) return
+        if (!await removeConnection(info.connection)) loadConfiguration()
+    })
+
+    jsPlumbInstance.bind('dblclick', function (connection, event) {
+        event.preventDefault()
+        event.stopPropagation?.()
+        return removeConnection(connection)
     })
 }
 
@@ -1653,15 +1617,14 @@ function highlightDevice(deviceId) {
         }
     })
 
-    // Use lookup map for faster connection finding; fall back to scanning all connections
-    let deviceConnections = connectionLookupMap[deviceId] || []
-    if (deviceConnections.length === 0) {
-        deviceConnections = jsPlumbInstance.getAllConnections().filter(conn => {
-            const srcBox = conn.source && conn.source.closest ? conn.source.closest('.device-box') : null
-            const tgtBox = conn.target && conn.target.closest ? conn.target.closest('.device-box') : null
-            return (srcBox && srcBox.id === deviceId) || (tgtBox && tgtBox.id === deviceId)
-        })
-    }
+    // Only live connections touching this exact card belong to the selection.
+    // Cached entries can refer to detached connections or a previous canvas.
+    const deviceConnections = jsPlumbInstance.getAllConnections().filter(conn => {
+        const source = conn.source?.closest('.device-box')
+        const target = conn.target?.closest('.device-box')
+        return (source === element || target === element)
+            && source?.isConnected && target?.isConnected
+    })
 
     // Dim all connections first
     const allConnections = jsPlumbInstance.getAllConnections()
@@ -1715,6 +1678,7 @@ function clearHighlights() {
         el.style.removeProperty('opacity')
     })
 
+    highlightedDevice = null
     if (!jsPlumbInstance) return
 
     const allConnections = jsPlumbInstance.getAllConnections()
@@ -1743,7 +1707,6 @@ function clearHighlights() {
         }
     })
 
-    highlightedDevice = null
 }
 
 function highlightButton(switchId, buttonId) {
@@ -1862,6 +1825,7 @@ function clearButtonHighlight(switchId, buttonId) {
 
 // Helper function to add hover effect to a connection
 function addConnectionHoverEffect(conn) {
+    if (conn._hoverEffectBound) return
     // Store original paint style
     if (!conn._originalPaintStyle) {
         conn._originalPaintStyle = conn.getPaintStyle()
@@ -1870,6 +1834,7 @@ function addConnectionHoverEffect(conn) {
     // Get the connection canvas element
     const canvas = conn.canvas
     if (!canvas) return
+    conn._hoverEffectBound = true
 
     // Add hover effect using native DOM events
     canvas.addEventListener('mouseenter', function () {
@@ -1953,11 +1918,6 @@ function initJsPlumb() {
             DragOptions: { cursor: 'move', zIndex: 2000 }
         })
 
-        // Bind hover events to handle custom colors
-        jsPlumbInstance.bind("connection", function (info) {
-            addConnectionHoverEffect(info.connection)
-        })
-
         bindJsPlumbEvents()
         initPanning()
 
@@ -2013,6 +1973,7 @@ function initJsPlumb() {
 }
 
 async function loadConfiguration() {
+    const version = ++State.configurationVersion
     showLoading()
     isLoadingConnections = true
 
@@ -2054,6 +2015,7 @@ async function loadConfiguration() {
             fetchAPI('/lights/get_blind_pairs'),
             fetchAPI('/lights/get_zigbee_devices')
         ])
+        if (version !== State.configurationVersion) return
         State.zigbeeDevices = zigbeeDevices || {}
 
         const relays_config = relaysData || getDemoRelays()
@@ -2104,6 +2066,7 @@ async function loadConfiguration() {
 
         // Create connections after elements exist (batched for performance)
         setTimeout(() => {
+            if (version !== State.configurationVersion) return
             jsPlumbInstance.batch(() => {
                 for (let [switchId, buttons] of Object.entries(connections_config)) {
                     for (let [buttonId, targets] of Object.entries(buttons)) {
@@ -2120,6 +2083,7 @@ async function loadConfiguration() {
                 focus: Object.keys(loadDevicePositions()).length === 0 && !localStorage.getItem('rcm_canvas_view')
             })
             bindJsPlumbEvents()
+            refreshHighlights()
             isLoadingConnections = false
             hideLoading()
 
@@ -2139,6 +2103,7 @@ async function loadConfiguration() {
 
         wsManager.send(JSON.stringify({ "type": "get_states" }))
     } catch (error) {
+        if (version !== State.configurationVersion) return
         console.error('Error loading configuration:', error)
         isLoadingConnections = false
         hideLoading()
@@ -2328,6 +2293,7 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
                     </span>
                     <div class="device-header-actions">
                         <button class="gateway-btn" type="button" data-gateway-switch="${switchId}" hidden onclick="event.stopPropagation(); toggleGateway(${switchId})">Gateway</button>
+                        <button class="disconnect-btn" type="button" onclick="event.stopPropagation(); removeAllDeviceConnections('switch-${switchId}')" title="Remove all connections" aria-label="Remove all connections">Unlink all</button>
                         <button class="hide-btn" onclick="event.stopPropagation(); hideDevice(${switchId}, 'switch')" title="Hide Device">👁️</button>
                         <button class="update-btn update-btn-switch" onclick="event.stopPropagation(); updateDevice(${switchId}, 'switch')" title="Update Device">⟳</button>
                         <button class="delete-btn" onclick="event.stopPropagation(); deleteSwitch(${switchId})">✕</button>
@@ -2775,6 +2741,7 @@ function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
                     <span class="device-id" onclick="event.stopPropagation(); copyIdToClipboard(${relayId}, this)">ID: ${relayId}</span>
                     </span>
                     <div style="display: flex; gap: 0.5rem;">
+                        <button class="disconnect-btn" type="button" onclick="event.stopPropagation(); removeAllDeviceConnections('relay-${relayId}')" title="Remove all connections" aria-label="Remove all connections">Unlink all</button>
                         <button class="hide-btn" onclick="event.stopPropagation(); hideDevice(${relayId}, 'relay')" title="Hide Device">👁️</button>
                         <button class="update-btn update-btn-relay" onclick="event.stopPropagation(); updateDevice(${relayId}, 'relay')" title="Update Device">⟳</button>
                         <button class="delete-btn" onclick="event.stopPropagation(); deleteRelay(${relayId})">✕</button>

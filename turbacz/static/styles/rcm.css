@@ -1601,3 +1601,24 @@ body.hide-device-metrics .signal-icon {
 .output-item.blind-linking-target .blind-link-btn {
     display: inline-block;
 }
+
+.disconnect-btn {
+    background: var(--bg-secondary);
+    color: var(--danger-color);
+    border: 1px solid var(--danger-color);
+    border-radius: 8px;
+    padding: 0 8px;
+    min-height: 32px;
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.disconnect-btn:hover {
+    background: var(--danger-color);
+    color: white;
+}
+
+.disconnect-btn:disabled {
+    opacity: 0.5;
+    cursor: wait;
+}

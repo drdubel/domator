@@ -203,8 +203,9 @@ test('RCM remote clicks flash all inputs and repeated clicks restart only their 
     } finally { dom.window.close() }
 })
 
-function rcmPage() {
+function rcmPage({ userAgent } = {}) {
     const dom = page(fs.readFileSync(path.join(root, 'static/rcm.html'), 'utf8'))
+    if (userAgent) Object.defineProperty(dom.window.navigator, 'userAgent', { value: userAgent })
     dom.window.jsPlumb = { ready() {} }
     run(dom, `${script('common.js')}\n${script('rcm.js')}\n
         canvasElement = document.getElementById('canvas');
@@ -232,6 +233,7 @@ function rcmPage() {
             },
             connect({source, target, paintStyle}) {
                 const canvas = document.createElement('div');
+                canvas.className = 'jtk-connector';
                 document.getElementById('canvas').appendChild(canvas);
                 const endpoints = [source, target].map(el => {
                     const endpoint = document.createElement('div');
@@ -641,4 +643,66 @@ test('RCM unlink-all respects cancellation and retains routes that fail to delet
         assert.equal(dom.window.document.querySelector('#switch-9 .disconnect-btn').disabled, false)
         assert.match(dom.window.document.getElementById('rcm-toast').textContent, /Removed 1 of 2/)
     } finally { dom.window.close() }
+})
+
+
+test("RCM keeps unrelated lines dimmed across zoom redraws and Firefox's delayed repaint", () => {
+    for (const userAgent of ['Chrome', 'Firefox']) {
+        const dom = rcmPage({ userAgent })
+        try {
+            const style = dom.window.document.createElement('style')
+            style.textContent = fs.readFileSync(path.join(root, 'static/styles/rcm.css'), 'utf8')
+            dom.window.document.head.appendChild(style)
+            run(dom, `const timers = [];
+                let now = 1000; Date.now = () => now += 100;
+                window.setTimeout = callback => { timers.push(callback); return timers.length };
+                window.requestAnimationFrame = callback => { callback(); return 0 };
+                window.cancelAnimationFrame = () => {};
+                jsPlumbInstance.repaintEverything = () => {
+                    // jsPlumb rewrites connector positioning styles during redraw.
+                    liveConnections.forEach(conn => { conn.canvas.style.cssText = 'position: absolute; left: 10px' });
+                };
+                jsPlumbInstance.setSuspendDrawing = (suspend, repaint) => {
+                    if (!suspend && repaint) jsPlumbInstance.repaintEverything();
+                };
+                createRelay(1, 'Relay', {}, 0, 0); createRelay(2, 'Relay', {}, 0, 0);
+                createSwitch(8, 'Switch', 3, 0, 0); createSwitch(9, 'Switch', 3, 0, 0);
+                createConnection(8, 'a', 1, 'a'); createConnection(9, 'a', 1, 'a');
+                createConnection(9, 'b', 2, 'b');
+                // Cover both jsPlumb connector class names.
+                liveConnections[2].canvas.className = '_jsPlumb_connector';
+                initPanning(); timers.splice(0).forEach(callback => callback());
+                highlightDevice('switch-8');`)
+            const assertSelection = () => {
+                const lines = run(dom, 'liveConnections.map(conn => conn.canvas)')
+                assert.equal(dom.window.getComputedStyle(lines[0]).opacity || '1', '1')
+                assert.equal(dom.window.getComputedStyle(lines[1]).opacity, '0.2')
+                assert.equal(dom.window.getComputedStyle(lines[2]).opacity, '0.2')
+                assert.equal(run(dom, 'highlightedDevice'), 'switch-8')
+            }
+            assertSelection()
+            for (const action of ['zoomIn()', 'zoomOut()', 'resetZoom()', 'zoomAtPoint(1.1, 100, 100)']) {
+                run(dom, `${action}; timers.splice(0).forEach(callback => callback())`)
+                assertSelection()
+            }
+            const wrapper = dom.window.document.getElementById('canvas-wrapper')
+            for (const deltaY of [-100, 100]) {
+                wrapper.dispatchEvent(new dom.window.WheelEvent('wheel', { deltaY, clientX: 100, clientY: 100 }))
+                run(dom, 'timers.splice(0).forEach(callback => callback())')
+                assertSelection()
+            }
+            // Pinch zoom resumes drawing through the same path as wheel zoom.
+            run(dom, `suspendJsPlumb(); isPinching = true; zoomAtPoint(1.2, 100, 100);
+                isPinching = false; resumeJsPlumb(); timers.splice(0).forEach(callback => callback())`)
+            assertSelection()
+            run(dom, `highlightDevice('relay-2'); syncJsPlumb()`)
+            assert.equal(dom.window.getComputedStyle(run(dom, 'liveConnections[0].canvas')).opacity, '0.2')
+            assert.equal(dom.window.getComputedStyle(run(dom, 'liveConnections[2].canvas')).opacity || '1', '1')
+            run(dom, 'clearHighlights(); syncJsPlumb()')
+            assert.equal(wrapper.querySelector('#canvas').classList.contains('has-highlighted-device'), false)
+            for (const line of run(dom, 'liveConnections.map(conn => conn.canvas)')) {
+                assert.equal(dom.window.getComputedStyle(line).opacity || '1', '1')
+            }
+        } finally { dom.window.close() }
+    }
 })

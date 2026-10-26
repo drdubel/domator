@@ -532,8 +532,8 @@ function zoomAtPoint(factor, centerX, centerY, commit = false) {
 // ------------------- RESET / BUTTON ZOOM -------------------
 function resetZoom() {
     zoomLevel = 0.4
-    panX = getDefaultPanX()
-    panY = getDefaultPanY()
+    panX = CanvasView.getDefaultPanX()
+    panY = CanvasView.getDefaultPanY()
     applyVisualTransform()
     syncJsPlumb()
     saveCanvasView()
@@ -1607,6 +1607,7 @@ function highlightDevice(deviceId) {
         element.classList.add('root')
     }
     highlightedDevice = deviceId
+    document.getElementById('canvas').classList.add('has-highlighted-device')
 
     // Dim all other devices
     document.querySelectorAll('.device-box').forEach(el => {
@@ -1679,6 +1680,7 @@ function clearHighlights() {
     })
 
     highlightedDevice = null
+    document.getElementById('canvas').classList.remove('has-highlighted-device')
     if (!jsPlumbInstance) return
 
     const allConnections = jsPlumbInstance.getAllConnections()

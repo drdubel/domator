@@ -1261,8 +1261,9 @@ body.hide-device-metrics .signal-icon {
     transform: scale(1.3);
 }
 
-/* Keep dimmed connections dimmed during hover when highlighting */
-._jsPlumb_connector[style*="opacity: 0.2"]:hover {
+/* Keep unrelated lines dimmed when jsPlumb rewrites inline styles on redraw or hover. */
+#canvas.has-highlighted-device ._jsPlumb_connector:not(.highlighted),
+#canvas.has-highlighted-device .jtk-connector:not(.highlighted) {
     opacity: 0.2 !important;
 }
 

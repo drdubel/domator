@@ -87,6 +87,11 @@ def test_settings_precedence_and_nested_secrets(monkeypatch, tmp_path):
         ("/relay/state/nope", b"A1"),
         ("/switch/state/222", b"aX"),
         ("/switch/state/222", b"-1"),
+        ("/switch/state/222", b"a\x00\x00"),
+        ("/switch/state/222", b"a\x00extra"),
+        ("/switch/state/222", b"a11\x00"),
+        ("/switch/state/222", b"42\x00"),
+        ("/relay/state/111", b"A1\x00"),
         ("/switch/state/root", b"[]"),
         ("/switch/state/root", b"{}"),
         ("/switch/state/root", b'{"type":"relay8","deviceId":111}'),
@@ -106,6 +111,29 @@ async def test_invalid_mqtt_has_no_side_effects(
     monkeypatch.setattr(broker, "dispatch_message", dispatch)
     await broker.message(None, topic, payload, 0, None)
     dispatch.assert_not_awaited()
+
+
+@pytest.mark.parametrize("payload,button,event", [
+    (b"a", "a", "press"), (b"b", "b", "press"), (b"c", "c", "press"),
+    (b"a\x00", "a", "press"), (b"b\x00", "b", "press"), (b"c\x00", "c", "press"),
+    (b"b1\x00", "b", "press"), (b"b0\x00", "b", "release"),
+])
+async def test_switch_clicks_reach_rcm_with_legacy_root_terminator(
+    application, monkeypatch, payload, button, event
+):
+    from turbacz import broker
+    from turbacz.security import RateLimiter
+
+    monkeypatch.setattr(broker, "_message_limiter", RateLimiter())
+    broadcast = AsyncMock()
+    on_button = AsyncMock()
+    monkeypatch.setattr(broker.ws_manager, "broadcast", broadcast)
+    monkeypatch.setattr(broker.ha_bridge, "on_button_event", on_button)
+    await broker.message(None, "/switch/state/222", payload, 0, None)
+    broadcast.assert_awaited_once_with(
+        {"type": "switch_state", "switch_id": 222, "button_id": button}, "/rcm/ws/"
+    )
+    on_button.assert_awaited_once_with(222, button, event)
 
 
 async def test_mqtt_failure_isolation(application, monkeypatch):

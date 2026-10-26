@@ -20,6 +20,13 @@ config DOMATOR_BATTERY_ONLY
     help
         Requires switch_role=remote in the provisioned credentials. Refuses
         other roles so a battery device cannot accidentally join the mesh.
+
+config DOMATOR_REMOTE_ACTIVITY_LED
+    bool "Flash the battery remote LED during transmissions and OTA"
+    default y if IDF_TARGET_ESP32C3
+    default n
+    help
+        Leave disabled on the Beetle ESP32-C6 to keep its blue LED off.
 #
 # One consequence worth keeping: the build no longer depends on the
 # installation, so a single image runs on every deployment.

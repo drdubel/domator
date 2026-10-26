@@ -29,6 +29,7 @@ const State = {
 
     // UI state
     pendingClicks: new Set(),
+    buttonHighlightTimers: new Map(),
     currentEditTarget: null,
     highlightedDevice: null,
     isLoadingConnections: false,
@@ -397,7 +398,6 @@ const wsManager = new WebSocketManager('/rcm/ws/', function (event) {
     if (msg.type === "switch_state" && msg.switch_id && msg.button_id) {
         if (appSettings.enableButtonHighlightAnimation) {
             highlightButton(msg.switch_id, msg.button_id)
-            setTimeout(() => clearButtonHighlight(msg.switch_id, msg.button_id), 5000)
         }
         return
     }
@@ -1753,30 +1753,15 @@ function highlightButton(switchId, buttonId) {
         return
     }
 
-    // Get the custom color if set, otherwise use default blue
-    let targetColor = '#6366f1' // default blue
-    if (switches[switchId] && switches[switchId].color) {
-        targetColor = switches[switchId].color
-    }
-
-    // Set initial red background
-    buttonElement.style.background = 'rgba(255, 0, 0, 1)'
-    buttonElement.style.transition = 'none'
-
-    // Force reflow to ensure the transition works
-    buttonElement.offsetHeight
-
-    // Convert hex color to rgba for gradient
-    const r = parseInt(targetColor.slice(1, 3), 16)
-    const g = parseInt(targetColor.slice(3, 5), 16)
-    const b = parseInt(targetColor.slice(5, 7), 16)
-
-    // Start fading to the switch's custom color over 5 seconds
-    // Using ease-in: starts slow, ends fast
-    requestAnimationFrame(() => {
-        buttonElement.style.transition = 'background 5s ease-in'
-        buttonElement.style.background = `linear-gradient(135deg, rgba(${r}, ${g}, ${b}, 0.2) 0%, rgba(${r}, ${g}, ${b}, 0.33) 100%)`
-    })
+    const key = `${switchId}-${buttonId}`
+    if (State.buttonHighlightTimers.has(key)) clearTimeout(State.buttonHighlightTimers.get(key))
+    // Opacity of an overlay can fade reliably; solid-color -> gradient
+    // background transitions are discrete and could hide the flash entirely.
+    buttonElement.classList.remove('button-activity')
+    void buttonElement.offsetHeight
+    buttonElement.classList.add('button-activity')
+    State.buttonHighlightTimers.set(key,
+        setTimeout(() => clearButtonHighlight(switchId, buttonId), 5000))
 
     console.log('Highlighted button:', switchId, buttonId)
 }
@@ -1862,21 +1847,16 @@ function updateAllSwitches() {
 }
 
 function clearButtonHighlight(switchId, buttonId) {
+    const key = `${switchId}-${buttonId}`
+    if (State.buttonHighlightTimers.has(key)) clearTimeout(State.buttonHighlightTimers.get(key))
+    State.buttonHighlightTimers.delete(key)
     const buttonElement = document.getElementById(`switch-${switchId}-btn-${buttonId}`)
     if (!buttonElement) {
         console.warn(`Button not found: switch-${switchId}-btn-${buttonId}`)
         return
     }
 
-    // Get the custom color if set, otherwise use default blue
-    let targetColor = '#6366f1' // default blue
-    if (switches[switchId] && switches[switchId].color) {
-        targetColor = switches[switchId].color
-    }
-
-    // Restore to switch's color gradient
-    buttonElement.style.background = `linear-gradient(135deg, ${targetColor}33 0%, ${targetColor}55 100%)`
-    buttonElement.style.transition = ''
+    buttonElement.classList.remove('button-activity')
     console.log('Cleared button highlight:', switchId, buttonId)
 }
 
@@ -2341,12 +2321,12 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
 
     switchDiv.innerHTML = `
                 <div class="device-header">
-                    <span>
+                    <span class="device-header-identity">
                     ${statusDot}
                     <span class="device-id" onclick="event.stopPropagation(); copyIdToClipboard(${switchId}, this)">ID: ${switchId}</span>
+                    <span class="remote-badge" data-remote-switch="${switchId}" hidden>Remote</span>
                     </span>
-                    <div style="display: flex; gap: 0.5rem;">
-                        <span data-remote-switch="${switchId}" hidden>Remote</span>
+                    <div class="device-header-actions">
                         <button class="gateway-btn" type="button" data-gateway-switch="${switchId}" hidden onclick="event.stopPropagation(); toggleGateway(${switchId})">Gateway</button>
                         <button class="hide-btn" onclick="event.stopPropagation(); hideDevice(${switchId}, 'switch')" title="Hide Device">👁️</button>
                         <button class="update-btn update-btn-switch" onclick="event.stopPropagation(); updateDevice(${switchId}, 'switch')" title="Update Device">⟳</button>

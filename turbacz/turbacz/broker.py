@@ -274,7 +274,12 @@ async def handle_root_state(payload_str):
         else:
             name = namer.generate(category="astronomy")
             data["name"] = name
-            await db_call(connection_manager.add_switch, data["deviceId"], name, 7 if data["type"] == "remote" else 3)
+            buttons = 3
+            if data["type"] == "remote":
+                buttons = data.get("buttons", 7)  # Older C3 remotes report no count.
+                if type(buttons) is not int or not 1 <= buttons <= 7:
+                    buttons = 7
+            await db_call(connection_manager.add_switch, data["deviceId"], name, buttons)
             await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
 
     elif data["type"] == "relay8" or data["type"] == "relay16":

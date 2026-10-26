@@ -12,6 +12,14 @@ config DOMATOR_DEBUG_TELNET
     help
         Exposes the device log stream on TCP port 23 to anyone on the LAN.
         Keep disabled on installed devices and release builds.
+
+config DOMATOR_BATTERY_ONLY
+    bool "Build for a Beetle ESP32-C6 battery remote"
+    depends on IDF_TARGET_ESP32C6
+    default n
+    help
+        Requires switch_role=remote in the provisioned credentials. Refuses
+        other roles so a battery device cannot accidentally join the mesh.
 #
 # One consequence worth keeping: the build no longer depends on the
 # installation, so a single image runs on every deployment.

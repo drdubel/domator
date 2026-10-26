@@ -13,6 +13,7 @@
  */
 
 #include "domator_mesh.h"
+#include "battery_power.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -61,7 +62,10 @@ SemaphoreHandle_t g_button_types_mutex = NULL;
 button_state_t g_button_states[NUM_BUTTONS] = {0};
 const int g_button_pins[NUM_BUTTONS] = {
     BUTTON_GPIO_0, BUTTON_GPIO_1, BUTTON_GPIO_2, BUTTON_GPIO_3,
-    BUTTON_GPIO_4, BUTTON_GPIO_5, BUTTON_GPIO_6};
+#ifndef CONFIG_IDF_TARGET_ESP32C6
+    BUTTON_GPIO_4, BUTTON_GPIO_5, BUTTON_GPIO_6,
+#endif
+};
 uint32_t g_last_root_contact = 0;
 
 // Relay node globals
@@ -327,6 +331,10 @@ void app_main(void) {
     // the mesh or MQTT are touched -- all three read from here.
     ret = credentials_load();
     if (ret != ESP_OK) {
+#ifdef CONFIG_DOMATOR_BATTERY_ONLY
+        ESP_LOGE(TAG, "No valid credentials (%s); provision by USB and reset", esp_err_to_name(ret));
+        battery_wait_for_provisioning();
+#endif
         // Stop rather than fall back: there are no compiled-in defaults, and
         // a device that joined some default network would be worse than one
         // that visibly refuses to start. Loop instead of rebooting so the
@@ -345,17 +353,21 @@ void app_main(void) {
 
     generate_device_id();
     build_time_to_unix(FW_BUILD_TIME);
-    detect_hardware_type();
-
     if (strcmp(credentials_get()->switch_role, "remote") == 0) {
-#ifdef CONFIG_IDF_TARGET_ESP32C3
+#if defined(CONFIG_IDF_TARGET_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32C6)
         g_node_type = NODE_TYPE_REMOTE_SWITCH;
         remote_switch_run(); // Separate radio/sleep lifecycle; never joins mesh.
 #else
-        ESP_LOGE(TAG, "Remote switches require ESP32-C3");
+        ESP_LOGE(TAG, "Remote switches require ESP32-C3 or ESP32-C6");
 #endif
         return;
     }
+#ifdef CONFIG_DOMATOR_BATTERY_ONLY
+    ESP_LOGE(TAG, "Battery build requires switch_role=remote; refusing mesh startup");
+    battery_wait_for_provisioning();
+    return;
+#endif
+    detect_hardware_type();
     remote_gateway_load();
 
     g_mesh_tx_queue = xQueueCreate(MESH_TX_QUEUE_SIZE, sizeof(mesh_app_msg_t));

@@ -60,7 +60,7 @@ MAX_REQUEST_SIZE = 10_000_000
 # Firmware images embed WiFi and MQTT credentials, so they are kept out of the
 # public static/ mount and served only by download_firmware() below.
 FIRMWARE_DIR = Path(config.firmware.directory)
-FIRMWARE_DEVICES = ("switch", "relay")
+FIRMWARE_DEVICES = ("switch", "relay", "beetle-esp32c6")
 LEGACY_FIRMWARE_DIR = Path("static/data")
 
 

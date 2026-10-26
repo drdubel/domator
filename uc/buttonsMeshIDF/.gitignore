@@ -22,3 +22,4 @@ dependencies.lock
 *.log
 
 sdkconfig.esp*
+sdkconfig.beetle-esp32c6*

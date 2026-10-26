@@ -9,6 +9,9 @@ This directory contains microcontroller firmware projects used by Domator.
 - `buttonsMeshIDF` — ESP-IDF/PlatformIO mesh-based buttons/relay/root firmware
 - `heating` — ESP8266 heating controller (PlatformIO)
 
+For the **DFRobot Beetle ESP32-C6 V1.1 battery switch**, see
+[board wiring, battery connection and firmware setup](buttonsMeshIDF/README.md).
+
 Each subdirectory is an independent firmware project with its own `platformio.ini`.
 
 ## Credentials

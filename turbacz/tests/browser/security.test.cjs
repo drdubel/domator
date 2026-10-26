@@ -210,14 +210,41 @@ function rcmPage() {
         canvasElement = document.getElementById('canvas');
         zoomLevelElement = document.getElementById('zoomLevel');
         const handlers = {};
+        const eventListeners = {};
+        const liveConnections = [];
         jsPlumbInstance = {
             draggable() {}, makeSource() {}, makeTarget() {}, repaintEverything() {},
             revalidate() {}, setZoom() {}, batch(callback) { callback() },
-            deleteEveryConnection() {}, deleteEveryEndpoint() {}, deleteConnection() {},
-            unbind() {}, bind(event, callback) { handlers[event] = callback },
-            connect({source, target}) {
-                return { sourceId: source.id, targetId: target.id, visible: true,
+            getAllConnections() { return [...liveConnections] },
+            deleteEveryConnection() { [...liveConnections].forEach(conn => this.deleteConnection(conn)) },
+            deleteEveryEndpoint() {},
+            deleteConnection(conn) {
+                const index = liveConnections.indexOf(conn);
+                if (index < 0) return;
+                liveConnections.splice(index, 1);
+                conn.canvas.remove();
+                conn.endpoints.forEach(ep => ep.canvas.remove());
+            },
+            unbind(event) { eventListeners[event] = [] },
+            bind(event, callback) {
+                (eventListeners[event] ||= []).push(callback);
+                handlers[event] = (...args) => Promise.all(eventListeners[event].map(fn => fn(...args)));
+            },
+            connect({source, target, paintStyle}) {
+                const canvas = document.createElement('div');
+                document.getElementById('canvas').appendChild(canvas);
+                const endpoints = [source, target].map(el => {
+                    const endpoint = document.createElement('div');
+                    el.appendChild(endpoint);
+                    return {canvas: endpoint};
+                });
+                const conn = { source, target, canvas, endpoints,
+                    sourceId: source.id, targetId: target.id, visible: true, paintStyle,
+                    setPaintStyle(style) { this.paintStyle = style },
+                    getPaintStyle() { return this.paintStyle },
                     setVisible(value) { this.visible = value } };
+                liveConnections.push(conn);
+                return conn;
             }
         };
         addConnectionHoverEffect = () => {};
@@ -483,5 +510,135 @@ test('RCM renders discovered Zigbee sensors and keeps command selectors scoped t
             { type: 'zigbee_command', switch_id: 281474976710672, button_id: 'a', command: 'toggle' }
         ]))
         assert.equal(first.value, 'on')
+    } finally { dom.window.close() }
+})
+
+
+test('RCM repeated refreshes bind one delete handler and coalesce pending double-clicks', async () => {
+    const dom = rcmPage()
+    try {
+        run(dom, `createSwitch(9, 'Switch', 3, 0, 0); createRelay(1, 'Relay', {}, 0, 0);
+            createConnection(9, 'a', 1, 'a');
+            const posts = [], messages = [];
+            let finishRemoval;
+            postForm = (...args) => { posts.push(args); return new Promise(resolve => { finishRemoval = resolve }) };
+            wsManager.send = message => messages.push(JSON.parse(message));
+            for (let i = 0; i < 5; i++) bindJsPlumbEvents();`)
+        assert.equal(run(dom, 'eventListeners.dblclick.length'), 1)
+        const first = run(dom, `handlers.dblclick(connections[9].a[0].connection, {preventDefault() {}})`)
+        const second = run(dom, `handlers.dblclick(connections[9].a[0].connection, {preventDefault() {}})`)
+        assert.equal(run(dom, 'posts.length'), 1)
+        assert.equal(run(dom, 'posts[0][2]'), false)
+        run(dom, 'finishRemoval({status: "Connection removed"})')
+        await Promise.all([first, second])
+        assert.equal(run(dom, 'connections[9].a.length'), 0)
+        assert.equal(run(dom, 'liveConnections.length'), 0)
+        assert.equal(run(dom, 'connectionLookupMap["relay-1"].length'), 0)
+        assert.equal(run(dom, 'messages.filter(msg => msg.type === "update").length'), 1)
+        assert.equal(dom.window.document.querySelectorAll('.device-box').length, 2)
+    } finally { dom.window.close() }
+})
+
+test('RCM overlapping loads ignore stale HTTP responses and deferred connection rendering', async () => {
+    const dom = rcmPage()
+    try {
+        run(dom, `const timers = [], responses = [];
+            window.setTimeout = callback => { timers.push(callback); return timers.length };
+            const configuration = {
+                '/lights/get_relays': {1: ['Relay', 8]},
+                '/lights/get_switches': {9: ['Switch', 3]},
+                '/lights/get_connections': {9: {a: [[1, 'a']]}},
+                '/lights/get_outputs': {}, '/lights/get_all_buttons': {},
+                '/lights/get_blind_pairs': {}, '/lights/get_zigbee_devices': {}
+            };
+            fetchAPI = path => new Promise(resolve => responses.push(() => resolve(configuration[path])));
+            const firstLoad = loadConfiguration(), secondLoad = loadConfiguration();
+            responses.splice(7).forEach(resolve => resolve());`)
+        await run(dom, 'secondLoad')
+        run(dom, 'responses.splice(0).forEach(resolve => resolve())')
+        await run(dom, 'firstLoad')
+        assert.equal(dom.window.document.querySelectorAll('.device-box').length, 2)
+        run(dom, 'timers.splice(0).forEach(callback => callback())')
+        assert.equal(run(dom, 'liveConnections.length'), 1)
+        // A completed HTTP load can still have stale deferred rendering queued.
+        run(dom, 'const thirdLoad = loadConfiguration(); responses.splice(0).forEach(resolve => resolve())')
+        await run(dom, 'thirdLoad')
+        run(dom, 'const fourthLoad = loadConfiguration(); responses.splice(0).forEach(resolve => resolve())')
+        await run(dom, 'fourthLoad')
+        run(dom, 'timers.splice(0).forEach(callback => callback())')
+        assert.equal(dom.window.document.querySelectorAll('.device-box').length, 2)
+        assert.equal(run(dom, 'liveConnections.length'), 1)
+        assert.equal(run(dom, 'isLoadingConnections'), false)
+    } finally { dom.window.close() }
+})
+
+test('RCM highlights only direct live neighbours, ignoring stale lookup entries and shared targets', async () => {
+    const dom = rcmPage()
+    try {
+        run(dom, `for (const id of [1, 2, 3]) createRelay(id, 'Relay', {}, 0, 0);
+            for (const id of [8, 9]) createSwitch(id, 'Switch', 3, 0, 0);
+            createConnection(8, 'a', 1, 'a'); createConnection(8, 'b', 2, 'b');
+            createConnection(9, 'a', 1, 'a'); createConnection(9, 'b', 3, 'b');
+            const unrelated = connections[9].b[0].connection;
+            connectionLookupMap['switch-8'].push(unrelated);
+            highlightDevice('switch-8');`)
+        const highlighted = () => [...dom.window.document.querySelectorAll('.device-box.highlighted')].map(el => el.id).sort()
+        assert.deepEqual(highlighted(), ['relay-1', 'relay-2', 'switch-8'])
+        assert.equal(run(dom, 'unrelated.canvas.classList.contains("highlighted")'), false)
+        assert.equal(run(dom, 'connections[9].a[0].connection.canvas.classList.contains("highlighted")'), false)
+        run(dom, `highlightDevice('relay-1')`)
+        assert.deepEqual(highlighted(), ['relay-1', 'switch-8', 'switch-9'])
+        assert.equal(run(dom, 'connections[8].b[0].connection.canvas.classList.contains("highlighted")'), false)
+        run(dom, `postForm = async () => ({status: 'Connection removed'})`)
+        await run(dom, 'removeConnection(connections[9].a[0].connection)')
+        assert.deepEqual(highlighted(), ['relay-1', 'switch-8'])
+        run(dom, `highlightDevice('relay-3'); highlightDevice('switch-8')`)
+        assert.deepEqual(highlighted(), ['relay-1', 'relay-2', 'switch-8'])
+    } finally { dom.window.close() }
+})
+
+test('RCM unlink-all includes hidden routes and removes only connections incident to the chosen card', async () => {
+    for (const deviceId of ['switch-8', 'relay-1']) {
+        const dom = rcmPage()
+        try {
+            run(dom, `for (const id of [1, 2]) createRelay(id, 'Relay', {}, 0, 0);
+                for (const id of [8, 9]) createSwitch(id, 'Switch', 3, 0, 0);
+                createConnection(8, 'a', 1, 'a'); createConnection(8, 'b', 2, 'b');
+                createConnection(9, 'a', 1, 'a'); createConnection(9, 'b', 2, 'b');
+                hideButton(8, 'a'); hideDevice(1, 'relay');
+                appSettings.confirmBeforeDelete = false;
+                const posts = [], messages = [];
+                postForm = async (...args) => { posts.push(args); return {status: 'Connection removed'} };
+                wsManager.send = message => messages.push(JSON.parse(message));`)
+            await run(dom, `removeAllDeviceConnections('${deviceId}')`)
+            assert.equal(run(dom, 'posts.length'), 2)
+            assert.equal(run(dom, 'posts.every(args => args[2] === false)'), true)
+            assert.equal(run(dom, 'liveConnections.length'), 2)
+            assert.equal(run(dom, 'messages.filter(msg => msg.type === "update").length'), 1)
+            assert.equal(dom.window.document.querySelectorAll('.device-box').length, 4)
+            assert.equal(run(dom, `liveConnections.every(conn => ${deviceId.startsWith('switch')
+                ? 'conn.sourceId.startsWith("switch-9-")' : 'conn.targetId.startsWith("relay-2-")'})`), true)
+        } finally { dom.window.close() }
+    }
+})
+
+test('RCM unlink-all respects cancellation and retains routes that fail to delete', async () => {
+    const dom = rcmPage()
+    try {
+        run(dom, `createRelay(1, 'Relay', {}, 0, 0); createSwitch(9, 'Switch', 3, 0, 0);
+            createConnection(9, 'a', 1, 'a'); createConnection(9, 'b', 1, 'b');
+            const posts = [];
+            postForm = async (...args) => { posts.push(args); return args[1].button_id === 'a' ? {} : null };
+            window.confirm = () => false;`)
+        await run(dom, `removeAllDeviceConnections('switch-9')`)
+        assert.equal(run(dom, 'posts.length'), 0)
+        assert.equal(run(dom, 'liveConnections.length'), 2)
+        run(dom, 'window.confirm = () => true')
+        await run(dom, `removeAllDeviceConnections('switch-9')`)
+        assert.equal(run(dom, 'liveConnections.length'), 1)
+        assert.equal(run(dom, 'connections[9].b.length'), 1)
+        assert.equal(run(dom, 'connections[9].a.length'), 0)
+        assert.equal(dom.window.document.querySelector('#switch-9 .disconnect-btn').disabled, false)
+        assert.match(dom.window.document.getElementById('rcm-toast').textContent, /Removed 1 of 2/)
     } finally { dom.window.close() }
 })

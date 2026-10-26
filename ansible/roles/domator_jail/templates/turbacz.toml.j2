@@ -5,6 +5,9 @@
 authorized = {{ dj_secret.authorized | list | to_json }}
 jwt_secret = {{ dj_secret.jwt_secret | to_json }}
 session_secret = {{ dj_secret.session_secret | to_json }}
+# Without an entry here everybody is a viewer and turbacz refuses every light,
+# blind and heating command (WebSocket closed with 1008, nothing logged).
+roles = { {% for user, granted in dj_secret.roles.items() %}{{ user | to_json }} = {{ granted | list | to_json }}{{ ', ' if not loop.last else '' }}{% endfor %} }
 use_mqtt = true
 
 [mqtt]

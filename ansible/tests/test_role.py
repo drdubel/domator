@@ -55,6 +55,8 @@ class RenderedTest(unittest.TestCase):
             self.assertEqual(cfg["monitoring"]["labels"], {k: str(v) for k, v in inst["labels"].items()})
             self.assertEqual(cfg["firmware"]["directory"], "/var/db/domator/firmware")
             self.assertEqual(cfg["authorized"], ["a@example.com", "b@example.com"])
+            # No role means viewer, which cannot switch anything.
+            self.assertEqual(cfg["roles"], {"a@example.com": ["admin"], "b@example.com": ["operator"]})
             # Quotes and backslashes in secrets survive the JSON-in-TOML quoting.
             self.assertEqual(cfg["session_secret"], 'sess"ion\\\\x')
             self.assertIs(cfg["ha"]["enabled"], False)

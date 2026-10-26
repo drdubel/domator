@@ -69,6 +69,7 @@ domator_jail_pkgs:
 # operator edits them (mise run secrets). Required keys:
 domator_secret_keys:
   - authorized          # list of e-mail addresses allowed to log in
+  - roles               # {e-mail: [viewer|operator|admin|ota]}; unlisted users are viewers who cannot command
   - jwt_secret
   - session_secret
   - mqtt_password

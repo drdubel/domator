@@ -19,7 +19,9 @@ Two things follow from moving them out:
   and OTA images are no longer household-specific.
 
 A device with no credentials does not fall back to defaults. It logs what is
-missing every 10 seconds and joins nothing.
+missing and joins nothing. The C6 battery build keeps USB accessible while a
+computer is connected, then sleeps after 30 seconds without a USB host.
+Other builds log the error every 10 seconds.
 
 ## Setup
 
@@ -61,6 +63,24 @@ re-provisioning does not require reflashing the firmware.
 The device must already have the current partition table (`partitions.csv`),
 which contains `creds`. A device flashed from an older table logs
 `No 'creds' partition` — do a normal `idf.py flash` once, then provision.
+
+### C6 USB port disappears
+
+Older battery firmware enters deep sleep immediately when credentials are
+missing, disconnecting native USB. Recover without erasing flash:
+
+1. Close PlatformIO's serial monitor or any other program using the port.
+2. Hold **BOOT**, press and release **RST**, then release **BOOT**. This starts
+   the ROM downloader instead of the sleeping application.
+3. Find the port again (`ls /dev/cu.usbmodem*` on macOS), then run:
+
+   ```sh
+   ./provision.sh -C esp32c6 -p /dev/cu.usbmodemXXX -c /path/to/private.csv
+   ```
+
+4. Press RST after writing credentials. Install the updated `esp32c6` firmware
+   to keep USB available during future provisioning. Its application remains
+   awake while connected to a computer; battery sleep resumes after disconnect.
 
 ## Migrating a device that predates this
 
@@ -109,8 +129,10 @@ encryption if that matters for your deployment.
 
 ## Battery remote switches and ESP-NOW gateways
 
-One firmware image supports normal switches, normal relays, and C3 SuperMini
-remote switches. Device role and gateway address are selected in the `creds`
+The firmware supports normal switches, normal relays, C3 SuperMini remotes,
+and Beetle ESP32-C6 battery remotes. Use the image matching the chip. For the
+**Beetle ESP32-C6 V1.1**, see [wiring, battery power, build and OTA setup](../README.md).
+Device role and gateway address are selected in the `creds`
 partition when provisioning; OTA preserves them. Normal devices with no new
 keys retain their existing mesh, buttons, LEDs and relay behavior.
 
@@ -146,7 +168,7 @@ keys retain their existing mesh, buttons, LEDs and relay behavior.
 
 ### Power, response time and retained functions
 
-Remotes never start ESP-MESH, accept children or become root. They stop Wi-Fi
+Remotes never start ESP-MESH, accept children or become root. C3 remotes stop Wi-Fi
 between interactions and enter **light sleep** until any of the seven existing
 GPIOs changes level or a 60-second heartbeat expires. GPIO6/7 cannot wake a C3
 from deep sleep, so light sleep preserves existing wiring and avoids a cold

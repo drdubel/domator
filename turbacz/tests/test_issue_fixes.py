@@ -1,4 +1,5 @@
-from unittest.mock import AsyncMock
+import json
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx2
 import pytest
@@ -137,6 +138,44 @@ def test_upload_streaming_and_private_download(application):
     assert response.status_code == 400
     assert (a.main.FIRMWARE_DIR / "relay.bin").read_bytes() == payload
     assert len(list(a.main.FIRMWARE_DIR.iterdir())) == 1
+
+
+def test_beetle_firmware_is_separate_from_c3_switch_image(application):
+    a = application
+    headers = {"Authorization": f"Bearer {a.token}"}
+    images = {"switch": b"\xe9C3-image", "beetle-esp32c6": b"\xe9C6-image"}
+    for device, image in images.items():
+        response = a.http.post(
+            f"/upload/{device}", files={"file": ("fw.bin", image)}, headers=headers
+        )
+        assert response.status_code == 200
+    for device, image in images.items():
+        assert a.http.get(f"/firmware/{device}.bin").status_code == 401
+        response = a.http.get(f"/firmware/{device}.bin", headers=headers)
+        assert response.status_code == 200
+        assert response.content == image
+        assert response.headers["cache-control"] == "private, no-store"
+
+
+@pytest.mark.parametrize("reported,expected", [(4, 4), (7, 7), (None, 7), (0, 7), (8, 7), (True, 7), ("4", 7)])
+async def test_remote_registers_reported_button_count(application, monkeypatch, reported, expected):
+    from turbacz import broker
+
+    manager = MagicMock()
+    manager.get_relays.return_value = {}
+    manager.get_switches.return_value = {}
+    monkeypatch.setattr(broker, "connection_manager", manager)
+    monkeypatch.setattr(broker, "state_manager", MagicMock())
+    monkeypatch.setattr(broker, "ha_bridge", MagicMock())
+    monkeypatch.setattr(broker, "record_node_metrics", MagicMock())
+    monkeypatch.setattr(broker.ws_manager, "broadcast", AsyncMock())
+    data = {"deviceId": 444, "parentId": 0, "type": "remote", "firmware": 1, "rssi": -50}
+    if reported is not None:
+        data["buttons"] = reported
+    await broker.handle_root_state(json.dumps(data))
+    manager.add_switch.assert_called_once()
+    assert manager.add_switch.call_args.args[0] == 444
+    assert manager.add_switch.call_args.args[2] == expected
 
 
 def test_large_upload_with_understated_length(application):

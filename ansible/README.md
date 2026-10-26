@@ -82,7 +82,8 @@ Restrict each environment to its branch (Deployment branches: `main`, `czupel`).
 ```yaml
 secret_domator:
   turbacz:
-    authorized: [someone@example.com]   # who may log in
+    roles:                              # the keys may log in
+      someone@example.com: [admin]      # viewer, operator, admin or ota
     jwt_secret: ...
     session_secret: ...
     mqtt_password: ...                  # mqtt_username defaults to the name

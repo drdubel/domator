@@ -2,11 +2,12 @@
 # turbacz settings of the "{{ dj_name }}" jail. Secrets come from
 # secret_domator.{{ dj_name }} in host_vars/virgo/secrets.sops.yml; change
 # them there, not here. Values are JSON strings, which TOML accepts.
-authorized = {{ dj_secret.authorized | list | to_json }}
+# Everybody with a role may log in.
+authorized = {{ dj_secret.roles.keys() | list | sort | to_json }}
 jwt_secret = {{ dj_secret.jwt_secret | to_json }}
 session_secret = {{ dj_secret.session_secret | to_json }}
-# Without an entry here everybody is a viewer and turbacz refuses every light,
-# blind and heating command (WebSocket closed with 1008, nothing logged).
+# A viewer cannot send light, blind or heating commands (turbacz closes the
+# WebSocket with 1008 and logs nothing).
 roles = { {% for user, granted in dj_secret.roles.items() %}{{ user | to_json }} = {{ granted | list | to_json }}{{ ', ' if not loop.last else '' }}{% endfor %} }
 use_mqtt = true
 

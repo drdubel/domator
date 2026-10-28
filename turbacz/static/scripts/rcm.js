@@ -475,13 +475,50 @@ function applyVisualTransform() {
     renderView()
 }
 
-// zooming: the scale changes. Firefox re-rasterises every SVG connector at each new
-// scale, so it hides the lines until the gesture settles (see rcm.css).
+// Firefox re-rasterises each of jsPlumb's per-connection SVGs at every new scale,
+// which made zooming stutter. While the scale changes, the lines are drawn from two
+// merged SVGs instead (normal and highlighted layers). They hold identical copies
+// of the paths, so the swap is invisible; the originals return once zooming stops.
+let zoomLineLayers = null
+
+function showZoomLineLayers() {
+    if (!isFirefox || zoomLineLayers || !canvasElement) return
+    const NS = 'http://www.w3.org/2000/svg'
+    const layer = zIndex => {
+        const svg = document.createElementNS(NS, 'svg')
+        svg.setAttribute('class', 'zoom-line-layer')
+        svg.style.zIndex = String(zIndex)
+        return svg
+    }
+    const normal = layer(50), highlighted = layer(10100)
+    canvasElement.querySelectorAll('svg.jtk-connector, svg._jsPlumb_connector').forEach(svg => {
+        const style = getComputedStyle(svg)
+        if (style.display === 'none' || style.visibility === 'hidden') return
+        const group = document.createElementNS(NS, 'g')
+        group.setAttribute('transform',
+            `translate(${parseFloat(svg.style.left) || 0},${parseFloat(svg.style.top) || 0})`)
+        if (style.opacity !== '1') group.setAttribute('opacity', style.opacity)
+        for (const child of svg.children) group.appendChild(child.cloneNode(true))
+        ;(svg.classList.contains('highlighted') ? highlighted : normal).appendChild(group)
+    })
+    canvasElement.append(normal, highlighted)
+    zoomLineLayers = [normal, highlighted]
+    wrapperElement?.classList.add('lines-proxied')
+}
+
+function hideZoomLineLayers() {
+    if (!zoomLineLayers) return
+    wrapperElement?.classList.remove('lines-proxied')
+    zoomLineLayers.forEach(layer => layer.remove())
+    zoomLineLayers = null
+}
+
+// zooming: the scale changes during this gesture.
 function beginInteraction(zooming = false) {
     clearTimeout(interactionTimer)
     interactionTimer = null
     wrapperElement?.classList.add('interacting')
-    if (zooming) wrapperElement?.classList.add('zooming')
+    if (zooming) showZoomLineLayers()
 }
 
 function settleInteraction(delay = INTERACTION_SETTLE_MS) {
@@ -489,7 +526,8 @@ function settleInteraction(delay = INTERACTION_SETTLE_MS) {
     interactionTimer = setTimeout(() => {
         interactionTimer = null
         if (isPanning || isPinching || viewAnimation) return
-        wrapperElement?.classList.remove('interacting', 'zooming')
+        wrapperElement?.classList.remove('interacting')
+        hideZoomLineLayers()
         syncJsPlumb()
         saveCanvasView()
     }, delay)
@@ -1830,13 +1868,17 @@ function updateGatewayControls() {
     document.querySelectorAll('[data-gateway-switch]').forEach(button => {
         const id = button.dataset.gatewaySwitch
         const role = State.deviceRoles[id] || {}
-        button.hidden = role.type !== 'switch' || !online_switches.has(Number(id))
-        button.textContent = '📡'
-        button.setAttribute('aria-label', role.gateway ? 'Gateway: on' : 'Gateway: off')
+        const online = online_switches.has(Number(id))
+        // Normal switch hardware only; kept visible (disabled) while the switch is offline.
+        button.hidden = role.type !== 'switch'
+        button.disabled = !online
+        button.textContent = role.gateway ? '📡 Gateway: on' : '📡 Gateway: off'
         button.setAttribute('aria-pressed', String(role.gateway === true))
-        button.title = role.gateway
-            ? `Gateway: on. ESP-NOW gateway ${role.gateway_mac}, channel ${role.channel}. Click to disable.`
-            : 'Gateway: off. Enable ESP-NOW gateway (requires remote_key provisioning)'
+        button.title = !online
+            ? 'Gateway mode can be changed while the switch is online'
+            : role.gateway
+                ? `ESP-NOW gateway ${role.gateway_mac}, channel ${role.channel}. Click to disable.`
+                : 'Enable ESP-NOW gateway (requires remote_key provisioning)'
     })
     document.querySelectorAll('[data-remote-switch]').forEach(label => {
         label.hidden = State.deviceRoles[label.dataset.remoteSwitch]?.type !== 'remote'
@@ -2067,6 +2109,7 @@ async function loadConfiguration() {
 
     // Clear canvas
     const canvas = cachedElements.canvas || document.getElementById('canvas')
+    hideZoomLineLayers()
     canvas.innerHTML = ''
     if (!cachedElements.canvas) cachedElements.canvas = canvas
 
@@ -2374,19 +2417,21 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
                 <div class="device-header">
                     <div class="device-title-row">
                         ${statusDot}
-                        <div class="device-name device-name-switch-${switchId}" title="Rename"></div>
+                        <div class="device-title">
+                            <div class="device-name device-name-switch-${switchId}" title="Rename"></div>
+                            <span class="device-header-identity">
+                                <span class="device-id" title="Copy ID" onclick="event.stopPropagation(); copyIdToClipboard(${switchId}, this)">ID: ${switchId}</span>
+                                <span class="remote-badge" data-remote-switch="${switchId}" hidden>Remote</span>
+                            </span>
+                        </div>
                         <span class="device-metrics">
                             <span class="ping-time ping-time-switch-${switchId}" title="${pingTitleSwitch}">${pingTextSwitch}</span>
                             <span class="signal-icon signal-icon-switch-${switchId}" title="${rssiTitleSwitch}">${getRssiIcon(rssiSwitch)}</span>
                         </span>
                     </div>
                     <div class="device-meta-row">
-                        <span class="device-header-identity">
-                            <span class="device-id" title="Copy ID" onclick="event.stopPropagation(); copyIdToClipboard(${switchId}, this)">ID: ${switchId}</span>
-                            <span class="remote-badge" data-remote-switch="${switchId}" hidden>Remote</span>
-                        </span>
+                        <button class="card-action gateway-btn" type="button" data-gateway-switch="${switchId}" hidden onclick="event.stopPropagation(); toggleGateway(${switchId})">Gateway</button>
                         <div class="device-header-actions">
-                            <button class="card-action gateway-btn" type="button" data-gateway-switch="${switchId}" hidden onclick="event.stopPropagation(); toggleGateway(${switchId})">Gateway</button>
                             <button class="card-action color-btn" type="button" onclick="event.stopPropagation(); showColorPicker(${switchId})" title="Change color" aria-label="Change color">🎨</button>
                             <button class="card-action disconnect-btn" type="button" onclick="event.stopPropagation(); removeAllDeviceConnections('switch-${switchId}')" title="Remove all connections" aria-label="Remove all connections">✂</button>
                             <button class="card-action hide-btn" type="button" onclick="event.stopPropagation(); hideDevice(${switchId}, 'switch')" title="Hide device" aria-label="Hide device">👁️</button>
@@ -2822,16 +2867,18 @@ function createRelay(relayId, relayName, outputs, x, y, outputsCount = 8) {
                 <div class="device-header">
                     <div class="device-title-row">
                         ${statusDot}
-                        <div class="device-name device-name-relay-${relayId}" title="Rename"></div>
+                        <div class="device-title">
+                            <div class="device-name device-name-relay-${relayId}" title="Rename"></div>
+                            <span class="device-header-identity">
+                                <span class="device-id" title="Copy ID" onclick="event.stopPropagation(); copyIdToClipboard(${relayId}, this)">ID: ${relayId}</span>
+                            </span>
+                        </div>
                         <span class="device-metrics">
                             <span class="ping-time ping-time-relay-${relayId}" title="${pingTitleRelay}">${pingTextRelay}</span>
                             <span class="signal-icon signal-icon-relay-${relayId}" title="${rssiTitleRelay}">${getRssiIcon(rssiRelay)}</span>
                         </span>
                     </div>
                     <div class="device-meta-row">
-                        <span class="device-header-identity">
-                            <span class="device-id" title="Copy ID" onclick="event.stopPropagation(); copyIdToClipboard(${relayId}, this)">ID: ${relayId}</span>
-                        </span>
                         <div class="device-header-actions">
                             <button class="card-action disconnect-btn" type="button" onclick="event.stopPropagation(); removeAllDeviceConnections('relay-${relayId}')" title="Remove all connections" aria-label="Remove all connections">✂</button>
                             <button class="card-action hide-btn" type="button" onclick="event.stopPropagation(); hideDevice(${relayId}, 'relay')" title="Hide device" aria-label="Hide device">👁️</button>

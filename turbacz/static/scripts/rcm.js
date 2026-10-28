@@ -17,7 +17,7 @@ const State = {
 
     // Status tracking
     devicesRssi: {},
-    deviceRoles: {},
+    deviceRoles: loadCachedDeviceRoles(),
     zigbeeDevices: {},
     zigbeeStates: {},
     pingTimes: {},
@@ -56,7 +56,10 @@ const State = {
     blindLinkSource: null,
 
     // Connections drawn while the current selection is active; shown in their own colour.
-    newConnections: new Set()
+    newConnections: new Set(),
+
+    // Gateway toggles awaiting confirmation: switch id (string) -> {enabled, timer}
+    gatewayPending: new Map()
 }
 
 // Browser detection for performance optimizations
@@ -320,6 +323,7 @@ const wsManager = new WebSocketManager('/rcm/ws/', function (event) {
 
     // Handle different message types
     if (msg.type === "error") {
+        if (/gateway/i.test(msg.message || '')) clearGatewayPending()
         for (const device of Object.values(State.zigbeeDevices)) applyZigbeeControls(device)
         showToast(msg.message || 'Gateway request failed', true)
         return
@@ -360,6 +364,8 @@ const wsManager = new WebSocketManager('/rcm/ws/', function (event) {
         State.upToDateDevices = up_to_date_devices
         State.devicesRssi = devices_rssi
         State.deviceRoles = msg.device_roles || {}
+        cacheDeviceRoles(State.deviceRoles)
+        resolveGatewayPending()
         updateGatewayControls()
         State.pingTimes = devices_ping_times
         clearRootHighlight()
@@ -1864,35 +1870,96 @@ function clearRootHighlight() {
     })
 }
 
+// Switches confirm gateway changes in their periodic status report (every 15 s);
+// a missing remote_key makes the switch ignore an enable request entirely.
+const GATEWAY_CONFIRM_TIMEOUT_MS = 45000
+const DEVICE_ROLES_STORAGE_KEY = 'rcm_device_roles'
+
+// Remember reported device types so cards get their final width on first render,
+// before the first status message arrives.
+function loadCachedDeviceRoles() {
+    try {
+        return JSON.parse(localStorage.getItem(DEVICE_ROLES_STORAGE_KEY)) || {}
+    } catch {
+        return {}
+    }
+}
+
+function cacheDeviceRoles(roles) {
+    const types = Object.fromEntries(Object.entries(roles).map(([id, role]) => [id, { type: role.type }]))
+    localStorage.setItem(DEVICE_ROLES_STORAGE_KEY, JSON.stringify(types))
+}
+
+function switchDisplayName(id) {
+    return switches[id]?.name || `switch ${id}`
+}
+
+function resolveGatewayPending() {
+    State.gatewayPending.forEach((pending, id) => {
+        if ((State.deviceRoles[id]?.gateway === true) !== pending.enabled) return
+        clearTimeout(pending.timer)
+        State.gatewayPending.delete(id)
+        showToast(`Gateway ${pending.enabled ? 'enabled' : 'disabled'} on ${switchDisplayName(id)}`)
+    })
+}
+
+function clearGatewayPending() {
+    State.gatewayPending.forEach(pending => clearTimeout(pending.timer))
+    State.gatewayPending.clear()
+    updateGatewayControls()
+}
+
 function updateGatewayControls() {
     document.querySelectorAll('[data-gateway-switch]').forEach(button => {
         const id = button.dataset.gatewaySwitch
         const role = State.deviceRoles[id] || {}
         const online = online_switches.has(Number(id))
+        const pending = State.gatewayPending.get(id)
         // Normal switch hardware only; kept visible (disabled) while the switch is offline.
         button.hidden = role.type !== 'switch'
-        button.disabled = !online
-        button.textContent = role.gateway ? '📡 Gateway: on' : '📡 Gateway: off'
+        button.closest('.switch-box')?.classList.toggle('gateway-capable', role.type === 'switch')
+        button.disabled = !online || Boolean(pending)
+        button.classList.toggle('pending', Boolean(pending))
+        button.setAttribute('aria-busy', String(Boolean(pending)))
+        button.textContent = pending
+            ? (pending.enabled ? '📡 Enabling…' : '📡 Disabling…')
+            : role.gateway ? '📡 Gateway: on' : '📡 Gateway: off'
         button.setAttribute('aria-pressed', String(role.gateway === true))
-        button.title = !online
-            ? 'Gateway mode can be changed while the switch is online'
-            : role.gateway
-                ? `ESP-NOW gateway ${role.gateway_mac}, channel ${role.channel}. Click to disable.`
-                : 'Enable ESP-NOW gateway (requires remote_key provisioning)'
+        button.title = pending
+            ? 'Waiting for the switch to confirm in its next status report…'
+            : !online
+                ? 'Gateway mode can be changed while the switch is online'
+                : role.gateway
+                    ? `ESP-NOW gateway ${role.gateway_mac}, channel ${role.channel}. Click to disable.`
+                    : 'Enable ESP-NOW gateway (requires remote_key provisioning)'
     })
     document.querySelectorAll('[data-remote-switch]').forEach(label => {
-        label.hidden = State.deviceRoles[label.dataset.remoteSwitch]?.type !== 'remote'
+        const remote = State.deviceRoles[label.dataset.remoteSwitch]?.type === 'remote'
+        label.hidden = !remote
+        label.closest('.switch-box')?.classList.toggle('remote-switch', remote)
     })
 }
 
 function toggleGateway(deviceId) {
-    if (!wsManager.isConnected()) return
-    const role = State.deviceRoles[deviceId] || {}
+    const id = String(deviceId)
+    if (!wsManager.isConnected() || State.gatewayPending.has(id)) return
+    const role = State.deviceRoles[id] || {}
     if (role.type !== 'switch') return
-    wsManager.send(JSON.stringify({
-        type: 'gateway_mode', device_id: deviceId, enabled: !role.gateway
-    }))
-    showToast('Gateway change requested; device status will confirm it.')
+    const enabled = !role.gateway
+    if (!wsManager.send(JSON.stringify({ type: 'gateway_mode', device_id: deviceId, enabled }))) {
+        showToast('Not connected to the server', true)
+        return
+    }
+    State.gatewayPending.set(id, {
+        enabled,
+        timer: setTimeout(() => {
+            State.gatewayPending.delete(id)
+            updateGatewayControls()
+            showToast(`${switchDisplayName(id)} did not confirm gateway ${enabled ? 'enable' : 'disable'}`
+                + (enabled ? '. Check that its remote_key is provisioned.' : '.'), true)
+        }, GATEWAY_CONFIRM_TIMEOUT_MS)
+    })
+    updateGatewayControls()
 }
 
 function updateDevice(deviceId, deviceType) {

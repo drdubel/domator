@@ -488,7 +488,8 @@ body {
     padding: 0.875rem 1rem 1rem;
     box-shadow: 0 10px 24px -8px rgb(0 0 0 / 0.45);
     cursor: move;
-    /* Fixed width keeps every card aligned in arrangements, whatever the header holds. */
+    /* Fixed widths keep cards aligned in arrangements and stop them growing when
+       status (e.g. the gateway toggle) arrives after layout. */
     width: 320px;
     transition: box-shadow 0.2s, border-color 0.2s, opacity 0.2s;
     border: 1px solid var(--border-color);
@@ -543,6 +544,7 @@ body {
 }
 
 .switch-box {
+    width: 460px;
     border-left: 4px solid var(--primary-color);
     z-index: 100;
 }
@@ -601,7 +603,7 @@ body {
     min-width: 0;
 }
 
-/* Name with the ID underneath, so long mesh IDs never compete with the buttons. */
+/* Long names wrap; keep the status dot and metrics on the first line. */
 .device-title-row {
     align-items: flex-start;
 }
@@ -610,22 +612,14 @@ body {
     margin-top: 0.55rem;
 }
 
-.device-title {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.125rem;
-}
-
 .device-title-row .device-metrics {
     margin-top: 0.3rem;
 }
 
+/* ID, gateway and actions share one line; card widths are sized for the widest
+   case (a 15-digit mesh ID plus the gateway toggle on switch cards). */
 .device-meta-row {
-    justify-content: space-between;
-    flex-wrap: wrap;
-    row-gap: 0.375rem;
+    flex-wrap: nowrap;
 }
 
 .device-metrics {
@@ -661,6 +655,7 @@ body {
 }
 
 .remote-badge {
+    flex-shrink: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -688,6 +683,10 @@ body {
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.02em;
     white-space: nowrap;
+    /* Never run into the buttons; the full ID stays in the tooltip and clipboard. */
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     border-radius: 4px;
     cursor: copy;
 }

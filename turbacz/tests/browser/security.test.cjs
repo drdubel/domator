@@ -136,8 +136,14 @@ test('RCM gateway controls follow reported roles and retain remote button cards'
             createSwitch(222, 'Switch', 7, 0, 0);`)
         const button = dom.window.document.querySelector('[data-gateway-switch="222"]')
         assert.equal(button.hidden, false)
-        assert.equal(button.textContent, 'Gateway: on')
+        assert.equal(button.textContent, '📡 Gateway: on')
+        assert.equal(button.getAttribute('aria-pressed'), 'true')
+        assert.equal(button.disabled, false)
         assert.match(button.title, /02:00:00:00:00:01/)
+        run(dom, `online_switches = new Set(); updateGatewayControls()`)
+        assert.equal(button.hidden, false)
+        assert.equal(button.disabled, true)
+        run(dom, `online_switches = new Set([222]); updateGatewayControls()`)
         run(dom, `State.deviceRoles[222] = {type: 'remote'}; updateGatewayControls()`)
         assert.equal(button.hidden, true)
         assert.equal(dom.window.document.querySelector('[data-remote-switch="222"]').hidden, false)
@@ -705,4 +711,91 @@ test("RCM keeps unrelated lines dimmed across zoom redraws and Firefox's delayed
             }
         } finally { dom.window.close() }
     }
+})
+
+test('RCM keeps the selection through drags and follows connections drawn or removed while selected', async () => {
+    const dom = rcmPage()
+    try {
+        run(dom, `for (const id of [1, 2]) createRelay(id, 'Relay', {}, 0, 0);
+            createSwitch(8, 'Switch', 3, 0, 0);
+            createConnection(8, 'a', 1, 'a');
+            postForm = async () => ({success: true});
+            initPanning(); bindJsPlumbEvents(); highlightDevice('switch-8');`)
+        const doc = dom.window.document
+        const wrapper = doc.getElementById('canvas-wrapper')
+        const mouse = (type, target, x, y) => target.dispatchEvent(
+            new dom.window.MouseEvent(type, { bubbles: true, clientX: x, clientY: y }))
+        const highlighted = () => [...doc.querySelectorAll('.device-box.highlighted')].map(el => el.id).sort()
+
+        // Panning ends with a click on the empty canvas; it must not clear the selection.
+        mouse('mousedown', wrapper, 10, 10)
+        mouse('mousemove', doc, 220, 160)
+        mouse('mouseup', doc, 220, 160)
+        mouse('click', wrapper, 220, 160)
+        assert.equal(run(dom, 'highlightedDevice'), 'switch-8')
+
+        // Moving another card does not steal the selection either.
+        const relay = doc.getElementById('relay-2')
+        mouse('mousedown', relay, 300, 300)
+        mouse('click', relay, 340, 330)
+        assert.equal(run(dom, 'highlightedDevice'), 'switch-8')
+
+        // A connection drawn from the selected switch adds its relay to the selection.
+        await run(dom, `const drawn = jsPlumbInstance.connect({source: document.getElementById('switch-8-btn-b'),
+                target: document.getElementById('relay-2-output-c'), paintStyle: {}});
+            handlers.connection({connection: drawn}, {})`)
+        assert.deepEqual(highlighted(), ['relay-1', 'relay-2', 'switch-8'])
+        assert.equal(run(dom, 'connections[8].b[0].connection.canvas.classList.contains("highlighted")'), true)
+        // New lines stand out from the selection's red and are never dimmed.
+        assert.equal(run(dom, 'connections[8].b[0].connection.canvas.classList.contains("new-connection")'), true)
+        assert.equal(run(dom, 'connections[8].b[0].connection.paintStyle.stroke'), '#22c55e')
+        assert.equal(run(dom, 'connections[8].a[0].connection.paintStyle.stroke'), '#ef4444')
+
+        // A line drawn between other devices while selected stays fully visible too.
+        run(dom, 'createSwitch(9, "Other", 3, 0, 0)')
+        await run(dom, `const other = jsPlumbInstance.connect({source: document.getElementById('switch-9-btn-a'),
+                target: document.getElementById('relay-1-output-d'), paintStyle: {}});
+            handlers.connection({connection: other}, {})`)
+        assert.equal(run(dom, 'connections[9].a[0].connection.canvas.classList.contains("highlighted")'), true)
+        assert.equal(run(dom, 'connections[9].a[0].connection.paintStyle.stroke'), '#22c55e')
+        assert.equal(run(dom, 'highlightedDevice'), 'switch-8')
+
+        // The line being dragged is marked as soon as the drag starts.
+        run(dom, `const dragging = jsPlumbInstance.connect({source: document.getElementById('switch-8-btn-c'),
+                target: document.getElementById('relay-2-output-e'), paintStyle: {}});
+            handlers.connectionDrag(dragging)`)
+        assert.equal(run(dom, 'dragging.canvas.classList.contains("new-connection")'), true)
+        assert.equal(run(dom, 'dragging.paintStyle.stroke'), '#22c55e')
+        run(dom, 'jsPlumbInstance.deleteConnection(dragging)')
+
+        // Removing it drops the relay again.
+        await run(dom, 'removeConnection(connections[8].b[0].connection)')
+        assert.deepEqual(highlighted(), ['relay-1', 'switch-8'])
+
+        // A plain click on empty canvas still clears.
+        mouse('mousedown', wrapper, 50, 50)
+        mouse('click', wrapper, 50, 50)
+        assert.equal(run(dom, 'highlightedDevice'), null)
+        assert.equal(run(dom, 'connections[9].a[0].connection.canvas.classList.contains("new-connection")'), false)
+        assert.equal(run(dom, 'State.newConnections.size'), 0)
+    } finally { dom.window.close() }
+})
+
+test('RCM demo fallback draws every demo connection and shows every demo button', async () => {
+    const dom = rcmPage()
+    try {
+        run(dom, `const pendingTimers = [];
+            window.setTimeout = callback => { pendingTimers.push(callback); return 0 };
+            fetchAPI = async () => null;`)
+        await run(dom, 'loadConfiguration()')
+        run(dom, 'pendingTimers.splice(0).forEach(callback => callback())')
+        const doc = dom.window.document
+        const expected = run(dom, `Object.values(getDemoConnections())
+            .flatMap(buttons => Object.values(buttons)).reduce((sum, targets) => sum + targets.length, 0)`)
+        assert.equal(run(dom, 'jsPlumbInstance.getAllConnections().length'), expected)
+        assert.equal(doc.querySelector('.output-name-1-e').textContent, 'Przedpokój')
+        const buttons = [...doc.querySelectorAll('.switch-box .button-item')]
+        assert.equal(buttons.length, 17)
+        assert.ok(buttons.every(button => button.style.display === 'flex'))
+    } finally { dom.window.close() }
 })

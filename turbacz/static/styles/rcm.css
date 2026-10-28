@@ -504,28 +504,30 @@ body {
     display: none !important;
 }
 
+/* Mesh root: a normal opaque card with a green accent and glow. The tint is
+   layered over the regular card background so lines never show through. */
 .device-box.root {
-    border-left: 10px solid var(--success-color);
+    border-color: rgba(16, 185, 129, 0.55);
+    border-left-color: var(--success-color) !important;
+    background:
+        linear-gradient(135deg, rgba(16, 185, 129, 0.16) 0%, rgba(16, 185, 129, 0.03) 100%),
+        linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
     box-shadow:
-        0 0 24px 4px rgba(2, 196, 131, 0.5),
-        0 0 0 4px rgba(2, 196, 131, 0.15) inset,
-        0 8px 32px -8px rgba(2, 196, 131, 0.25);
-    background: linear-gradient(135deg, rgba(2, 196, 131, 0.15) 20%, var(--bg-primary) 100%);
-    overflow: visible;
-    box-sizing: border-box;
-    word-break: break-word;
+        0 0 22px 2px rgba(16, 185, 129, 0.45),
+        0 10px 24px -8px rgb(0 0 0 / 0.45);
 }
 
-@keyframes root-glow {
-    0% {
-        box-shadow: 0 0 16px 6px #10b98199, 0 0 0 4px #10b98133;
-        opacity: 1;
-    }
+.device-box.root:hover {
+    box-shadow:
+        0 0 28px 4px rgba(16, 185, 129, 0.55),
+        0 16px 32px -10px rgb(0 0 0 / 0.55);
+}
 
-    100% {
-        box-shadow: 0 0 32px 12px #34d399cc, 0 0 0 8px #10b98144;
-        opacity: 0.8;
-    }
+.device-box.root.highlighted {
+    box-shadow:
+        0 0 0 3px var(--danger-color),
+        0 0 22px 2px rgba(16, 185, 129, 0.45),
+        0 25px 50px -12px rgb(0 0 0 / 0.4);
 }
 
 .device-box.root .device-name {
@@ -543,10 +545,20 @@ body {
     z-index: 10000;
 }
 
+/* Switch widths follow what the action row holds (measured with 15-digit mesh IDs):
+   ID + 5 actions; + Remote badge; + gateway toggle. Relays stay at 320px. */
 .switch-box {
-    width: 460px;
+    width: 350px;
     border-left: 4px solid var(--primary-color);
     z-index: 100;
+}
+
+.switch-box.remote-switch {
+    width: 410px;
+}
+
+.switch-box.gateway-capable {
+    width: 460px;
 }
 
 .zigbee-command {
@@ -610,6 +622,7 @@ body {
 
 .device-title-row .status-indicator {
     margin-top: 0.55rem;
+    margin-right: 0.3rem;
 }
 
 .device-title-row .device-metrics {
@@ -793,6 +806,14 @@ body {
 
 .gateway-btn:disabled {
     cursor: not-allowed;
+}
+
+.gateway-btn.pending {
+    cursor: progress;
+    color: #fcd34d;
+    border-color: rgba(245, 158, 11, 0.6);
+    background: rgba(245, 158, 11, 0.14);
+    animation: pulse 1.2s ease-in-out infinite;
 }
 
 .device-name {

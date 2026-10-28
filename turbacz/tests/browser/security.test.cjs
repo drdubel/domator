@@ -799,3 +799,62 @@ test('RCM demo fallback draws every demo connection and shows every demo button'
         assert.ok(buttons.every(button => button.style.display === 'flex'))
     } finally { dom.window.close() }
 })
+
+test('RCM gateway toggle shows a pending state until the switch confirms, times out or is rejected', () => {
+    const dom = rcmPage()
+    try {
+        run(dom, `const timers = new Map(); let timerId = 0;
+            window.setTimeout = (callback, delay) => { timers.set(++timerId, {callback, delay}); return timerId };
+            window.clearTimeout = id => timers.delete(id);
+            const toasts = []; showToast = (message, isError = false) => toasts.push({message, isError});
+            wsManager.isConnected = () => true; const sent = []; wsManager.send = data => { sent.push(JSON.parse(data)); return true };
+            online_switches = new Set([222, 333]);
+            State.deviceRoles = {222: {type: 'switch', gateway: false}, 333: {type: 'remote'}};
+            createSwitch(222, 'Hall', 3, 0, 0); createSwitch(333, 'Remote', 2, 0, 0); createSwitch(444, 'Unknown', 2, 0, 0);`)
+        const doc = dom.window.document
+        const button = doc.querySelector('[data-gateway-switch="222"]')
+        // Card widths follow capability: gateway switches are widest, others thinner.
+        assert.ok(doc.getElementById('switch-222').classList.contains('gateway-capable'))
+        assert.ok(doc.getElementById('switch-333').classList.contains('remote-switch'))
+        assert.equal(doc.getElementById('switch-444').classList.contains('gateway-capable'), false)
+        assert.equal(doc.getElementById('switch-444').classList.contains('remote-switch'), false)
+
+        run(dom, 'toggleGateway(222)')
+        assert.equal(run(dom, 'JSON.stringify(sent)'), JSON.stringify([{type: 'gateway_mode', device_id: 222, enabled: true}]))
+        assert.equal(button.textContent, '📡 Enabling…')
+        assert.equal(button.disabled, true)
+        assert.ok(button.classList.contains('pending'))
+        assert.equal(run(dom, '[...timers.values()][0].delay'), 45000)
+        // Clicking again while pending sends nothing.
+        run(dom, 'toggleGateway(222)')
+        assert.equal(run(dom, 'sent.length'), 1)
+        // A status report that still says "off" keeps waiting.
+        const status = gateway => run(dom, `wsManager.onMessage({data: JSON.stringify({type: 'online_status',
+            online_relays: [], online_switches: [222, 333], up_to_date_devices: {}, devices_rssi: {}, ping_times: {},
+            device_roles: {222: {type: 'switch', gateway: ${gateway}}, 333: {type: 'remote'}}})})`)
+        status(false)
+        assert.equal(button.textContent, '📡 Enabling…')
+        status(true)
+        assert.equal(button.textContent, '📡 Gateway: on')
+        assert.equal(button.disabled, false)
+        assert.equal(run(dom, 'timers.size'), 0)
+        assert.match(run(dom, 'toasts.at(-1).message'), /Gateway enabled on Hall/)
+
+        // No confirmation: the timeout restores the control and explains why.
+        run(dom, 'toggleGateway(222)')
+        assert.equal(button.textContent, '📡 Disabling…')
+        run(dom, '[...timers.values()][0].callback()')
+        assert.equal(button.textContent, '📡 Gateway: on')
+        assert.equal(run(dom, 'toasts.at(-1).isError'), true)
+
+        // A server rejection clears the pending state immediately.
+        run(dom, `toggleGateway(222); wsManager.onMessage({data: JSON.stringify({type: 'error',
+            message: 'Gateway mode requires an online normal switch'})})`)
+        assert.equal(button.textContent, '📡 Gateway: on')
+        assert.equal(run(dom, 'State.gatewayPending.size'), 0)
+
+        // Reported device types are cached so card widths are right on the next load.
+        assert.deepEqual(JSON.parse(dom.window.localStorage.getItem('rcm_device_roles')),
+            {222: {type: 'switch'}, 333: {type: 'remote'}})
+    } finally { dom.window.close() }
+})

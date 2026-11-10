@@ -12,6 +12,7 @@ from turbacz.ha.bridge import ha_bridge
 from turbacz.mesh_metrics import record_node_metrics
 from turbacz.mqtt_client import mqtt
 from turbacz.mqtt_validation import normalize_payload, validate_payload
+from turbacz.presence import command_payload, report_config
 from turbacz.security import RateLimiter
 from turbacz.settings import config
 from turbacz.state_manager import state_manager
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 _device_task: asyncio.Task | None = None
 _ha_task: asyncio.Task | None = None
 _message_limiter = RateLimiter()
+_config_requests = RateLimiter()  # settings reads asked of presence sensors
 
 
 async def stop_background_tasks():
@@ -211,6 +213,18 @@ async def handle_switch_state(payload_str, topic):
             "/rcm/ws/",
         )
 
+        # A presence change is reported on every sensor input; 'a' carries it.
+        if (
+            button_id == "a"
+            and len(payload_str) > 1
+            and state_manager.get_device_role(switch_id).get("type") == "presence"
+        ):
+            state_manager.update_presence(switch_id, presence=int(payload_str[1]))
+            await ws_manager.broadcast(
+                {"type": "presence_state", "switch_id": switch_id, **state_manager.get_presence(switch_id)},
+                "/rcm/ws/",
+            )
+
         # Stateful (type 1) buttons report both edges as 'a1'/'a0'; toggle
         # buttons send a bare 'a', which is always a press.
         event_type = "release" if len(payload_str) > 1 and payload_str[1] == "0" else "press"
@@ -218,6 +232,48 @@ async def handle_switch_state(payload_str, topic):
 
     except (ValueError, IndexError) as e:
         logger.error("Error processing switch state: %s", e)
+
+
+async def ensure_presence_sensor(device_id: int, switches: dict) -> tuple[str, dict | None]:
+    """Register a reporting presence sensor, or convert its old switch record.
+
+    Returns its name and the settings it last reported, if any.
+    """
+    name = switches[device_id][0] if device_id in switches else namer.generate(category="astronomy")
+    sensors = await db_call(connection_manager.get_presence_sensors)
+    if device_id not in sensors:
+        await db_call(connection_manager.add_presence_sensor, device_id, name)
+        # The root routes the inputs by type, so it needs them before the first event.
+        buttons = await db_call(connection_manager.get_all_buttons)
+        mqtt.client.publish("/switch/cmd/root", json.dumps({"type": "button_types", "data": mesh_switch_config(buttons)}))
+        await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
+    return name, sensors.get(device_id)
+
+
+async def handle_presence_report(data):
+    """Live radar data, or the configuration a sensor read back from its radar."""
+    device_id = data["deviceId"]
+    if data["report"] == "live":
+        state_manager.update_presence(device_id, presence=data["presence"], distance=data["distance"], radar=1)
+        await ws_manager.broadcast(
+            {
+                "type": "presence_live",
+                "switch_id": device_id,
+                "presence": data["presence"],
+                "distance": data["distance"],
+                "energy": data["energy"],
+                "calibrating": data.get("calibrating", 0),
+            },
+            "/rcm/ws/",
+        )
+        return
+
+    await ensure_presence_sensor(device_id, await db_call(connection_manager.get_switches))
+    sensor_config = report_config(data)
+    await db_call(connection_manager.set_presence_config, device_id, sensor_config)
+    await ws_manager.broadcast(
+        {"type": "presence_config", "switch_id": device_id, "config": sensor_config}, "/rcm/ws/"
+    )
 
 
 async def handle_root_state(payload_str):
@@ -266,6 +322,10 @@ async def handle_root_state(payload_str):
     if status == "disconnected":
         return
 
+    if "report" in data:
+        await handle_presence_report(data)
+        return
+
     relays = await db_call(connection_manager.get_relays)
     switches = await db_call(connection_manager.get_switches)
     if data["type"] in {"switch", "remote"}:
@@ -281,6 +341,19 @@ async def handle_root_state(payload_str):
                     buttons = 7
             await db_call(connection_manager.add_switch, data["deviceId"], name, buttons)
             await ws_manager.broadcast({"type": "update"}, "/rcm/ws/")
+
+    elif data["type"] == "presence":
+        data["name"], sensor_config = await ensure_presence_sensor(data["deviceId"], switches)
+        state_manager.update_presence(
+            data["deviceId"],
+            presence=data.get("presence", 0),
+            distance=data.get("distance", 0),
+            radar=data.get("radar", 0),
+        )
+        # A sensor reports its settings once its radar is set up; that report is
+        # lost when the root or Turbacz is not connected yet, so ask again.
+        if sensor_config is None and data.get("radar") and _config_requests.allow(data["deviceId"], 1, 300):
+            mqtt.client.publish(f"/switch/cmd/{data['deviceId']}", command_payload({"action": "read"}))
 
     elif data["type"] == "relay8" or data["type"] == "relay16":
         if data["deviceId"] in relays:
@@ -308,7 +381,9 @@ async def handle_root_state(payload_str):
     state_manager.mark_relay_online(data["deviceId"], int(time()))
     state_manager.mark_switch_online(data["deviceId"], int(time()))
     ha_bridge.publish_relay_availability(data["deviceId"], True)
-    state_manager.set_firmware_version(data["deviceId"], data["type"], data["firmware"])
+    # Presence sensors run the C3 switch image, so they share its newest version.
+    image = "switch" if data["type"] == "presence" else data["type"]
+    state_manager.set_firmware_version(data["deviceId"], image, data["firmware"])
     state_manager.set_device_rssi(data["deviceId"], int(data["rssi"]))
 
     if data["parentId"] in relays:

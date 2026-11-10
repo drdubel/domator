@@ -130,7 +130,7 @@ encryption if that matters for your deployment.
 ## Battery remote switches and ESP-NOW gateways
 
 The firmware supports normal switches, normal relays, C3 SuperMini remotes,
-and Beetle ESP32-C6 battery remotes. Use the image matching the chip. For the
+C3 SuperMini presence sensors and Beetle ESP32-C6 battery remotes. Use the image matching the chip. For the
 **Beetle ESP32-C6 V1.1**, see [wiring, battery power, build and OTA setup](../README.md).
 Device role and gateway address are selected in the `creds`
 partition when provisioning; OTA preserves them. Normal devices with no new
@@ -211,3 +211,15 @@ Gateway mode adds ESP-NOW reception/forwarding without replacing local switch
 buttons, LEDs, root eligibility or existing mesh services. No battery-side
 scanning or automatic gateway selection is used: each remote has one explicitly
 provisioned gateway.
+
+## Presence sensors
+
+An ESP32-C3 SuperMini wired to a Waveshare HMMD mmWave sensor runs the C3
+switch firmware with this extra row:
+
+```csv
+switch_role,data,string,presence
+```
+
+It joins the mesh like a powered switch and needs no ESP-NOW keys. See
+[the presence sensor guide](../presence-sensor.md) for wiring and RCM setup.

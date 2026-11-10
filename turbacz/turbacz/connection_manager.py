@@ -7,6 +7,7 @@ import turbacz.auth as auth
 from fastapi import APIRouter, Cookie, Form, HTTPException, Request
 from fastapi.responses import JSONResponse
 from turbacz.database import serialized_manager
+from turbacz.presence import PRESENCE_BUTTONS
 from turbacz.settings import config
 from turbacz.validation import relay_output
 from turbacz.zigbee_devices import ZIGBEE_ID_END, ZIGBEE_ID_START, is_zigbee_id, validate_action, zigbee_device_id
@@ -176,6 +177,15 @@ class ConnectionManager:
                 );
                 """
             )
+            # mmWave presence sensors; config is what the radar last reported.
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS presence_sensors (
+                    switch_id BIGINT PRIMARY KEY REFERENCES switches(id) ON DELETE CASCADE,
+                    config JSONB
+                );
+                """
+            )
             # Bookkeeping for the Home Assistant discovery bridge: which
             # retained discovery topics we have published, so entities that
             # disappear from the registry can be cleared even across restarts.
@@ -320,6 +330,8 @@ class ConnectionManager:
     def rename_switch(self, switch_id: int, switch_name: str, buttons: int):
         if is_zigbee_id(switch_id) and buttons != self.get_switches()[switch_id][1]:
             raise HTTPException(status_code=400, detail="Zigbee actions are discovered through MQTT")
+        if switch_id in self.get_presence_sensors() and buttons != len(PRESENCE_BUTTONS):
+            raise HTTPException(status_code=400, detail="Presence sensor inputs are fixed")
         with self.conn.cursor() as cur:
             for i in range(buttons, self.get_switches()[switch_id][1]):
                 button_id = chr(97 + i)
@@ -820,6 +832,62 @@ class ConnectionManager:
                 (switch_id, button_id, command),
             )
 
+    def add_presence_sensor(self, switch_id: int, switch_name: str):
+        """Register a presence sensor with its three routing inputs.
+
+        Also converts a record that first appeared as an ordinary switch,
+        keeping its name and the routes of the inputs that remain.
+        """
+        buttons = list(PRESENCE_BUTTONS)
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO switches (id, name, buttons)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET buttons = EXCLUDED.buttons;
+                """,
+                (switch_id, switch_name, len(buttons)),
+            )
+            cur.execute(
+                "DELETE FROM connections WHERE switch_id = %s AND NOT button_id = ANY(%s);",
+                (switch_id, buttons),
+            )
+            cur.execute(
+                "DELETE FROM buttons WHERE switch_id = %s AND NOT button_id = ANY(%s);",
+                (switch_id, buttons),
+            )
+            for button_id, button_type in PRESENCE_BUTTONS.items():
+                cur.execute(
+                    """
+                    INSERT INTO buttons (switch_id, button_id, type)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (switch_id, button_id) DO UPDATE SET type = EXCLUDED.type;
+                    """,
+                    (switch_id, button_id, button_type),
+                )
+            cur.execute(
+                "INSERT INTO presence_sensors (switch_id) VALUES (%s) ON CONFLICT DO NOTHING;",
+                (switch_id,),
+            )
+
+        self.conn.commit()
+
+    def get_presence_sensors(self) -> dict[int, dict | None]:
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT switch_id, config FROM presence_sensors;")
+            sensors = cur.fetchall()
+
+        return {row[0]: row[1] for row in sensors}
+
+    def set_presence_config(self, switch_id: int, sensor_config: dict):
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE presence_sensors SET config = %s WHERE switch_id = %s;",
+                (json.dumps(sensor_config), switch_id),
+            )
+
+        self.conn.commit()
+
     def get_buttons(self, switch_id: int) -> dict[str, int]:
         with self.conn.cursor() as cur:
             cur.execute(
@@ -1154,6 +1222,19 @@ def get_zigbee_devices(
     if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
     return connection_manager.get_zigbee_devices()
+
+
+@connection_router.get("/get_presence_sensors")
+def get_presence_sensors(
+    request: Request,
+    access_token: str | None = Cookie(None),
+):
+    user = auth.get_current_user(auth.bearer_token_from_header(request.headers.get("authorization")) or access_token)
+
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    return JSONResponse(content=connection_manager.get_presence_sensors())
 
 
 @connection_router.post("/remove_connection")

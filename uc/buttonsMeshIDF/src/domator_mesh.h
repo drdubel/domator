@@ -92,6 +92,11 @@
 #define REMOTE_LED_OFF_LEVEL 1
 #endif
 
+// Waveshare HMMD mmWave sensor on an ESP32-C3 SuperMini (switch_role=presence).
+// The indicator is the SuperMini's active-low blue LED on LED_GPIO.
+#define PRESENCE_RADAR_RX_GPIO 5  // sensor TX
+#define PRESENCE_RADAR_TX_GPIO 4  // sensor RX
+
 // GPIO pin definitions for 8-relay board
 #define RELAY_8_PIN_0 32
 #define RELAY_8_PIN_1 33
@@ -134,7 +139,17 @@ typedef enum {
     NODE_TYPE_RELAY_8,
     NODE_TYPE_RELAY_16,
     NODE_TYPE_REMOTE_SWITCH,
+    NODE_TYPE_PRESENCE,
 } node_type_t;
+
+/** @brief Button routing types, as pushed by Turbacz in "button_types". */
+enum {
+    BUTTON_TYPE_MOMENTARY = 0,  // toggle outputs on release
+    BUTTON_TYPE_STATEFUL = 1,   // outputs take the inverse of the input level
+    BUTTON_TYPE_FOLLOW = 2,     // outputs take the input level (presence)
+    BUTTON_TYPE_ON_ONLY = 3,    // input high turns outputs on
+    BUTTON_TYPE_OFF_ONLY = 4,   // input low turns outputs off
+};
 
 /** @brief Hardware board variant. */
 typedef enum { BOARD_TYPE_8_RELAY = 0, BOARD_TYPE_16_RELAY } board_type_t;
@@ -322,6 +337,30 @@ void led_set_color(uint8_t r, uint8_t g, uint8_t b);
 
 /** @brief Trigger a short cyan LED flash to acknowledge a button press. */
 void led_flash_cyan(void);
+
+// ====================
+// Function Declarations: node_presence.c
+// ====================
+
+/** @brief Configure the radar UART, indicator LED and command queue. */
+void presence_init(void);
+
+/**
+ * @brief FreeRTOS task: configures the HMMD radar, sends presence changes to
+ *        the root as button events and serves configuration commands.
+ */
+void presence_task(void* arg);
+
+/**
+ * @brief Queue a JSON radar command ({"radar": ...}) for the presence task.
+ * @return true if the payload was a radar command for this node (consumed,
+ *         even when invalid), false if another handler should process it.
+ */
+bool presence_handle_command(const char* data, size_t len);
+
+/** @brief Add presence, distance and radar health to a status report. */
+struct cJSON;
+void presence_add_status(struct cJSON* json);
 
 // ====================
 // Function Declarations: mesh_comm.c

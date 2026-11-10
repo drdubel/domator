@@ -46,7 +46,7 @@ typedef struct {
     char mqtt_pass[65];
     char ota_url[192];
     char ota_token[129];
-    char switch_role[16];   // empty/normal or remote; selected at provisioning
+    char switch_role[16];   // empty/normal, remote or presence; set at provisioning
     char gateway_mac[18];   // gateway STA MAC for remote switches
     char remote_key[65];    // 32-byte shared HMAC key, hex encoded
     uint8_t remote_channel; // actual mesh radio channel, 1..13

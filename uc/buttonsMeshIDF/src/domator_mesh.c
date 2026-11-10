@@ -312,7 +312,7 @@ void detect_hardware_type(void) {
  *  6. Start the mesh network stack.
  *  7. Launch shared tasks: mesh RX/TX, status reporter, health monitor, OTA.
  *  8. Launch node-type-specific tasks (button/LED for switch, relay buttons
- *     for relay boards).
+ *     for relay boards, radar for presence sensors).
  */
 void app_main(void) {
 #ifdef CONFIG_DOMATOR_BATTERY_ONLY
@@ -370,7 +370,14 @@ void app_main(void) {
     battery_wait_for_provisioning();
     return;
 #endif
-    detect_hardware_type();
+    if (strcmp(credentials_get()->switch_role, "presence") == 0) {
+#ifdef CONFIG_IDF_TARGET_ESP32C3
+        g_node_type = NODE_TYPE_PRESENCE;  // HMMD radar on a C3 SuperMini
+#else
+        ESP_LOGE(TAG, "Presence sensors require an ESP32-C3; ignoring role");
+#endif
+    }
+    if (g_node_type == NODE_TYPE_UNKNOWN) detect_hardware_type();
     remote_gateway_load();
 
     g_mesh_tx_queue = xQueueCreate(MESH_TX_QUEUE_SIZE, sizeof(mesh_app_msg_t));
@@ -410,6 +417,9 @@ void app_main(void) {
         relay_button_init();
     }
 
+    // Before the mesh starts, so a command can never reach an absent queue.
+    if (g_node_type == NODE_TYPE_PRESENCE) presence_init();
+
     mesh_tx_init();
     mesh_network_init();
 
@@ -431,6 +441,9 @@ void app_main(void) {
         ESP_LOGI(TAG, "Starting relay tasks (hardware already initialized)");
         xTaskCreate(relay_button_task, "relay_button", 5120, NULL, 6,
                     &button_task_handle);
+    } else if (g_node_type == NODE_TYPE_PRESENCE) {
+        ESP_LOGI(TAG, "Starting presence sensor task");
+        xTaskCreate(presence_task, "presence", 6144, NULL, 6, NULL);
     }
 
     ESP_LOGI(TAG, "Domator Mesh initialized");

@@ -45,6 +45,7 @@ from turbacz.mesh_metrics import collect_mesh_metrics
 from turbacz.metrics import collect_host_metrics
 from turbacz.metrics_client import get_metrics_client, metrics_client_lifespan
 from turbacz.mqtt_client import mqtt, publish_blind_action
+from turbacz.presence import command_payload
 from turbacz.security import SecurityMiddleware
 from turbacz.settings import config
 from turbacz.state_manager import state_manager
@@ -628,6 +629,17 @@ async def websocket_rcm(websocket: WebSocket):
                     {"type": "zigbee_devices", "devices": await db_call(connection_manager.get_zigbee_devices)},
                     "/rcm/ws/",
                 )
+                continue
+
+            if cmd.get("type") == "presence_command":
+                device_id = int(cmd["switch_id"])
+                if not state_manager.is_switch_online(device_id):
+                    await ws_manager.send_personal_message(
+                        {"type": "error", "message": "The presence sensor is offline"}, websocket
+                    )
+                    continue
+                # The sensor answers with a configuration or live report.
+                mqtt.client.publish(f"/switch/cmd/{device_id}", command_payload(cmd))
                 continue
 
             if cmd.get("type") == "gateway_mode":

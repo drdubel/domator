@@ -18,6 +18,12 @@ function page(html = '') {
 }
 function run(dom, source) { return vm.runInContext(source, dom.getInternalVMContext()) }
 const payloads = ['<img src=x onerror="alert(1)">', '" autofocus onfocus="alert(1)', "' onmouseover='alert(1)", '&quot;<script>alert(1)</script>']
+// Waveshare tool defaults, as an HMMD presence sensor reports them.
+const SENSOR_CONFIG = {
+    min: 0, max: 12, delay: 30, led: false, fw: 'v1.5.9',
+    trigger: [60000, 30000, 3000, 2000, 500, 400, 400, 300, 300, 300, 300, 250, 250, 200, 200, 200],
+    hold: [40000, 20000, 400, 300, 300, 200, 200, 150, 150, 100, 100, 100, 100, 100, 100, 100]
+}
 
 test('blind names are DOM text/value, including stored quotes, entities and markup', () => {
     const dom = page('<section id="relay-blinds-section"><div id="relay-blinds-cards"></div></section>')
@@ -557,11 +563,12 @@ test('RCM overlapping loads ignore stale HTTP responses and deferred connection 
                 '/lights/get_switches': {9: ['Switch', 3]},
                 '/lights/get_connections': {9: {a: [[1, 'a']]}},
                 '/lights/get_outputs': {}, '/lights/get_all_buttons': {},
-                '/lights/get_blind_pairs': {}, '/lights/get_zigbee_devices': {}
+                '/lights/get_blind_pairs': {}, '/lights/get_zigbee_devices': {},
+                '/lights/get_presence_sensors': {}
             };
             fetchAPI = path => new Promise(resolve => responses.push(() => resolve(configuration[path])));
             const firstLoad = loadConfiguration(), secondLoad = loadConfiguration();
-            responses.splice(7).forEach(resolve => resolve());`)
+            responses.splice(Object.keys(configuration).length).forEach(resolve => resolve());`)
         await run(dom, 'secondLoad')
         run(dom, 'responses.splice(0).forEach(resolve => resolve())')
         await run(dom, 'firstLoad')
@@ -856,5 +863,230 @@ test('RCM gateway toggle shows a pending state until the switch confirms, times 
         // Reported device types are cached so card widths are right on the next load.
         assert.deepEqual(JSON.parse(dom.window.localStorage.getItem('rcm_device_roles')),
             {222: {type: 'switch'}, 333: {type: 'remote'}})
+    } finally { dom.window.close() }
+})
+
+test('RCM presence sensors show fixed inputs, occupancy and a fixed input count', () => {
+    const dom = rcmPage()
+    try {
+        run(dom, `var sensorConfig = ${JSON.stringify(SENSOR_CONFIG)};
+            State.presenceSensors = {555: sensorConfig};
+            online_switches = new Set([555]);
+            State.presenceStates = {555: {presence: 1, distance: 140, radar: 1}};
+            createSwitch(555, 'Hall sensor', 3, 0, 0);
+            createSwitch(222, 'Wall switch', 3, 0, 0);`)
+        const doc = dom.window.document
+        const card = doc.getElementById('switch-555')
+        assert.ok(card.classList.contains('presence-sensor'))
+        assert.equal(doc.getElementById('switch-222').classList.contains('presence-sensor'), false)
+        assert.deepEqual([...card.querySelectorAll('.button-name')].map(el => el.textContent),
+            ['Presence: on / off', 'Arrival: on', 'Departure: off'])
+        assert.ok([...card.querySelectorAll('.button-type-toggle')].every(el => el.hidden))
+        assert.equal(doc.getElementById('switch-222').querySelector('.button-type-toggle').hidden, false)
+        assert.equal(card.querySelector('.presence-badge').textContent, 'mmWave')
+        const status = card.querySelector('[data-presence-status="555"]')
+        assert.equal(status.textContent, '● Occupied · 1.40 m')
+        assert.equal(status.dataset.state, 'occupied')
+        run(dom, `wsManager.onMessage({data: JSON.stringify({type: 'presence_state', switch_id: 555,
+            presence: 0, distance: 140, radar: 1})})`)
+        assert.equal(status.textContent, '○ Clear')
+        run(dom, `wsManager.onMessage({data: JSON.stringify({type: 'online_status', online_relays: [],
+            online_switches: [555], up_to_date_devices: {}, devices_rssi: {}, ping_times: {},
+            device_roles: {555: {type: 'presence'}}, presence_states: {555: {presence: 0, distance: 0, radar: 0}}})})`)
+        assert.equal(status.textContent, '⚠ Radar not responding')
+        assert.equal(status.dataset.state, 'fault')
+        assert.equal(card.querySelector('[data-gateway-switch="555"]').hidden, true)
+        run(dom, 'online_switches = new Set(); updatePresenceStatus(555)')
+        assert.equal(status.textContent, 'Offline')
+        run(dom, `editDeviceName('switch', 555)`)
+        assert.equal(doc.getElementById('editButtonNumber').disabled, true)
+        run(dom, `editDeviceName('switch', 222)`)
+        assert.equal(doc.getElementById('editButtonNumber').disabled, false)
+        run(dom, `buttonTypes = {555: {a: 2, b: 3, c: 4}}; toggleButtonType(555, 'a')`)
+        assert.equal(run(dom, 'buttonTypes[555].a'), 2)
+    } finally { dom.window.close() }
+})
+
+test('RCM presence dialog edits the radar settings and waits for the sensor to confirm them', () => {
+    const dom = rcmPage()
+    try {
+        dom.window.hostileName = payloads[0]
+        run(dom, `var sensorConfig = ${JSON.stringify(SENSOR_CONFIG)};
+            const timers = new Map(); let timerId = 0;
+            window.setTimeout = (callback, delay) => { timers.set(++timerId, {callback, delay}); return timerId };
+            window.clearTimeout = id => timers.delete(id);
+            const toasts = []; showToast = (message, isError = false) => toasts.push({message, isError});
+            wsManager.isConnected = () => true;
+            const sent = []; wsManager.send = data => { sent.push(JSON.parse(data)); return true };
+            window.confirm = () => true;
+            State.presenceSensors = {555: sensorConfig};
+            online_switches = new Set([555]);
+            createSwitch(555, hostileName, 3, 0, 0);`)
+        const doc = dom.window.document
+        const Event = dom.window.Event
+        doc.querySelector('#switch-555 .presence-config-btn').click()
+        assert.ok(doc.getElementById('presenceModal').classList.contains('active'))
+        assert.equal(doc.getElementById('presenceModalTitle').textContent, `${payloads[0]} · presence sensor`)
+        assert.equal(doc.querySelectorAll('[onerror], [onfocus], [autofocus]').length, 0)
+        assert.equal(doc.getElementById('presenceMaxGate').value, '12')
+        assert.equal(doc.getElementById('presenceMaxGateValue').textContent, '8.4 m · gate 12')
+        assert.equal(doc.getElementById('presenceDelay').value, '30')
+        const input = (gate, key) => doc.querySelector(`#presenceGates input[data-gate="${gate}"][data-key="${key}"]`)
+        assert.equal(input(0, 'trigger').value, '47.78')
+        assert.equal(input(15, 'hold').value, '20.00')
+
+        // Gates beyond the range are dimmed; dragging one end past the other moves both.
+        const minGate = doc.getElementById('presenceMinGate')
+        const maxGate = doc.getElementById('presenceMaxGate')
+        maxGate.value = '6'
+        maxGate.dispatchEvent(new Event('input'))
+        assert.equal(doc.getElementById('presenceMaxGateValue').textContent, '4.2 m · gate 6')
+        assert.ok(doc.querySelector('#presenceGates .presence-gate[data-gate="7"]').classList.contains('outside'))
+        assert.equal(doc.querySelector('#presenceGates .presence-gate[data-gate="6"]').classList.contains('outside'), false)
+        minGate.value = '9'
+        minGate.dispatchEvent(new Event('input'))
+        assert.equal(maxGate.value, '9')
+        minGate.value = '2'
+        minGate.dispatchEvent(new Event('input'))
+        const delay = doc.getElementById('presenceDelay')
+        delay.value = '90'
+        delay.dispatchEvent(new Event('input'))
+        assert.equal(doc.getElementById('presenceDelayValue').textContent, '1 min 30 s')
+        doc.getElementById('presenceLed').click()
+        input(3, 'trigger').value = '30'
+        input(3, 'trigger').dispatchEvent(new Event('change', { bubbles: true }))
+        input(4, 'hold').value = '-5'
+        input(4, 'hold').dispatchEvent(new Event('change', { bubbles: true }))
+        assert.equal(input(4, 'hold').value, '24.77')
+        doc.querySelector('[data-presence-shift="1"]').click()
+        assert.equal(input(0, 'trigger').value, '48.78')
+        assert.match(doc.getElementById('presenceSummary').textContent, /unsaved changes/)
+
+        const shifted = raw => Math.round(10 ** ((10 * Math.log10(raw) + 1) / 10))
+        const trigger = SENSOR_CONFIG.trigger.map(shifted)
+        trigger[3] = shifted(1000)
+        const hold = SENSOR_CONFIG.hold.map(shifted)
+        doc.getElementById('presenceApply').click()
+        assert.deepEqual(JSON.parse(run(dom, 'JSON.stringify(sent)')), [{ type: 'presence_command', switch_id: 555,
+            action: 'apply', config: { min: 2, max: 9, delay: 90, trigger, hold, led: true } }])
+        const apply = doc.getElementById('presenceApply')
+        assert.equal(apply.textContent, 'Applying…')
+        assert.equal(apply.disabled, true)
+        assert.equal(input(0, 'trigger').disabled, true)
+        assert.equal(run(dom, '[...timers.values()][0].delay'), 15000)
+
+        // The radar's read-back values become the dialog's values.
+        dom.window.stored = JSON.stringify({ ...SENSOR_CONFIG, min: 2, max: 9, delay: 90, led: true, trigger, hold })
+        run(dom, `wsManager.onMessage({data: JSON.stringify({type: 'presence_config', switch_id: 555,
+            config: JSON.parse(stored)})})`)
+        assert.equal(apply.textContent, 'Apply')
+        assert.equal(apply.disabled, false)
+        assert.equal(input(0, 'trigger').disabled, false)
+        assert.equal(run(dom, 'timers.size'), 0)
+        assert.match(run(dom, 'toasts.at(-1).message'), /^Sensor settings saved on /)
+        assert.doesNotMatch(doc.getElementById('presenceSummary').textContent, /unsaved/)
+
+        // No report: the request times out with an explanation.
+        doc.getElementById('presenceReload').click()
+        assert.equal(run(dom, 'sent.at(-1).action'), 'read')
+        assert.equal(doc.getElementById('presenceReload').disabled, true)
+        run(dom, '[...timers.values()][0].callback()')
+        assert.equal(run(dom, 'toasts.at(-1).isError'), true)
+        assert.equal(doc.getElementById('presenceReload').disabled, false)
+        // A server rejection clears the pending state at once.
+        apply.click()
+        run(dom, `wsManager.onMessage({data: JSON.stringify({type: 'error', message: 'The presence sensor is offline'})})`)
+        assert.equal(apply.disabled, false)
+        assert.equal(run(dom, 'State.presencePending.size'), 0)
+    } finally { dom.window.close() }
+})
+
+test('RCM presence live view renews while open, stops on close and counts calibration down', () => {
+    const dom = rcmPage()
+    try {
+        run(dom, `var sensorConfig = ${JSON.stringify(SENSOR_CONFIG)};
+            const intervals = [];
+            window.setInterval = (callback, delay) => { intervals.push({callback, delay}); return intervals.length };
+            window.clearInterval = () => {};
+            const timers = new Map(); let timerId = 0;
+            window.setTimeout = (callback, delay) => { timers.set(++timerId, {callback, delay}); return timerId };
+            window.clearTimeout = id => timers.delete(id);
+            wsManager.isConnected = () => true;
+            const sent = []; wsManager.send = data => { sent.push(JSON.parse(data)); return true };
+            let confirmText = ''; window.confirm = text => { confirmText = text; return true };
+            State.presenceSensors = {555: sensorConfig};
+            online_switches = new Set([555]);
+            createSwitch(555, 'Hall sensor', 3, 0, 0);
+            showPresenceModal(555);
+            var energy = [65535, 0, 1000, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];`)
+        const doc = dom.window.document
+        const last = () => JSON.parse(run(dom, 'JSON.stringify(sent.at(-1))'))
+        doc.getElementById('presenceLive').click()
+        assert.deepEqual(last(), { type: 'presence_command', switch_id: 555, action: 'live', seconds: 60 })
+        assert.equal(run(dom, 'intervals[0].delay'), 50000)
+        run(dom, 'intervals[0].callback()')
+        assert.equal(run(dom, 'sent.length'), 2)
+
+        run(dom, `wsManager.onMessage({data: JSON.stringify({type: 'presence_live', switch_id: 555, presence: 1,
+            distance: 250, energy, calibrating: 0})})`)
+        const bar = gate => doc.querySelector(`#presenceGates .presence-gate[data-gate="${gate}"] .presence-energy-bar`)
+        assert.ok(bar(0).classList.contains('over-trigger'))
+        assert.ok(bar(2).classList.contains('over-hold'))
+        assert.equal(bar(5).classList.contains('over-hold') || bar(5).classList.contains('over-trigger'), false)
+        assert.equal(doc.querySelector('#presenceGates .presence-gate[data-gate="2"] .presence-energy-value').textContent, '30.0')
+        assert.equal(doc.querySelector('[data-presence-status="555"]').textContent, '● Occupied · 2.50 m')
+        assert.equal(doc.getElementById('presenceRangeTarget').hidden, false)
+
+        const calibrate = doc.getElementById('presenceCalibrate')
+        calibrate.click()
+        assert.match(run(dom, 'confirmText'), /Leave the detection area within 10 seconds/)
+        assert.deepEqual(last(), { type: 'presence_command', switch_id: 555, action: 'calibrate', seconds: 20 })
+        assert.equal(run(dom, '[...timers.values()][0].delay'), 45000)
+        assert.equal(calibrate.textContent, 'Calibrating… 30 s')
+        run(dom, `wsManager.onMessage({data: JSON.stringify({type: 'presence_live', switch_id: 555, presence: 0,
+            distance: 0, energy, calibrating: 12})})`)
+        assert.equal(calibrate.textContent, 'Calibrating… 12 s')
+        run(dom, `wsManager.onMessage({data: JSON.stringify({type: 'presence_config', switch_id: 555, config: sensorConfig})})`)
+        assert.equal(calibrate.textContent, 'Calibrate')
+
+        run(dom, `closeModal('presenceModal')`)
+        assert.deepEqual(last(), { type: 'presence_command', switch_id: 555, action: 'live', seconds: 0 })
+        assert.equal(run(dom, 'State.presenceModal'), null)
+    } finally { dom.window.close() }
+})
+
+test('RCM loads presence sensors with the configuration and waits for an unreported one', async () => {
+    const dom = rcmPage()
+    try {
+        run(dom, `const pendingTimers = [];
+            window.setTimeout = callback => { pendingTimers.push(callback); return 0 };
+            fetchAPI = async path => ({
+                '/lights/get_relays': {}, '/lights/get_outputs': {}, '/lights/get_connections': {},
+                '/lights/get_switches': {9: ['Sensor', 3], 10: ['Switch', 2]},
+                '/lights/get_all_buttons': {9: {a: 2, b: 3, c: 4}, 10: {a: 0, b: 1}},
+                '/lights/get_blind_pairs': {}, '/lights/get_zigbee_devices': {},
+                '/lights/get_presence_sensors': {9: null}
+            })[path];
+            wsManager.isConnected = () => true;
+            const sent = []; wsManager.send = data => { sent.push(JSON.parse(data)); return true };
+            online_switches = new Set([9]);`)
+        await run(dom, 'loadConfiguration()')
+        run(dom, 'pendingTimers.splice(0).forEach(callback => callback())')
+        const doc = dom.window.document
+        assert.ok(doc.getElementById('switch-9').classList.contains('presence-sensor'))
+        assert.equal(doc.getElementById('switch-10').classList.contains('presence-sensor'), false)
+        assert.equal(doc.querySelector('[data-presence-status="9"]').textContent, 'Waiting for the sensor…')
+        // Changing another switch re-sends the fixed presence types unchanged.
+        run(dom, `toggleButtonType(10, 'a')`)
+        const types = JSON.parse(run(dom, 'JSON.stringify(sent.filter(msg => msg.type === "button_types").at(-1))'))
+        assert.deepEqual(types.data['9'], { a: 2, b: 3, c: 4 })
+        assert.deepEqual(types.data['10'], { a: 1, b: 1 })
+        // Until the sensor reports its settings, they can only be requested.
+        run(dom, 'showPresenceModal(9)')
+        assert.ok(doc.getElementById('presenceModal').classList.contains('presence-empty'))
+        assert.equal(doc.getElementById('presenceApply').disabled, true)
+        assert.equal(doc.getElementById('presenceCalibrate').disabled, true)
+        assert.equal(doc.getElementById('presenceReload').disabled, false)
+        assert.match(doc.getElementById('presenceSummary').textContent, /waiting for the sensor to report its settings/)
     } finally { dom.window.close() }
 })

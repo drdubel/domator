@@ -15,7 +15,7 @@ def serialized(method):
     registry_read = method.__name__ in {"get_relays", "get_switches"}
     registry_write = method.__name__ in {
         "add_relay", "rename_relay", "remove_relay",
-        "add_switch", "rename_switch", "remove_switch",
+        "add_switch", "rename_switch", "remove_switch", "add_presence_sensor",
     }
 
     @wraps(method)

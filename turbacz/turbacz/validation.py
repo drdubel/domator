@@ -3,6 +3,8 @@
 import math
 import re
 
+from turbacz.presence import CONFIG_KEYS, GATES
+
 
 def integer(value, low=0, high=2**63 - 1):
     if isinstance(value, bool) or not isinstance(value, (int, str)):
@@ -43,6 +45,23 @@ def name(value):
     ):
         raise ValueError("Invalid name")
     return value.strip()
+
+
+def presence_config(value):
+    """RCM sensor settings; thresholds are raw radar energies."""
+    if not isinstance(value, dict) or set(value) != set(CONFIG_KEYS):
+        raise ValueError("Invalid presence configuration")
+    if integer(value["min"], 0, GATES - 1) > integer(value["max"], 0, GATES - 1):
+        raise ValueError("Nearest gate is beyond the farthest gate")
+    integer(value["delay"], 0, 65535)
+    for key in ("trigger", "hold"):
+        if not isinstance(value[key], list) or len(value[key]) != GATES:
+            raise ValueError("Invalid presence thresholds")
+        for threshold in value[key]:
+            integer(threshold, 0, 2**32 - 1)
+    if not isinstance(value["led"], bool):
+        raise ValueError("Invalid presence LED setting")  # noqa: TRY004
+    return value
 
 
 def relay_output(cm, relay, output):
@@ -136,6 +155,19 @@ def validate_command(path, cmd, cm):
             ):
                 raise ValueError("Invalid Zigbee device command")
             return
+        if kind == "presence_command":
+            if device_id(cmd.get("switch_id")) not in cm.get_presence_sensors():
+                raise ValueError("Unknown presence sensor")
+            action = cmd.get("action")
+            if action == "apply":
+                presence_config(cmd.get("config"))
+            elif action == "calibrate":
+                integer(cmd.get("seconds"), 5, 60)
+            elif action == "live":
+                integer(cmd.get("seconds"), 0, 120)
+            elif action not in {"read", "factory"}:
+                raise ValueError("Invalid presence action")
+            return
         if kind in {
             "update",
             "update_root",
@@ -177,7 +209,8 @@ def validate_command(path, cmd, cm):
                 for button, state in buttons.items():
                     if button_id(button) not in known.get(switch, {}):
                         raise ValueError("Unknown button")
-                    integer(state, 0, 1)
+                    # 0 momentary, 1 stateful, 2-4 presence inputs
+                    integer(state, 0, 4)
             return
     if kind is not None:
         raise ValueError("Unknown command")

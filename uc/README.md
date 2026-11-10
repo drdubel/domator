@@ -12,6 +12,9 @@ This directory contains microcontroller firmware projects used by Domator.
 For the **DFRobot Beetle ESP32-C6 V1.1 battery switch**, see
 [board wiring, battery connection and firmware setup](buttonsMeshIDF/README.md).
 
+For the **ESP32-C3 SuperMini presence sensor** (Waveshare HMMD mmWave,
+SKU 26536), see [wiring, provisioning and RCM configuration](buttonsMeshIDF/presence-sensor.md).
+
 Each subdirectory is an independent firmware project with its own `platformio.ini`.
 
 ## Credentials

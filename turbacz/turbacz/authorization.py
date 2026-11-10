@@ -30,6 +30,9 @@ def command_capability(path, command):
             "update_device",
         }:
             return "ota"
+        if kind == "presence_command":
+            # Reading and live data leave the radar settings unchanged.
+            return "operator" if command.get("action") in {"read", "live"} else "admin"
         if kind in {
             "add_section",
             "change_section",

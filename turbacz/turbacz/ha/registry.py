@@ -159,8 +159,8 @@ def build_registry(cm, base: str, prefix: str) -> Registry:
         device = discovery.switch_device(switch_id, switch_name)
 
         for button_id, button_type in buttons.items():
-            # Type 1 buttons are stateful and report both edges.
-            event_types = ["press", "release"] if int(button_type) == 1 else ["press"]
+            # Stateful buttons and presence inputs report both edges.
+            event_types = ["press", "release"] if int(button_type) != 0 else ["press"]
             key = T.button_key(switch_id, button_id)
             payload = discovery.build_event(
                 base, switch_id, button_id, f"Button {button_id.upper()}", event_types, device

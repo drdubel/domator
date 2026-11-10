@@ -48,6 +48,7 @@ class FakeConnectionManager:
         self.relays = {111: ("Ocelot", 8)}
         self.switches = {222: ("Pulsar", 3)}
         self.buttons = {222: {"a": 0, "b": 1}}
+        self.presence_sensors: dict[int, dict | None] = {}
         self.applied: dict[str, str] = {}
 
     # -- registry reads --
@@ -100,6 +101,9 @@ class FakeConnectionManager:
 
     def get_all_buttons(self):
         return {s: dict(b) for s, b in self.buttons.items()}
+
+    def get_presence_sensors(self):
+        return dict(self.presence_sensors)
 
     # -- discovery bookkeeping --
     def get_applied_topics(self):

@@ -59,7 +59,16 @@ const State = {
     newConnections: new Set(),
 
     // Gateway toggles awaiting confirmation: switch id (string) -> {enabled, timer}
-    gatewayPending: new Map()
+    gatewayPending: new Map(),
+
+    // mmWave presence sensors: switch id -> configuration last reported by the radar (or null)
+    presenceSensors: {},
+    // switch id -> {presence, distance (cm), radar}
+    presenceStates: {},
+    // Open sensor dialog: {id, draft, dirty, energy, calibrating, live, liveTimer} or null
+    presenceModal: null,
+    // Sensor commands awaiting a configuration report: switch id (string) -> {action, timer}
+    presencePending: new Map()
 }
 
 // Browser detection for performance optimizations
@@ -324,6 +333,7 @@ const wsManager = new WebSocketManager('/rcm/ws/', function (event) {
     // Handle different message types
     if (msg.type === "error") {
         if (/gateway/i.test(msg.message || '')) clearGatewayPending()
+        if (/presence/i.test(msg.message || '')) clearPresencePending()
         for (const device of Object.values(State.zigbeeDevices)) applyZigbeeControls(device)
         showToast(msg.message || 'Gateway request failed', true)
         return
@@ -341,6 +351,21 @@ const wsManager = new WebSocketManager('/rcm/ws/', function (event) {
     }
     if (msg.type === "update") {
         loadConfiguration()
+        return
+    }
+
+    if (msg.type === "presence_config") {
+        onPresenceConfig(msg.switch_id, msg.config)
+        return
+    }
+    if (msg.type === "presence_live") {
+        onPresenceLive(msg)
+        return
+    }
+    if (msg.type === "presence_state") {
+        const { type, switch_id: switchId, ...fields } = msg
+        State.presenceStates[switchId] = { ...State.presenceStates[switchId], ...fields }
+        updatePresenceStatus(switchId)
         return
     }
 
@@ -368,9 +393,11 @@ const wsManager = new WebSocketManager('/rcm/ws/', function (event) {
         resolveGatewayPending()
         updateGatewayControls()
         State.pingTimes = devices_ping_times
+        State.presenceStates = msg.presence_states || {}
         clearRootHighlight()
         highlightRoot()
         updateOnlineStatus()
+        Object.keys(State.presenceSensors).forEach(updatePresenceStatus)
         return
     }
 
@@ -1295,6 +1322,7 @@ function setButtonType(switchId, buttonId, type) {
 }
 
 function toggleButtonType(switchId, buttonId) {
+    if (switchId in State.presenceSensors) return // inputs have fixed routing types
     const currentType = getButtonType(switchId, buttonId)
     const newType = currentType === 1 ? 0 : 1
     setButtonType(switchId, buttonId, newType)
@@ -2197,17 +2225,19 @@ async function loadConfiguration() {
     updateArrangementButton()
 
     try {
-        const [relaysData, outputsData, switchesData, connectionsData, buttonTypesData, blindPairsData, zigbeeDevices] = await Promise.all([
+        const [relaysData, outputsData, switchesData, connectionsData, buttonTypesData, blindPairsData, zigbeeDevices, presenceSensors] = await Promise.all([
             fetchAPI('/lights/get_relays'),
             fetchAPI('/lights/get_outputs'),
             fetchAPI('/lights/get_switches'),
             fetchAPI('/lights/get_connections'),
             fetchAPI('/lights/get_all_buttons'),
             fetchAPI('/lights/get_blind_pairs'),
-            fetchAPI('/lights/get_zigbee_devices')
+            fetchAPI('/lights/get_zigbee_devices'),
+            fetchAPI('/lights/get_presence_sensors')
         ])
         if (version !== State.configurationVersion) return
         State.zigbeeDevices = zigbeeDevices || {}
+        State.presenceSensors = presenceSensors || {}
 
         const relays_config = relaysData || getDemoRelays()
         const outputs_config = outputsData || getDemoOutputs()
@@ -2635,6 +2665,7 @@ function createSwitch(switchId, switchName, buttonCount, x, y) {
         applyDeviceColor(switchId)
     }
     if (zigbeeDevice) applyZigbeeControls(zigbeeDevice)
+    if (switchId in State.presenceSensors) applyPresenceControls(switchId)
 }
 
 function applyZigbeeControls(config) {
@@ -2695,6 +2726,456 @@ function applyZigbeeControls(config) {
         select.disabled = false
     }
 }
+
+// ========== PRESENCE SENSORS ==========
+// Waveshare HMMD mmWave radars on ESP32-C3 SuperMinis. A card has three fixed
+// inputs that are wired like switch buttons; the dialog edits the radar's range
+// gates, absence delay and per-gate thresholds. The sensor confirms each change
+// by reporting the values it read back from the radar.
+
+const PRESENCE_GATES = 16
+const PRESENCE_GATE_M = 0.7
+const PRESENCE_DB_MAX = 96 // largest 32-bit threshold
+const PRESENCE_ENERGY_SCALE_DB = 60 // gate energies are 16-bit, at most 48 dB
+const PRESENCE_CONFIRM_TIMEOUT_MS = 15000
+const PRESENCE_LIVE_SECONDS = 60
+const PRESENCE_CALIBRATE_SECONDS = 20
+const PRESENCE_CALIBRATE_SETTLE_SECONDS = 10 // time to leave before measuring
+const PRESENCE_INPUTS = {
+    a: ['Presence: on / off', 'Connected outputs turn on while someone is present and off once the area is clear.'],
+    b: ['Arrival: on', 'Connected outputs turn on when presence is detected; the sensor never turns them off.'],
+    c: ['Departure: off', 'Connected outputs turn off once the area is clear; the sensor never turns them on.']
+}
+const PRESENCE_CONFIRMATIONS = {
+    apply: 'Sensor settings saved',
+    factory: 'Sensor defaults restored',
+    calibrate: 'Calibration applied',
+    read: 'Sensor settings reloaded'
+}
+
+// Thresholds are raw radar energies; like the vendor's tool, show them in dB.
+function presenceDb(raw) {
+    return raw > 0 ? 10 * Math.log10(raw) : 0
+}
+
+function presenceRaw(db) {
+    return Math.min(4294967295, Math.max(1, Math.round(10 ** (db / 10))))
+}
+
+function gateMeters(gate) {
+    return `${(gate * PRESENCE_GATE_M).toFixed(1)} m`
+}
+
+function formatSeconds(seconds) {
+    if (seconds < 60) return `${seconds} s`
+    const minutes = Math.floor(seconds / 60)
+    if (minutes < 60) return seconds % 60 ? `${minutes} min ${seconds % 60} s` : `${minutes} min`
+    return minutes % 60 ? `${Math.floor(minutes / 60)} h ${minutes % 60} min` : `${minutes / 60} h`
+}
+
+function presenceStatus(switchId) {
+    const state = State.presenceStates[switchId]
+    if (!online_switches.has(Number(switchId))) return ['offline', 'Offline']
+    if (!state) return ['unknown', 'Waiting for the sensor…']
+    if (state.radar === 0) return ['fault', '⚠ Radar not responding']
+    return state.presence
+        ? ['occupied', `● Occupied · ${((state.distance || 0) / 100).toFixed(2)} m`]
+        : ['clear', '○ Clear']
+}
+
+function applyPresenceControls(switchId) {
+    const card = document.getElementById(`switch-${switchId}`)
+    if (!card) return
+    card.classList.add('presence-sensor')
+    card.querySelectorAll('.button-type-toggle').forEach(toggle => { toggle.hidden = true })
+    for (const [buttonId, [label, title]] of Object.entries(PRESENCE_INPUTS)) {
+        const row = document.getElementById(`switch-${switchId}-btn-${buttonId}`)
+        if (!row) continue
+        row.querySelector('.button-name').textContent = label
+        row.title = title
+    }
+    if (!card.querySelector('.presence-config-btn')) {
+        const badge = document.createElement('span')
+        badge.className = 'presence-badge'
+        badge.textContent = 'mmWave'
+        card.querySelector('.device-header-identity').appendChild(badge)
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.className = 'card-action presence-config-btn'
+        button.textContent = '⚙ Sensor'
+        button.title = 'Detection range, absence delay and sensitivity'
+        button.addEventListener('click', event => {
+            event.stopPropagation()
+            showPresenceModal(switchId)
+        })
+        card.querySelector('.device-header-actions').before(button)
+        const status = document.createElement('div')
+        status.className = 'presence-status'
+        status.dataset.presenceStatus = switchId
+        card.querySelector('.device-header').after(status)
+    }
+    updatePresenceStatus(switchId)
+}
+
+function updatePresenceStatus(switchId) {
+    const [state, text] = presenceStatus(switchId)
+    document.querySelectorAll(`[data-presence-status="${switchId}"]`).forEach(element => {
+        element.textContent = text
+        element.dataset.state = state
+    })
+    if (State.presenceModal?.id === Number(switchId)) {
+        renderPresenceSummary()
+        renderPresenceActions()
+    }
+}
+
+// timeoutMs = 0 sends without waiting for a configuration report (live data).
+function sendPresenceCommand(switchId, action, extra = {}, timeoutMs = PRESENCE_CONFIRM_TIMEOUT_MS) {
+    const message = JSON.stringify({ type: 'presence_command', switch_id: Number(switchId), action, ...extra })
+    if (!wsManager.isConnected() || !wsManager.send(message)) {
+        showToast('Not connected to the server', true)
+        return false
+    }
+    if (!timeoutMs) return true
+    clearPresencePending(switchId)
+    const key = String(switchId)
+    State.presencePending.set(key, {
+        action,
+        timer: setTimeout(() => {
+            State.presencePending.delete(key)
+            renderPresenceForm()
+            showToast(`${switchDisplayName(switchId)} did not confirm. Check that the sensor is online and its radar is wired.`, true)
+        }, timeoutMs)
+    })
+    renderPresenceForm()
+    return true
+}
+
+function clearPresencePending(switchId) {
+    for (const [key, pending] of State.presencePending) {
+        if (switchId !== undefined && key !== String(switchId)) continue
+        clearTimeout(pending.timer)
+        State.presencePending.delete(key)
+    }
+    renderPresenceForm()
+}
+
+function onPresenceConfig(switchId, config) {
+    State.presenceSensors[switchId] = config
+    const key = String(switchId)
+    const pending = State.presencePending.get(key)
+    if (pending) {
+        clearTimeout(pending.timer)
+        State.presencePending.delete(key)
+        showToast(`${PRESENCE_CONFIRMATIONS[pending.action]} on ${switchDisplayName(switchId)}`)
+    }
+    const modal = State.presenceModal
+    if (modal?.id !== Number(switchId)) return
+    // Keep unsaved edits unless this report answers the dialog's own request.
+    if (pending || !modal.dirty) {
+        modal.draft = presenceDraft(config)
+        modal.dirty = false
+    }
+    modal.calibrating = 0
+    renderPresenceForm()
+}
+
+function onPresenceLive(msg) {
+    const { switch_id: switchId, presence, distance } = msg
+    State.presenceStates[switchId] = { ...State.presenceStates[switchId], presence, distance, radar: 1 }
+    const modal = State.presenceModal
+    if (modal?.id === Number(switchId)) {
+        modal.energy = msg.energy
+        modal.calibrating = msg.calibrating || 0
+        renderPresenceEnergy()
+    }
+    updatePresenceStatus(switchId)
+}
+
+function presenceDraft(config) {
+    return {
+        min: config.min, max: config.max, delay: config.delay, led: Boolean(config.led),
+        trigger: [...config.trigger], hold: [...config.hold]
+    }
+}
+
+function showPresenceModal(switchId) {
+    closePresenceModal()
+    const config = State.presenceSensors[switchId]
+    State.presenceModal = {
+        id: Number(switchId), draft: config ? presenceDraft(config) : null,
+        dirty: false, energy: null, calibrating: 0, live: false, liveTimer: null
+    }
+    document.getElementById('presenceModalTitle').textContent = `${switchDisplayName(switchId)} · presence sensor`
+    document.getElementById('presenceLive').checked = false
+    renderPresenceForm()
+    document.getElementById('presenceModal').classList.add('active')
+    bindModalShortcuts('presenceModal', () => applyPresenceConfig())
+}
+
+function closePresenceModal() {
+    const modal = State.presenceModal
+    if (!modal) return
+    clearInterval(modal.liveTimer)
+    // The sensor stops on its own within a minute if the server is unreachable.
+    if (modal.live && wsManager.isConnected()) sendPresenceCommand(modal.id, 'live', { seconds: 0 }, 0)
+    State.presenceModal = null
+}
+
+function setPresenceLive(enabled) {
+    const modal = State.presenceModal
+    if (!modal) return
+    clearInterval(modal.liveTimer)
+    modal.liveTimer = null
+    modal.live = false
+    if (!enabled) {
+        modal.energy = null
+        renderPresenceEnergy()
+        sendPresenceCommand(modal.id, 'live', { seconds: 0 }, 0)
+        return
+    }
+    // Streams are bounded on the sensor; renew while the dialog stays open.
+    const renew = () => sendPresenceCommand(modal.id, 'live', { seconds: PRESENCE_LIVE_SECONDS }, 0)
+    modal.live = renew()
+    if (modal.live) modal.liveTimer = setInterval(renew, (PRESENCE_LIVE_SECONDS - 10) * 1000)
+    else document.getElementById('presenceLive').checked = false
+}
+
+function renderPresenceForm() {
+    const modal = State.presenceModal
+    if (!modal) return
+    const draft = modal.draft
+    const dialog = document.getElementById('presenceModal')
+    dialog.classList.toggle('presence-empty', !draft)
+    const locked = !draft || State.presencePending.has(String(modal.id))
+    dialog.querySelectorAll('[data-presence-field]').forEach(field => { field.disabled = locked })
+    if (draft) {
+        document.getElementById('presenceMinGate').value = draft.min
+        document.getElementById('presenceMaxGate').value = draft.max
+        document.getElementById('presenceDelay').value = draft.delay
+        document.getElementById('presenceLed').checked = draft.led
+        renderPresenceThresholds()
+    }
+    renderPresenceRange()
+    renderPresenceEnergy()
+    renderPresenceActions()
+    renderPresenceSummary()
+}
+
+function renderPresenceThresholds() {
+    const draft = State.presenceModal?.draft
+    if (!draft) return
+    document.querySelectorAll('#presenceGates input[data-key]').forEach(input => {
+        input.value = presenceDb(draft[input.dataset.key][input.dataset.gate]).toFixed(2)
+    })
+}
+
+function renderPresenceRange() {
+    const draft = State.presenceModal?.draft
+    if (!draft) return
+    document.getElementById('presenceMinGateValue').textContent = `${gateMeters(draft.min)} · gate ${draft.min}`
+    document.getElementById('presenceMaxGateValue').textContent = `${gateMeters(draft.max)} · gate ${draft.max}`
+    document.getElementById('presenceDelayValue').textContent = formatSeconds(draft.delay)
+    const fill = document.getElementById('presenceRangeFill')
+    fill.style.left = `${draft.min / (PRESENCE_GATES - 1) * 100}%`
+    fill.style.width = `${Math.max((draft.max - draft.min) / (PRESENCE_GATES - 1) * 100, 1)}%`
+    document.querySelectorAll('#presenceGates .presence-gate[data-gate]').forEach(row => {
+        const gate = Number(row.dataset.gate)
+        row.classList.toggle('outside', gate < draft.min || gate > draft.max)
+    })
+}
+
+function renderPresenceEnergy() {
+    const modal = State.presenceModal
+    if (!modal) return
+    const scale = db => `${Math.min(db / PRESENCE_ENERGY_SCALE_DB, 1) * 100}%`
+    document.querySelectorAll('#presenceGates .presence-gate[data-gate]').forEach(row => {
+        const gate = Number(row.dataset.gate)
+        const energy = modal.energy ? presenceDb(modal.energy[gate]) : null
+        const bar = row.querySelector('.presence-energy-bar')
+        bar.style.width = energy === null ? '0%' : scale(energy)
+        row.querySelector('.presence-energy-value').textContent = energy === null ? '' : energy.toFixed(1)
+        if (!modal.draft) return
+        const trigger = presenceDb(modal.draft.trigger[gate])
+        const hold = presenceDb(modal.draft.hold[gate])
+        row.querySelector('.presence-energy-mark.trigger').style.left = scale(trigger)
+        row.querySelector('.presence-energy-mark.hold').style.left = scale(hold)
+        bar.classList.toggle('over-trigger', energy !== null && energy > trigger)
+        bar.classList.toggle('over-hold', energy !== null && energy > hold && energy <= trigger)
+    })
+    renderPresenceActions()
+}
+
+function renderPresenceActions() {
+    const modal = State.presenceModal
+    if (!modal) return
+    const pending = State.presencePending.get(String(modal.id))
+    const unavailable = Boolean(pending) || !online_switches.has(modal.id)
+    const apply = document.getElementById('presenceApply')
+    apply.disabled = unavailable || !modal.draft
+    apply.textContent = pending?.action === 'apply' ? 'Applying…' : 'Apply'
+    const calibrate = document.getElementById('presenceCalibrate')
+    calibrate.disabled = unavailable || !modal.draft
+    calibrate.textContent = pending?.action !== 'calibrate' ? 'Calibrate'
+        : modal.calibrating ? `Calibrating… ${modal.calibrating} s` : 'Calibrating…'
+    document.getElementById('presenceDefaults').disabled = unavailable
+    document.getElementById('presenceReload').disabled = unavailable
+    document.getElementById('presenceLive').disabled = !online_switches.has(modal.id)
+}
+
+function renderPresenceSummary() {
+    const modal = State.presenceModal
+    if (!modal) return
+    const [state, text] = presenceStatus(modal.id)
+    const parts = [text]
+    const fw = State.presenceSensors[modal.id]?.fw
+    if (fw) parts.push(`radar ${fw}`)
+    if (!modal.draft) parts.push('waiting for the sensor to report its settings')
+    else if (modal.dirty) parts.push('unsaved changes')
+    const summary = document.getElementById('presenceSummary')
+    summary.textContent = parts.join(' · ')
+    summary.dataset.state = state
+    const presence = State.presenceStates[modal.id] || {}
+    const target = document.getElementById('presenceRangeTarget')
+    target.hidden = state !== 'occupied'
+    target.style.left = `${Math.min((presence.distance || 0) / ((PRESENCE_GATES - 1) * PRESENCE_GATE_M * 100), 1) * 100}%`
+}
+
+function markPresenceDirty() {
+    State.presenceModal.dirty = true
+    renderPresenceRange()
+    renderPresenceEnergy()
+    renderPresenceSummary()
+}
+
+function shiftPresenceThresholds(db) {
+    const draft = State.presenceModal?.draft
+    if (!draft) return
+    for (const key of ['trigger', 'hold']) {
+        draft[key] = draft[key].map(raw => presenceRaw(Math.min(PRESENCE_DB_MAX, Math.max(0, presenceDb(raw) + db))))
+    }
+    renderPresenceThresholds()
+    markPresenceDirty()
+}
+
+function applyPresenceConfig() {
+    const modal = State.presenceModal
+    if (!modal?.draft || State.presencePending.has(String(modal.id))) return
+    const { min, max, delay, led, trigger, hold } = modal.draft
+    if (hold.some((value, gate) => value > trigger[gate])
+        && !confirm('Some hold thresholds are above their trigger thresholds, so presence would end right after it starts. Apply anyway?')) return
+    sendPresenceCommand(modal.id, 'apply', { config: { min, max, delay, trigger, hold, led } })
+}
+
+function calibratePresence() {
+    const modal = State.presenceModal
+    const total = PRESENCE_CALIBRATE_SETTLE_SECONDS + PRESENCE_CALIBRATE_SECONDS
+    if (!modal || !confirm(`Leave the detection area within ${PRESENCE_CALIBRATE_SETTLE_SECONDS} seconds. `
+        + `The sensor then measures the empty area for ${PRESENCE_CALIBRATE_SECONDS} seconds and replaces every threshold.`)) return
+    modal.calibrating = total
+    sendPresenceCommand(modal.id, 'calibrate', { seconds: PRESENCE_CALIBRATE_SECONDS },
+        total * 1000 + PRESENCE_CONFIRM_TIMEOUT_MS)
+}
+
+function restorePresenceDefaults() {
+    const modal = State.presenceModal
+    if (!modal || !confirm('Restore the radar defaults: 0–8.4 m, a 30 s delay and the vendor thresholds?')) return
+    sendPresenceCommand(modal.id, 'factory')
+}
+
+function initPresenceModal() {
+    const gates = document.getElementById('presenceGates')
+    if (!gates) return
+    for (let gate = 0; gate < PRESENCE_GATES; gate++) {
+        const row = document.createElement('div')
+        row.className = 'presence-gate'
+        row.dataset.gate = gate
+        const index = document.createElement('span')
+        index.textContent = gate
+        const distance = document.createElement('span')
+        distance.textContent = gateMeters(gate)
+        row.append(index, distance)
+        for (const key of ['trigger', 'hold']) {
+            const input = document.createElement('input')
+            Object.assign(input, { type: 'number', min: '0', max: String(PRESENCE_DB_MAX), step: '0.01' })
+            input.dataset.key = key
+            input.dataset.gate = gate
+            input.dataset.presenceField = ''
+            input.setAttribute('aria-label', `Gate ${gate} ${key} threshold in dB`)
+            row.appendChild(input)
+        }
+        const meter = document.createElement('div')
+        meter.className = 'presence-energy'
+        for (const part of ['presence-energy-bar', 'presence-energy-mark hold', 'presence-energy-mark trigger', 'presence-energy-value']) {
+            const element = document.createElement('span')
+            element.className = part
+            meter.appendChild(element)
+        }
+        row.appendChild(meter)
+        gates.appendChild(row)
+    }
+    gates.addEventListener('change', event => {
+        const { key, gate } = event.target.dataset
+        const draft = State.presenceModal?.draft
+        if (!draft || !key) return
+        const db = Number(event.target.value)
+        if (event.target.value !== '' && db >= 0 && db <= PRESENCE_DB_MAX) {
+            draft[key][gate] = presenceRaw(db)
+            markPresenceDirty()
+        }
+        event.target.value = presenceDb(draft[key][gate]).toFixed(2)
+    })
+
+    const minGate = document.getElementById('presenceMinGate')
+    const maxGate = document.getElementById('presenceMaxGate')
+    const onRange = changed => {
+        const draft = State.presenceModal?.draft
+        if (!draft) return
+        draft.min = Number(minGate.value)
+        draft.max = Number(maxGate.value)
+        // Dragging one end past the other moves both.
+        if (draft.min > draft.max) {
+            if (changed === minGate) draft.max = draft.min
+            else draft.min = draft.max
+            minGate.value = draft.min
+            maxGate.value = draft.max
+        }
+        markPresenceDirty()
+    }
+    minGate.addEventListener('input', () => onRange(minGate))
+    maxGate.addEventListener('input', () => onRange(maxGate))
+
+    const delay = document.getElementById('presenceDelay')
+    delay.addEventListener('input', () => {
+        const draft = State.presenceModal?.draft
+        const seconds = Number(delay.value)
+        if (!draft || delay.value === '' || !Number.isInteger(seconds) || seconds < 0 || seconds > 65535) return
+        draft.delay = seconds
+        markPresenceDirty()
+    })
+    delay.addEventListener('change', () => {
+        const draft = State.presenceModal?.draft
+        if (draft) delay.value = draft.delay
+    })
+    document.getElementById('presenceLed').addEventListener('change', event => {
+        const draft = State.presenceModal?.draft
+        if (!draft) return
+        draft.led = event.target.checked
+        markPresenceDirty()
+    })
+    document.querySelectorAll('[data-presence-shift]').forEach(button => {
+        button.addEventListener('click', () => shiftPresenceThresholds(Number(button.dataset.presenceShift)))
+    })
+    document.getElementById('presenceLive').addEventListener('change', event => setPresenceLive(event.target.checked))
+    document.getElementById('presenceApply').addEventListener('click', applyPresenceConfig)
+    document.getElementById('presenceCalibrate').addEventListener('click', calibratePresence)
+    document.getElementById('presenceDefaults').addEventListener('click', restorePresenceDefaults)
+    document.getElementById('presenceReload').addEventListener('click', () => {
+        if (State.presenceModal) sendPresenceCommand(State.presenceModal.id, 'read')
+    })
+}
+
+initPresenceModal()
 
 function copyIdToClipboard(id, element) {
     navigator.clipboard.writeText(id).then(() => {
@@ -3528,6 +4009,7 @@ function showAddRelayModal() {
 
 function closeModal(modalId) {
     document.getElementById(modalId).classList.remove('active')
+    if (modalId === 'presenceModal') closePresenceModal()
     if (activeModalShortcut && activeModalShortcut.modalId === modalId) {
         unbindModalShortcuts()
     }
@@ -3669,7 +4151,8 @@ function editDeviceName(type, id) {
     document.getElementById('editNameInput').value = currentName
     document.getElementById('editNameModal').classList.add('active')
     document.getElementById('editAutoOffGroup').style.display = 'none'
-    document.getElementById('editButtonNumber').disabled = type === 'switch' && Boolean(State.zigbeeDevices[id])
+    document.getElementById('editButtonNumber').disabled = type === 'switch'
+        && (Boolean(State.zigbeeDevices[id]) || id in State.presenceSensors)
 
     if (type === 'switch') {
         document.getElementById('editButtonNumber').style.display = 'block'

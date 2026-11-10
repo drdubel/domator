@@ -108,11 +108,13 @@ void mesh_rx_task(void* arg) {
         }
         mesh_terminate_text(msg);
 
+        // Presence sensors run the switch image and take its OTA broadcasts.
         if ((msg->target_type == DEVICE_TYPE_RELAY &&
              g_node_type != NODE_TYPE_RELAY_8 &&
              g_node_type != NODE_TYPE_RELAY_16) ||
             (msg->target_type == DEVICE_TYPE_SWITCH &&
-             g_node_type != NODE_TYPE_SWITCH_C3)) {
+             g_node_type != NODE_TYPE_SWITCH_C3 &&
+             g_node_type != NODE_TYPE_PRESENCE)) {
             ESP_LOGW(
                 TAG,
                 "Received message for device type %c, but I am not that type",
@@ -136,6 +138,7 @@ void mesh_rx_task(void* arg) {
             case MSG_TYPE_COMMAND: {
                 if (g_node_type == NODE_TYPE_SWITCH_C3 &&
                     remote_gateway_command(msg->data, msg->data_len)) break;
+                if (presence_handle_command(msg->data, msg->data_len)) break;
                 ESP_LOGI(TAG, "Command received: %.*s", msg->data_len,
                          msg->data);
 
@@ -352,6 +355,8 @@ void node_publish_status(void) {
         type_str = "relay8";
     } else if (g_node_type == NODE_TYPE_RELAY_16) {
         type_str = "relay16";
+    } else if (g_node_type == NODE_TYPE_PRESENCE) {
+        type_str = "presence";
     }
 
     mesh_addr_t parent_addr;
@@ -381,6 +386,7 @@ void node_publish_status(void) {
         if (esp_wifi_get_channel(&primary, &secondary) == ESP_OK)
             cJSON_AddNumberToObject(json, "radioChannel", primary);
     }
+    if (g_node_type == NODE_TYPE_PRESENCE) presence_add_status(json);
     cJSON_AddNumberToObject(json, "parentId", g_parent_id);
     cJSON_AddNumberToObject(json, "freeHeap", free_heap);
     cJSON_AddNumberToObject(json, "uptime", uptime);

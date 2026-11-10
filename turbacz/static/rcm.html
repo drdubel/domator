@@ -263,6 +263,88 @@
         </div>
     </div>
 
+    <div id="presenceModal" class="modal">
+        <div class="modal-content presence-modal-content" role="dialog" aria-labelledby="presenceModalTitle">
+            <div class="modal-header" id="presenceModalTitle">Presence sensor</div>
+            <div class="presence-summary" id="presenceSummary" aria-live="polite"></div>
+
+            <section class="presence-section">
+                <div class="presence-section-title">Detection range</div>
+                <div class="presence-range-bar" aria-hidden="true">
+                    <div class="presence-range-fill" id="presenceRangeFill"></div>
+                    <div class="presence-range-target" id="presenceRangeTarget" hidden></div>
+                </div>
+                <div class="presence-range-scale" aria-hidden="true">
+                    <span>0 m</span><span>3.5 m</span><span>7.0 m</span><span>10.5 m</span>
+                </div>
+                <label class="presence-field" for="presenceMinGate">
+                    <span>Nearest</span>
+                    <input type="range" id="presenceMinGate" min="0" max="15" step="1" data-presence-field>
+                    <output id="presenceMinGateValue"></output>
+                </label>
+                <label class="presence-field" for="presenceMaxGate">
+                    <span>Farthest</span>
+                    <input type="range" id="presenceMaxGate" min="0" max="15" step="1" data-presence-field>
+                    <output id="presenceMaxGateValue"></output>
+                </label>
+                <p class="presence-hint">Each range gate covers 0.7 m. Movement outside the range is ignored.</p>
+            </section>
+
+            <section class="presence-section">
+                <label class="presence-field" for="presenceDelay">
+                    <span>Clear after</span>
+                    <input type="number" id="presenceDelay" min="0" max="65535" step="1" data-presence-field>
+                    <output id="presenceDelayValue"></output>
+                </label>
+                <p class="presence-hint">Seconds without detection before the area is reported clear and outputs on
+                    "Presence" and "Departure" turn off.</p>
+                <label class="setting-row" for="presenceLed">
+                    <div class="setting-copy">
+                        <span class="setting-title">Indicator LED</span>
+                        <span class="setting-description">Light the SuperMini's blue LED while presence is
+                            detected.</span>
+                    </div>
+                    <input type="checkbox" id="presenceLed" data-presence-field>
+                </label>
+            </section>
+
+            <section class="presence-section">
+                <div class="presence-section-header">
+                    <div class="presence-section-title">Sensitivity per gate (dB)</div>
+                    <div class="presence-tools">
+                        <button type="button" class="presence-tool" data-presence-shift="-1" data-presence-field
+                            title="Lower every threshold by 1 dB">More sensitive</button>
+                        <button type="button" class="presence-tool" data-presence-shift="1" data-presence-field
+                            title="Raise every threshold by 1 dB">Less sensitive</button>
+                        <label class="presence-live-toggle" for="presenceLive">
+                            <input type="checkbox" id="presenceLive"> Live energy
+                        </label>
+                    </div>
+                </div>
+                <p class="presence-hint">Presence starts when a gate's energy exceeds its trigger threshold and lasts
+                    while the energy stays above the hold threshold. Lower values are more sensitive.</p>
+                <div class="presence-gates" id="presenceGates">
+                    <div class="presence-gate presence-gate-head" aria-hidden="true">
+                        <span>Gate</span><span>Distance</span><span>Trigger</span><span>Hold</span><span>Energy</span>
+                    </div>
+                </div>
+            </section>
+
+            <div class="modal-buttons presence-actions">
+                <button class="modal-btn" type="button" id="presenceCalibrate"
+                    title="Measure the empty area and derive every threshold">Calibrate</button>
+                <button class="modal-btn" type="button" id="presenceDefaults"
+                    title="Restore the radar's vendor defaults">Defaults</button>
+                <button class="modal-btn" type="button" id="presenceReload"
+                    title="Read the settings stored in the radar">Reload</button>
+            </div>
+            <div class="modal-buttons">
+                <button class="modal-btn save" type="button" id="presenceApply">Apply</button>
+                <button class="modal-btn cancel" type="button" onclick="closeModal('presenceModal')">Close</button>
+            </div>
+        </div>
+    </div>
+
     <div id="loading">
         <div class="spinner"></div>
         <span>Loading...</span>

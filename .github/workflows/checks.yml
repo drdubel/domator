@@ -57,6 +57,8 @@ jobs:
           /tmp/remote-test
           clang -fsanitize=address,undefined -I uc/buttonsMeshIDF/src uc/buttonsMeshIDF/tests/remote_button_test.c -o /tmp/remote-button-test
           /tmp/remote-button-test
+          clang -fsanitize=address,undefined -I uc/buttonsMeshIDF/src uc/buttonsMeshIDF/tests/radar_protocol_test.c -o /tmp/radar-test
+          /tmp/radar-test
           clang++ -std=c++11 -fsanitize=address,undefined -I uc/blinds_wifi/src uc/blinds_wifi/tests/command_parser_test.cpp -o /tmp/blind-test
           /tmp/blind-test
           clang++ -std=c++11 -fsanitize=address,undefined -I uc/heating/src uc/heating/tests/command_parser_test.cpp -o /tmp/heating-test

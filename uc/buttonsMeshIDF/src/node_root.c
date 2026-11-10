@@ -267,6 +267,7 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
         case MSG_TYPE_COMMAND: {
             if (g_node_type == NODE_TYPE_SWITCH_C3 &&
                 remote_gateway_command(msg->data, msg->data_len)) break;
+            if (presence_handle_command(msg->data, msg->data_len)) break;
             ESP_LOGI(TAG, "Command received: %.*s", msg->data_len, msg->data);
 
             if (g_node_type == NODE_TYPE_RELAY_8 ||
@@ -547,12 +548,32 @@ static void route_blind_press(uint64_t from_id, char button,
 // ====================
 
 /**
+ * @brief Relay level a button event sets on its targets.
+ * @return '0' or '1' to set the outputs, 0 to toggle them, or -1 when this
+ *         edge does nothing (on-only/off-only presence inputs).
+ */
+static int button_relay_level(int type, int state) {
+    switch (type) {
+        case BUTTON_TYPE_STATEFUL:
+            return state ? '0' : '1';
+        case BUTTON_TYPE_FOLLOW:
+            return state < 0 ? -1 : state ? '1' : '0';
+        case BUTTON_TYPE_ON_ONLY:
+            return state == 1 ? '1' : -1;
+        case BUTTON_TYPE_OFF_ONLY:
+            return state == 0 ? '0' : -1;
+        default:
+            return 0;
+    }
+}
+
+/**
  * @brief Forward a button event to all configured relay targets.
  *
  * Looks up the routing table (g_connections) for the source device and
  * button character, then sends a MSG_TYPE_COMMAND to each target relay node.
- * For stateful buttons the command includes the current state; for toggle
- * buttons a single-byte toggle command is sent.
+ * Stateful and presence inputs set an explicit level (see
+ * button_relay_level); momentary buttons send a single-byte toggle command.
  *
  * @param from_id Source device ID (the switch that was pressed).
  * @param button  Button character ('a' – 'x').
@@ -567,6 +588,9 @@ static void route_button_to_relays(uint64_t from_id, char button, int state) {
         ESP_LOGW(TAG, "Invalid button index: %d", button_idx);
         return;
     }
+    int type = get_button_type(from_id, button);
+    int level = button_relay_level(type, state);
+    if (level < 0) return;
     route_target_t targets[MAX_ROUTES_PER_BUTTON];
     int count = 0;
     if (!g_connections_mutex) return;
@@ -604,18 +628,14 @@ static void route_button_to_relays(uint64_t from_id, char button, int state) {
             cmd.src_id = g_device_id;
             cmd.msg_type = MSG_TYPE_COMMAND;
             cmd.data[0] = target->relay_command[0];
-            if (get_button_type(from_id, button) == 1) {  // Stateful button
-                cmd.data[1] = state ? '0' : '1';          // '0' or '1'
-                cmd.data_len = 2;
-            } else {
-                cmd.data_len = 1;
-            }
+            cmd.data_len = 1;
+            if (level) cmd.data[cmd.data_len++] = level;
             mesh_queue_to_node(&cmd, TX_PRIO_NORMAL, &dest);
             ESP_LOGI(TAG,
                      "Routed button '%c' of type %d from %" PRIu64
                      " to relay command '%c' on device %" PRIu64,
-                     button, get_button_type(from_id, button), from_id,
-                     target->relay_command[0], target->target_node_id);
+                     button, type, from_id, target->relay_command[0],
+                     target->target_node_id);
         } else {
             ESP_LOGW(TAG, "No mesh address found for target device %" PRIu64,
                      target->target_node_id);
@@ -671,11 +691,14 @@ void root_publish_status(void) {
         type_str = "relay8";
     } else if (g_node_type == NODE_TYPE_RELAY_16) {
         type_str = "relay16";
+    } else if (g_node_type == NODE_TYPE_PRESENCE) {
+        type_str = "presence";
     }
 
     cJSON_AddNumberToObject(json, "deviceId", g_device_id);
     cJSON_AddNumberToObject(json, "parentId", g_device_id);
     cJSON_AddStringToObject(json, "type", type_str);
+    if (g_node_type == NODE_TYPE_PRESENCE) presence_add_status(json);
     if (g_node_type == NODE_TYPE_SWITCH_C3) {
         cJSON_AddBoolToObject(json, "gateway", remote_gateway_enabled());
         uint8_t mac[6], primary = 0;
@@ -1343,6 +1366,9 @@ static void handle_nonJson_mqtt_command(const char* topic, int topic_len,
             if (target_id == g_device_id &&
                 remote_gateway_command(cmd.data, cmd.data_len)) {
                 root_publish_status();
+            } else if (target_id == g_device_id &&
+                       presence_handle_command(cmd.data, cmd.data_len)) {
+                // Queued for this node's own radar task.
             } else if (wrap_remote_command(target_id, &cmd))
                 send_remote_or_mesh(&cmd, TX_PRIO_NORMAL, &dest);
             ESP_LOGI(TAG, "Routed non-JSON MQTT command to device %" PRIu64,

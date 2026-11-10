@@ -561,6 +561,55 @@ body {
     width: 460px;
 }
 
+/* ID + mmWave badge + sensor settings button + 5 actions. */
+.switch-box.presence-sensor {
+    width: 500px;
+}
+
+.presence-badge {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    height: 18px;
+    padding: 0 0.4rem;
+    border: 1px solid rgba(16, 185, 129, 0.4);
+    border-radius: 6px;
+    background: rgba(16, 185, 129, 0.12);
+    color: #6ee7b7;
+    font-size: 0.68rem;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.presence-status {
+    margin: -0.25rem 0 0.25rem;
+    padding: 0.45rem 0.75rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: rgba(148, 163, 184, 0.08);
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.presence-status[data-state="occupied"] {
+    border-color: rgba(16, 185, 129, 0.5);
+    background: rgba(16, 185, 129, 0.14);
+    color: #6ee7b7;
+}
+
+.presence-status[data-state="clear"] {
+    color: var(--text-secondary);
+}
+
+.presence-status[data-state="fault"] {
+    border-color: rgba(245, 158, 11, 0.55);
+    background: rgba(245, 158, 11, 0.12);
+    color: #fcd34d;
+}
+
 .zigbee-command {
     background: #1e293b;
     color: #e2e8f0;
@@ -814,6 +863,20 @@ body {
     border-color: rgba(245, 158, 11, 0.6);
     background: rgba(245, 158, 11, 0.14);
     animation: pulse 1.2s ease-in-out infinite;
+}
+
+/* Labelled presence sensor settings button, like the gateway toggle. */
+.presence-config-btn {
+    width: auto;
+    padding: 0 0.6rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.presence-config-btn:hover {
+    background: rgba(16, 185, 129, 0.22);
+    color: #a7f3d0;
 }
 
 .device-name {
@@ -1258,6 +1321,261 @@ body.hide-device-metrics .signal-icon {
     flex-shrink: 0;
 }
 
+/* Presence sensor dialog */
+.presence-modal-content {
+    width: min(94vw, 760px);
+    max-height: 92vh;
+    overflow-y: auto;
+}
+
+.presence-summary {
+    margin: -0.5rem 0 1.25rem;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.presence-summary[data-state="occupied"] {
+    color: #6ee7b7;
+}
+
+.presence-summary[data-state="fault"] {
+    color: #fcd34d;
+}
+
+.presence-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding: 1rem 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.presence-section-title {
+    font-weight: 600;
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.presence-section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.presence-hint {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+}
+
+.presence-field {
+    display: grid;
+    grid-template-columns: 6.5rem 1fr 9rem;
+    align-items: center;
+    gap: 0.75rem;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.presence-field input[type="range"] {
+    accent-color: var(--success-color);
+    cursor: pointer;
+}
+
+.presence-field input[type="number"],
+.presence-gate input {
+    padding: 0.45rem 0.6rem;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.5);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.presence-field output {
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+}
+
+.presence-range-bar {
+    position: relative;
+    height: 12px;
+    border-radius: 6px;
+    background: rgba(148, 163, 184, 0.15);
+}
+
+.presence-range-fill {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    border-radius: 6px;
+    background: linear-gradient(90deg, rgba(16, 185, 129, 0.55), rgba(16, 185, 129, 0.85));
+}
+
+.presence-range-target {
+    position: absolute;
+    top: -4px;
+    width: 4px;
+    height: 20px;
+    margin-left: -2px;
+    border-radius: 2px;
+    background: #f472b6;
+    box-shadow: 0 0 8px rgba(244, 114, 182, 0.8);
+}
+
+.presence-range-scale {
+    display: flex;
+    justify-content: space-between;
+    color: var(--text-muted);
+    font-size: 0.72rem;
+}
+
+.presence-tools {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.presence-tool {
+    padding: 0.35rem 0.65rem;
+    border: 1px solid var(--border-color);
+    border-radius: 7px;
+    background: rgba(148, 163, 184, 0.1);
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.presence-tool:hover:not(:disabled) {
+    background: rgba(148, 163, 184, 0.22);
+    color: var(--text-primary);
+}
+
+.presence-live-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.presence-live-toggle input {
+    accent-color: #f472b6;
+}
+
+.presence-gates {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    overflow-x: auto;
+}
+
+.presence-gate {
+    display: grid;
+    grid-template-columns: 2.5rem 4rem 5.5rem 5.5rem minmax(10rem, 1fr);
+    align-items: center;
+    gap: 0.6rem;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.presence-gate-head {
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.presence-gate.outside {
+    opacity: 0.45;
+}
+
+.presence-gate input {
+    width: 100%;
+    padding: 0.3rem 0.45rem;
+    font-size: 0.8rem;
+}
+
+.presence-energy {
+    position: relative;
+    height: 16px;
+    border-radius: 4px;
+    background: rgba(148, 163, 184, 0.12);
+}
+
+.presence-energy-bar {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    border-radius: 4px;
+    background: rgba(148, 163, 184, 0.45);
+    transition: width 0.3s ease;
+}
+
+.presence-energy-bar.over-hold {
+    background: rgba(245, 158, 11, 0.7);
+}
+
+.presence-energy-bar.over-trigger {
+    background: rgba(239, 68, 68, 0.75);
+}
+
+.presence-energy-mark {
+    position: absolute;
+    top: -2px;
+    bottom: -2px;
+    width: 2px;
+    margin-left: -1px;
+}
+
+.presence-energy-mark.trigger {
+    background: var(--danger-color);
+}
+
+.presence-energy-mark.hold {
+    background: var(--warning-color);
+}
+
+.presence-energy-value {
+    position: absolute;
+    right: 0.35rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-primary);
+    font-size: 0.68rem;
+    font-weight: 700;
+}
+
+#presenceModal.presence-empty .presence-section {
+    opacity: 0.5;
+}
+
+.presence-actions {
+    margin-top: 1.25rem;
+}
+
+.modal-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
 /* Loading */
 #loading {
     position: fixed;
@@ -1446,6 +1764,11 @@ body.hide-device-metrics .signal-icon {
 
     .settings-modal-content {
         min-width: 90%;
+    }
+
+    .presence-field {
+        grid-template-columns: 1fr;
+        gap: 0.35rem;
     }
 
     .setting-row-select {

@@ -16,6 +16,7 @@ class StateManager:
         self._up_to_date_devices: dict[int, bool] = {}
         self._up_to_date_firmware_versions: dict[str, int] = {}
         self._ping_times: dict[int, list[int]] = {}
+        self._presence: dict[int, dict] = {}
 
     async def update_state(self, relay_id: int, output_id: str, state: int):
         if self.get_state(relay_id, output_id) == state:
@@ -71,6 +72,7 @@ class StateManager:
             "root_id": connection_manager.rootId,
             "device_roles": self._device_roles,
             "ping_times": self.get_all_device_pings(),
+            "presence_states": self._presence,
         }
 
         if websocket:
@@ -89,6 +91,13 @@ class StateManager:
 
     def get_device_role(self, device_id: int) -> dict:
         return self._device_roles.get(device_id, {})
+
+    def update_presence(self, device_id: int, **fields):
+        """Latest occupancy, distance (cm) and radar health of a presence sensor."""
+        self._presence.setdefault(device_id, {}).update(fields)
+
+    def get_presence(self, device_id: int) -> dict:
+        return self._presence.get(device_id, {})
 
     def set_device_rssi(self, device_id: int, rssi: int):
         self._devices_rssi[device_id] = rssi

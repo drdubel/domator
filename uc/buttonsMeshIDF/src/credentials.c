@@ -144,7 +144,8 @@ esp_err_t credentials_load(void) {
     if (s_creds.remote_channel < 1 || s_creds.remote_channel > 13)
         return ESP_ERR_INVALID_ARG;
     if (s_creds.switch_role[0] && strcmp(s_creds.switch_role, "normal") &&
-        strcmp(s_creds.switch_role, "remote")) return ESP_ERR_INVALID_ARG;
+        strcmp(s_creds.switch_role, "remote") &&
+        strcmp(s_creds.switch_role, "presence")) return ESP_ERR_INVALID_ARG;
 
     // The mesh ID is exactly 6 bytes on the wire. Longer values are truncated
     // rather than rejected, because that is what the previous CONFIG_MESH_ID

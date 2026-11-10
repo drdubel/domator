@@ -19,6 +19,7 @@ idf_component_register(
         "mesh_comm.c"
         "node_root.c"
         "node_relay.c"
+        "node_presence.c"
         "health_ota.c"
         ${TELNET_SOURCE}
         ${BATTERY_SOURCE}

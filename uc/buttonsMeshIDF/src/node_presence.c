@@ -16,6 +16,7 @@
  * Only this task touches the UART: mesh handlers just queue commands.
  */
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -70,11 +71,16 @@ static char s_version[12];
 static bool s_led;
 static volatile bool s_presence, s_radar_ok;
 static volatile uint16_t s_distance;
-static uint16_t s_energy[RADAR_GATES], s_peak[RADAR_GATES];
+// Highest energy of each gate since the last live report, and while calibrating.
+static uint16_t s_live_energy[RADAR_GATES], s_peak[RADAR_GATES];
 static uint32_t s_samples;
 static int64_t s_last_report, s_sync_at, s_live_until, s_next_live;
 static int64_t s_calibrate_from, s_calibrate_until;
 static bool s_seen, s_pending, s_calibrating, s_config_pending;
+// What arrived since the last report, to explain a failed setup.
+static bool s_replied;
+static uint32_t s_rx_bytes;
+static uint8_t s_rx_sample[16], s_rx_sample_len;
 
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
 
@@ -160,7 +166,8 @@ static void presence_send_live(int64_t now) {
     if (s_calibrating) cJSON_AddNumberToObject(json, "calibrating", (s_calibrate_until - now + 999) / 1000);
     cJSON* energy = cJSON_AddArrayToObject(json, "energy");
     for (int gate = 0; gate < RADAR_GATES; gate++)
-        cJSON_AddItemToArray(energy, cJSON_CreateNumber(s_energy[gate]));
+        cJSON_AddItemToArray(energy, cJSON_CreateNumber(s_live_energy[gate]));
+    memset(s_live_energy, 0, sizeof(s_live_energy));
     presence_send_json(json);
 }
 
@@ -178,8 +185,12 @@ static void presence_report(const radar_report_t* report) {
     int64_t now = now_ms();
     s_last_report = now;
     s_radar_ok = true;
+    s_rx_bytes = s_rx_sample_len = 0;
     s_distance = report->distance_cm;
-    memcpy(s_energy, report->energy, sizeof(s_energy));
+    // The radar decides on every report: a live view of one report a second
+    // would miss the peaks that start presence.
+    for (int gate = 0; gate < RADAR_GATES; gate++)
+        if (report->energy[gate] > s_live_energy[gate]) s_live_energy[gate] = report->energy[gate];
     if (s_calibrating && now >= s_calibrate_from) {
         s_samples++;
         for (int gate = 0; gate < RADAR_GATES; gate++)
@@ -207,7 +218,9 @@ static bool radar_poll(TickType_t wait, int command, radar_reply_t* reply) {
     uint8_t chunk[64];
     int received = uart_read_bytes(RADAR_UART, chunk, sizeof(chunk), wait);
     bool replied = false;
+    if (received > 0) s_rx_bytes += received;
     for (int i = 0; i < received; i++) {
+        if (s_rx_sample_len < sizeof(s_rx_sample)) s_rx_sample[s_rx_sample_len++] = chunk[i];
         radar_report_t report;
         radar_reply_t frame;
         int kind = radar_parse(&s_parser, chunk[i], &report, &frame);
@@ -232,6 +245,7 @@ static bool radar_request(uint16_t command, const uint8_t* data, size_t len, rad
         int64_t deadline = now_ms() + RADAR_REPLY_MS;
         while (now_ms() < deadline) {
             if (!radar_poll(pdMS_TO_TICKS(20), command, reply)) continue;
+            s_replied = true;
             if (!reply->status) return true;
             ESP_LOGW(TAG, "Radar rejected command 0x%04x (status %u)", command, reply->status);
             return false;
@@ -292,6 +306,7 @@ static bool radar_write_config(radar_config_t* want) {
  * in the radar's flash. */
 static bool radar_session(radar_config_t* want) {
     uint8_t version[2];
+    s_replied = false;
     radar_put16(version, RADAR_PROTOCOL_VERSION);
     if (!radar_request(RADAR_CMD_ENABLE_CONFIG, version, sizeof(version), NULL)) return false;
     bool ok = !want || radar_write_config(want);
@@ -310,6 +325,36 @@ static bool radar_session(radar_config_t* want) {
     ok = radar_request(RADAR_CMD_DISABLE_CONFIG, NULL, 0, NULL) && ok;
     s_last_report = now_ms();  // reports resume after configuration mode
     return ok;
+}
+
+/* Explain a failed setup by what the board received instead of replies: a
+ * silent line points at the radar's TX wire or its power, and the radar's
+ * ON/OFF text alone at the wire from the board's TX. */
+static void radar_log_failure(void) {
+    char text[sizeof(s_rx_sample) + 1], hex[3 * sizeof(s_rx_sample) + 1] = "";
+    int n = s_rx_sample_len;
+    bool is_text = n > 0;
+    for (int i = 0; i < n; i++) {
+        uint8_t c = s_rx_sample[i];
+        bool shown = c >= ' ' && c <= '~';
+        is_text = is_text && (shown || c == '\r' || c == '\n');
+        text[i] = shown ? c : '.';
+        snprintf(hex + 3 * i, 4, "%02X ", c);
+    }
+    text[n] = 0;
+    if (n) hex[3 * n - 1] = 0;
+    if (s_replied)
+        ESP_LOGW(TAG, "Radar setup incomplete: the radar answered only some commands");
+    else if (!s_rx_bytes)
+        ESP_LOGW(TAG, "Radar setup incomplete: nothing received on GPIO%d. Check radar TX -> board RX, "
+                      "and that the radar has 3V3 and GND", PRESENCE_RADAR_RX_GPIO);
+    else if (is_text)
+        ESP_LOGW(TAG, "Radar setup incomplete: the radar sends \"%s\" but ignores commands. "
+                      "Check board TX (GPIO%d) -> radar RX", text, PRESENCE_RADAR_TX_GPIO);
+    else
+        ESP_LOGW(TAG, "Radar setup incomplete: no reply in %" PRIu32 " bytes received, starting %s",
+                 s_rx_bytes, hex);
+    s_rx_bytes = s_rx_sample_len = 0;
 }
 
 // ====================
@@ -385,12 +430,22 @@ static void presence_calibrated(void) {
     if (radar_session(&want)) s_config_pending = true;
 }
 
+/* Stream live data until @p until. A new stream first collects a second of
+ * reports, so its first peaks are not left over from long ago. */
+static void presence_live_until(int64_t until) {
+    int64_t now = now_ms();
+    if (now >= s_live_until && until > now) {
+        memset(s_live_energy, 0, sizeof(s_live_energy));
+        s_next_live = now + LIVE_INTERVAL_MS;
+    }
+    s_live_until = until;
+}
+
 static void presence_run(const presence_cmd_t* cmd) {
     radar_config_t want = cmd->op == OP_FACTORY ? RADAR_DEFAULTS : cmd->config;
     switch (cmd->op) {
         case OP_LIVE:
-            s_live_until = cmd->seconds ? now_ms() + cmd->seconds * 1000LL : 0;
-            s_next_live = 0;
+            presence_live_until(cmd->seconds ? now_ms() + cmd->seconds * 1000LL : 0);
             return;
         case OP_CALIBRATE:
             // Thresholds come from the energy measured while the area is empty.
@@ -401,7 +456,7 @@ static void presence_run(const presence_cmd_t* cmd) {
             s_calibrate_from = now_ms() + CALIBRATE_SETTLE_MS;
             s_calibrate_until = s_calibrate_from + cmd->seconds * 1000LL;
             if (s_live_until < s_calibrate_until + LIVE_INTERVAL_MS)
-                s_live_until = s_calibrate_until + LIVE_INTERVAL_MS;
+                presence_live_until(s_calibrate_until + LIVE_INTERVAL_MS);
             return;
         case OP_APPLY:
             if (s_led != cmd->led) {
@@ -447,6 +502,9 @@ void presence_init(void) {
     };
     ESP_ERROR_CHECK(uart_driver_install(RADAR_UART, 1024, 0, 0, NULL, 0));
     ESP_ERROR_CHECK(uart_param_config(RADAR_UART, &uart));
+    // These are the console's UART0 pins: routing UART1 to them detaches the
+    // console, whose log continues on USB. Until now the radar has received
+    // only boot text, which cannot contain its frame header (FD FC FB FA).
     ESP_ERROR_CHECK(uart_set_pin(RADAR_UART, PRESENCE_RADAR_TX_GPIO, PRESENCE_RADAR_RX_GPIO,
                                  UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
     // An unconnected sensor must read as an idle line, not noise.
@@ -465,7 +523,7 @@ void presence_task(void* arg) {
         }
         if (!ready && now_ms() >= retry_at) {
             if (radar_session(NULL)) s_config_pending = true;
-            else ESP_LOGW(TAG, "Radar setup incomplete; check the sensor wiring");
+            else radar_log_failure();
             // Retry only when reports stop: a failed read alone must not
             // interrupt detection with a configuration session every 5 s.
             ready = true;

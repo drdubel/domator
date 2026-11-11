@@ -92,10 +92,12 @@
 #define REMOTE_LED_OFF_LEVEL 1
 #endif
 
-// Waveshare HMMD mmWave sensor on an ESP32-C3 SuperMini (switch_role=presence).
+// Waveshare HMMD mmWave sensor on an ESP32-C3 SuperMini (switch_role=presence),
+// on the board's RX/TX pins. They are not switch inputs, so a sensor that is
+// provisioned as a switch does not read the radar's data as button presses.
 // The indicator is the SuperMini's active-low blue LED on LED_GPIO.
-#define PRESENCE_RADAR_RX_GPIO 5  // sensor TX
-#define PRESENCE_RADAR_TX_GPIO 4  // sensor RX
+#define PRESENCE_RADAR_RX_GPIO 20  // sensor TX, board pin RX
+#define PRESENCE_RADAR_TX_GPIO 21  // sensor RX, board pin TX
 
 // GPIO pin definitions for 8-relay board
 #define RELAY_8_PIN_0 32

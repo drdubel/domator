@@ -215,7 +215,8 @@ provisioned gateway.
 ## Presence sensors
 
 An ESP32-C3 SuperMini wired to a Waveshare HMMD mmWave sensor runs the C3
-switch firmware with this extra row:
+switch firmware. Provision it with a copy of the switch CSV whose only
+`switch_role` row is:
 
 ```csv
 switch_role,data,string,presence

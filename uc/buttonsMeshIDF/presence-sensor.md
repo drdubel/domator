@@ -12,13 +12,15 @@ buttons, and RCM edits the radar's range, delay and sensitivity.
 | --- | --- | --- |
 | 3V3 | 3.3 | 3.0–3.6 V, about 50 mA average |
 | GND | G | |
-| TX | GPIO5 | radar to C3 (UART1 RX, pulled up) |
-| RX | GPIO4 | C3 to radar (UART1 TX) |
+| TX | RX (GPIO20) | radar to C3, pulled up |
+| RX | TX (GPIO21) | C3 to radar |
 | OT2 | not connected | presence is read over UART |
 
-Power the SuperMini through USB-C. GPIO20/21 stay free: the C3 console uses
-UART0 there and mirrors it on USB. The SuperMini's active-low blue LED (GPIO8)
-can show presence; it is off until enabled in RCM.
+Power the SuperMini through USB-C and read its log over USB. RX and TX are
+the pins of the console's UART0; the sensor takes them over for the radar
+when it starts, so until then the radar receives the boot messages. Text
+cannot form a radar command, so they are harmless. The SuperMini's
+active-low blue LED (GPIO8) can show presence; it is off until enabled in RCM.
 
 Mount the sensor as Waveshare recommends: on the ceiling at 2.7–3 m, or on a
 wall at 1.5–2 m with the pin header at the top. Keep fans, curtains and other
@@ -33,19 +35,27 @@ switches. Run from this directory:
 pio run -e esp32c3 -t upload --upload-port /dev/cu.usbmodemXXX
 ```
 
-Provision the installation credentials as for any node (see
-[provisioning](provisioning/README.md)) and add the role:
+Provision it with a copy of your switch credentials (see
+[provisioning](provisioning/README.md)) whose role row says `presence`. Keep
+exactly one `switch_role` row: change `normal` instead of adding a row.
 
 ```csv
 switch_role,data,string,presence
 ```
 
 ```sh
-./provisioning/provision.sh -C esp32c3 -p /dev/cu.usbmodemXXX -c /path/to/private.csv
+./provisioning/provision.sh -C esp32c3 -p /dev/cu.usbmodemXXX -c /path/to/presence.csv
 ```
+
+After the restart the serial log must show `Starting presence sensor task`.
+A sensor provisioned as a normal switch logs `Starting switch node tasks`
+instead and appears in RCM as a plain switch, without the mmWave badge.
 
 Keep `ota_url` pointing at `/firmware/switch.bin`: **Switch FW** uploads and
 the **Switches** OTA button update presence sensors together with C3 switches.
+Firmware without presence support refuses to start with this role, so upload
+a current `switch.bin` before using the OTA button; otherwise the sensor needs
+to be flashed again by cable.
 
 ## RCM
 
@@ -75,9 +85,12 @@ entities: `press` when presence starts, `release` when the area is clear.
 - **Sensitivity per gate**: the trigger (start) and hold (keep) threshold of
   each gate, in dB like Waveshare's tool. Lower values are more sensitive;
   **More/Less sensitive** shift every threshold by 1 dB.
-- **Live energy** streams each gate's energy once a second, drawn against its
-  thresholds, while the dialog stays open. Tune a gate until a person raises
-  it above the trigger threshold and the empty area stays below the hold one.
+- **Live energy** shows each gate's highest energy of the last second, drawn
+  against its thresholds, while the dialog stays open. Tune a gate until a
+  person raises it above the trigger threshold and the empty area stays below
+  the hold one. Presence lasts until the energy has stayed below the hold
+  threshold for the **Clear after** time, so the card can show *Occupied*
+  while every bar is below its lines.
 - **Calibrate** gives you 10 seconds to leave, measures the empty area for 20
   seconds, and sets each gate's trigger threshold 5 dB and hold threshold
   3.5 dB above the highest energy seen (the margins of Waveshare's tool).
@@ -100,7 +113,14 @@ while Turbacz has none stored, it asks the sensor again every 5 minutes.
 - Changes made while the mesh is disconnected are sent after it reconnects;
   only the latest state is sent.
 - When the radar stops reporting for 3 seconds the card shows *Radar not
-  responding*, and the node reinitialises the radar every 5 seconds.
+  responding*, and the node reinitialises the radar every 5 seconds. Each
+  failed attempt logs what the board received instead:
+  - `nothing received on GPIO20`: the radar's TX does not reach the board's
+    RX, or the radar has no power. It needs 3.3 V, not 5 V.
+  - `the radar sends "ON..." but ignores commands`: the radar works, but the
+    board's TX does not reach the radar's RX.
+  - `no reply in N bytes received`: something else is on the line, such as a
+    loose wire.
 
 ## Protocol
 

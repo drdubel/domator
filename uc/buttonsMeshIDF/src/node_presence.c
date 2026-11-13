@@ -34,6 +34,7 @@ static const char* TAG = "PRESENCE";
 #define RADAR_ATTEMPTS 3
 #define RADAR_SILENCE_MS 3000
 #define RADAR_RETRY_MS 5000
+#define RADAR_STARTUP_MS 3000  // from boot to the first setup
 #define PRESENCE_SYNC_MIN_MS 60000
 #define LIVE_INTERVAL_MS 1000
 #define LIVE_MAX_S 120
@@ -329,7 +330,7 @@ static bool radar_session(radar_config_t* want) {
 
 /* Explain a failed setup by what the board received instead of replies: a
  * silent line points at the radar's TX wire or its power, and the radar's
- * ON/OFF text alone at the wire from the board's TX. */
+ * ON/OFF text alone at its RX wire or a locked-up radar. */
 static void radar_log_failure(void) {
     char text[sizeof(s_rx_sample) + 1], hex[3 * sizeof(s_rx_sample) + 1] = "";
     int n = s_rx_sample_len;
@@ -350,7 +351,8 @@ static void radar_log_failure(void) {
                       "and that the radar has 3V3 and GND", PRESENCE_RADAR_RX_GPIO);
     else if (is_text)
         ESP_LOGW(TAG, "Radar setup incomplete: the radar sends \"%s\" but ignores commands. "
-                      "Check board TX (GPIO%d) -> radar RX", text, PRESENCE_RADAR_TX_GPIO);
+                      "Check GPIO%d -> radar RX, or power the radar off for a few seconds",
+                 text, PRESENCE_RADAR_TX_GPIO);
     else
         ESP_LOGW(TAG, "Radar setup incomplete: no reply in %" PRIu32 " bytes received, starting %s",
                  s_rx_bytes, hex);
@@ -502,9 +504,8 @@ void presence_init(void) {
     };
     ESP_ERROR_CHECK(uart_driver_install(RADAR_UART, 1024, 0, 0, NULL, 0));
     ESP_ERROR_CHECK(uart_param_config(RADAR_UART, &uart));
-    // These are the console's UART0 pins: routing UART1 to them detaches the
-    // console, whose log continues on USB. Until now the radar has received
-    // only boot text, which cannot contain its frame header (FD FC FB FA).
+    // RX takes over the console's input pin, which nothing reads. The console
+    // keeps its TX pin, whose boot log must not reach the radar.
     ESP_ERROR_CHECK(uart_set_pin(RADAR_UART, PRESENCE_RADAR_TX_GPIO, PRESENCE_RADAR_RX_GPIO,
                                  UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
     // An unconnected sensor must read as an idle line, not noise.
@@ -515,7 +516,9 @@ void presence_init(void) {
 
 void presence_task(void* arg) {
     bool ready = false;
-    int64_t retry_at = 0;
+    // The radar powers on with the board: give it time to start before the
+    // first command. Whatever it sends meanwhile is still read.
+    int64_t retry_at = RADAR_STARTUP_MS;
     while (true) {
         if (g_ota_in_progress) {
             vTaskDelay(pdMS_TO_TICKS(1000));

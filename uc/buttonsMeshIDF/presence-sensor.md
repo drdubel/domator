@@ -13,13 +13,15 @@ buttons, and RCM edits the radar's range, delay and sensitivity.
 | 3V3 | 3.3 | 3.0–3.6 V, about 50 mA average |
 | GND | G | |
 | TX | RX (GPIO20) | radar to C3, pulled up |
-| RX | TX (GPIO21) | C3 to radar |
+| RX | 10 (GPIO10), next to RX | C3 to radar |
 | OT2 | not connected | presence is read over UART |
 
-Power the SuperMini through USB-C and read its log over USB. RX and TX are
-the pins of the console's UART0; the sensor takes them over for the radar
-when it starts, so until then the radar receives the boot messages. Text
-cannot form a radar command, so they are harmless. The SuperMini's
+Do not connect the radar's RX to the board's TX pin (GPIO21). The C3 prints
+its boot log there every time it starts, and a radar that receives the log
+can ignore commands until it is powered off. The board never drives RX, so
+the radar's TX can use it.
+
+Power the SuperMini through USB-C and read its log over USB. The SuperMini's
 active-low blue LED (GPIO8) can show presence; it is off until enabled in RCM.
 
 Mount the sensor as Waveshare recommends: on the ceiling at 2.7–3 m, or on a
@@ -106,6 +108,8 @@ while Turbacz has none stored, it asks the sensor again every 5 minutes.
 
 ## Behaviour
 
+- The node sets up the radar 3 seconds after it starts, because the radar
+  powers on with the board and needs time to start.
 - After a restart the first state is sent once it has lasted the absence
   delay, and at least 60 seconds. A person sitting still is not reported as
   absent just because the sensor restarted, and a change missed during the
@@ -117,8 +121,10 @@ while Turbacz has none stored, it asks the sensor again every 5 minutes.
   failed attempt logs what the board received instead:
   - `nothing received on GPIO20`: the radar's TX does not reach the board's
     RX, or the radar has no power. It needs 3.3 V, not 5 V.
-  - `the radar sends "ON..." but ignores commands`: the radar works, but the
-    board's TX does not reach the radar's RX.
+  - `the radar sends "ON..." but ignores commands`: the radar's RX is not on
+    pin 10, or the radar has locked up. Power it off for a few seconds; a
+    radar wired to the board's TX pin can lock up like this when the board
+    starts.
   - `no reply in N bytes received`: something else is on the line, such as a
     loose wire.
 

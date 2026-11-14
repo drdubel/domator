@@ -1,6 +1,7 @@
 """The home's location: configured, or the town of the public IP address."""
 
 import asyncio
+import time
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -164,15 +165,25 @@ async def test_startup_loads_the_town_before_mqtt_and_looks_it_up_again(applicat
     a = application
     seen = []
     a.cm.ip_location = KRAKOW
-    found = asyncio.Event()
+    store = a.cm.set_ip_location
+
+    def slow_store(found):
+        # The database runs in a thread and may lag behind the event loop.
+        time.sleep(0.1)
+        store(found)
 
     async def startup():
         seen.append(location.coordinates())
 
     async def lookup(client):
-        found.set()
         return {"latitude": 50.07, "longitude": 19.95, "place": "Kraków, PL"}
 
+    async def located():
+        # The new town is used once it is stored.
+        while location.coordinates() != (50.07, 19.95):
+            await asyncio.sleep(0.01)
+
+    a.cm.set_ip_location = slow_store
     monkeypatch.setattr(a.main.mqtt, "mqtt_startup", startup)
     monkeypatch.setattr(a.main.mqtt, "mqtt_shutdown", AsyncMock())
     monkeypatch.setattr(location, "lookup", lookup)
@@ -180,8 +191,6 @@ async def test_startup_loads_the_town_before_mqtt_and_looks_it_up_again(applicat
 
     monkeypatch.setattr(broker.ha_bridge, "_resync_task", None)
     async with a.main.lifespan(a.main.app):
-        await asyncio.wait_for(found.wait(), 1)
-        for _ in range(10):
-            await asyncio.sleep(0)
+        await asyncio.wait_for(located(), 5)
     assert seen == [(50.06, 19.94)]
     assert a.cm.ip_location == {"latitude": 50.07, "longitude": 19.95, "place": "Kraków, PL"}

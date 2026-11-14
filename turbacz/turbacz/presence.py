@@ -21,6 +21,7 @@ import zlib
 from datetime import UTC, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+from turbacz.location import coordinates, ip_place
 from turbacz.settings import config
 from turbacz.sun import sun_times
 
@@ -88,11 +89,15 @@ def home_zone():
         return UTC
 
 
+def _uses_sun(schedule) -> bool:
+    return any("sun" in schedule[key] for key in ("from", "to"))
+
+
 def applicable(schedule) -> bool:
     """Whether Turbacz can follow a schedule: sun events need the coordinates."""
     if schedule is None:
         return False
-    return config.location.has_coordinates or all("time" in schedule[key] for key in ("from", "to"))
+    return coordinates() is not None or not _uses_sun(schedule)
 
 
 def _clock(boundary) -> tuple[int, int]:
@@ -111,7 +116,7 @@ def _moment(boundary, day, zone) -> datetime:
     # In UTC: datetimes sharing a ZoneInfo compare and subtract as wall times.
     if "time" in boundary:
         return datetime.combine(day, time(*_clock(boundary)), zone).astimezone(UTC)
-    sunrise, sunset = sun_times(day, config.location.latitude, config.location.longitude)
+    sunrise, sunset = sun_times(day, *coordinates())
     return (sunrise if boundary["sun"] == "sunrise" else sunset) + timedelta(minutes=boundary["offset"])
 
 
@@ -139,8 +144,9 @@ def plan_id(schedule) -> int:
     """Identifies the plan of a schedule, 0 for none. Sensors report it back."""
     if not applicable(schedule):
         return 0
-    location = config.location
-    key = json.dumps([schedule, location.latitude, location.longitude, location.timezone], sort_keys=True)
+    # A new location changes only plans that follow the sun.
+    home = coordinates() if _uses_sun(schedule) else None
+    key = json.dumps([schedule, home, config.location.timezone], sort_keys=True)
     return zlib.crc32(key.encode()) or 1
 
 
@@ -158,12 +164,13 @@ def plan_payload(schedule, now: datetime) -> str:
 
 
 def sun_today(now: datetime) -> dict:
-    """The home's time zone and today's sunrise and sunset there, for RCM."""
+    """The home's time zone, today's sunrise and sunset there and, when found
+    from the IP address, its town, for RCM."""
     zone = home_zone()
     local = now.astimezone(zone)
-    today = {"zone": local.tzname(), "sunrise": None, "sunset": None}
-    if config.location.has_coordinates:
-        sunrise, sunset = sun_times(local.date(), config.location.latitude, config.location.longitude)
+    today = {"zone": local.tzname(), "sunrise": None, "sunset": None, "ip_place": ip_place()}
+    if (home := coordinates()) is not None:
+        sunrise, sunset = sun_times(local.date(), *home)
         today["sunrise"] = f"{sunrise.astimezone(zone):%H:%M}"
         today["sunset"] = f"{sunset.astimezone(zone):%H:%M}"
     return today

@@ -91,6 +91,9 @@ class LocationSettings(BaseModel):
     # Sunrise and sunset need both; two decimals (about 1 km) are plenty.
     latitude: Optional[float] = Field(default=None, gt=-90, lt=90)
     longitude: Optional[float] = Field(default=None, ge=-180, le=180)
+    # Without coordinates, find the town of the public IP address at
+    # ipinfo.io (or GeoJS) when Turbacz starts.
+    lookup: bool = True
     # IANA name such as "Europe/Warsaw"; unset uses the system time zone.
     timezone: Optional[str] = None
 

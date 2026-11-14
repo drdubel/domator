@@ -13,6 +13,7 @@ import httpx2
 import sentry_sdk
 import turbacz.auth as auth
 import turbacz.broker  # noqa: F401  -- registers the MQTT on_connect/on_message handlers
+import turbacz.location as location
 from aioprometheus.asgi.middleware import MetricsMiddleware
 from aioprometheus.asgi.starlette import metrics as render_metrics
 from fastapi import (
@@ -109,10 +110,17 @@ if config.monitoring.sentry_dsn is not None:
 @asynccontextmanager
 async def lifespan(app):
     async with metrics_client_lifespan():
+        locating = None
         try:
+            # Presence plans that follow the sun need the location from the start.
+            await location.load_ip_location()
+            locating = asyncio.create_task(location.keep_located())
             await mqtt.mqtt_startup()
             yield
         finally:
+            if locating is not None:
+                locating.cancel()
+                await asyncio.gather(locating, return_exceptions=True)
             await turbacz.broker.stop_background_tasks()
             await mqtt.mqtt_shutdown()
 

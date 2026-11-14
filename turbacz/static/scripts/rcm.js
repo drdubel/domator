@@ -72,8 +72,9 @@ const State = {
     presencePending: new Map(),
     // switch id -> daily pause {from, to} stored in Turbacz, or null
     presenceSchedules: {},
-    // The home's time zone and today's sunrise and sunset ('HH:MM', null without a location)
-    presenceToday: { zone: '', sunrise: null, sunset: null }
+    // The home's time zone, today's sunrise and sunset ('HH:MM', null without a
+    // location) and the town they are for when found from the IP address
+    presenceToday: { zone: '', sunrise: null, sunset: null, ipPlace: null }
 }
 
 // Browser detection for performance optimizations
@@ -2252,7 +2253,8 @@ async function loadConfiguration() {
         State.presenceToday = {
             zone: presenceSchedules?.zone || '',
             sunrise: presenceSchedules?.sunrise ?? null,
-            sunset: presenceSchedules?.sunset ?? null
+            sunset: presenceSchedules?.sunset ?? null,
+            ipPlace: presenceSchedules?.ip_place ?? null
         }
 
         const relays_config = relaysData || getDemoRelays()
@@ -3258,7 +3260,8 @@ function presenceScheduleProblem(draft) {
         if (end.kind === 'time') {
             if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(end.time)) return 'Enter the time the pause starts and ends.'
         } else if (!State.presenceToday.sunrise) {
-            return 'Sunrise and sunset need the home\'s location: set latitude and longitude under [location] in turbacz.toml.'
+            return 'Sunrise and sunset need the home\'s location. Turbacz finds it from its IP address once it reaches '
+                + 'the internet, or set latitude and longitude under [location] in turbacz.toml.'
         } else if (!Number.isInteger(end.offset) || Math.abs(end.offset) > PRESENCE_SUN_OFFSET_MAX) {
             return `Offsets from the sun are whole minutes, at most ${PRESENCE_SUN_OFFSET_MAX} before or after it.`
         }
@@ -3288,8 +3291,10 @@ function presenceSchedulePreview(draft) {
     const end = scheduleEndToday(draft.to)
     if ((draft.from.kind === 'time' && draft.to.kind === 'time') || start === null || end === null) return text
     const nominal = e => e.kind === 'time' ? clockMinutes(e.time) : (PRESENCE_NOMINAL_MINUTE[e.kind] + e.offset + 1440) % 1440
-    if (nominal(draft.from) <= nominal(draft.to) && start >= end) return `${text} No pause today.`
-    return `${text} Today ${formatClock(start)}–${formatClock(end)}.`
+    const place = State.presenceToday.ipPlace
+    const where = place ? ` Sunrise and sunset for ${place}, found from the IP address.` : ''
+    if (nominal(draft.from) <= nominal(draft.to) && start >= end) return `${text} No pause today.${where}`
+    return `${text} Today ${formatClock(start)}–${formatClock(end)}.${where}`
 }
 
 // Input values, when the dialog opens or its draft is replaced.

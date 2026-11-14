@@ -123,8 +123,13 @@ for it. The radar keeps detecting, so the card still shows occupancy, marked
   clear. After a pause the area becoming clear is reported even if presence
   began during it, so lights switched on by hand go off; presence that lasts
   past the end of a pause turns nothing on until it starts again.
-- Sunrise and sunset need the home's coordinates in `turbacz.toml`; RCM
-  offers them only then:
+- Sunrise and sunset need the home's location. When Turbacz starts it looks
+  up the town of its public IP address (ipinfo.io, or GeoJS when that
+  fails) and keeps the answer, so restarts without internet keep it; RCM
+  names the town under the pause. Answers that know only the country are
+  refused, and until a town is known RCM does not offer sun events. When
+  Turbacz runs elsewhere than the sensors or finds the wrong town, set the
+  coordinates in `turbacz.toml`; `lookup = false` turns the lookup off:
 
   ```toml
   [location]

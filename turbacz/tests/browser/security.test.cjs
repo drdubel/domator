@@ -1068,7 +1068,7 @@ test('RCM loads presence sensors with the configuration and waits for an unrepor
                 '/lights/get_presence_sensors': {9: null},
                 // PostgreSQL returns JSONB keys in its own order.
                 '/lights/get_presence_schedules': {schedules: {9: {to: {offset: -30, sun: 'sunrise'}, from: {time: '22:00'}}},
-                    zone: 'CET', sunrise: '07:12', sunset: '15:48'}
+                    zone: 'CET', sunrise: '07:12', sunset: '15:48', ip_place: 'Kraków, PL'}
             })[path];
             wsManager.isConnected = () => true;
             const sent = []; wsManager.send = data => { sent.push(JSON.parse(data)); return true };
@@ -1101,7 +1101,8 @@ test('RCM loads presence sensors with the configuration and waits for an unrepor
         assert.equal(doc.getElementById('presenceScheduleSave').disabled, true)
         assert.doesNotMatch(doc.getElementById('presenceSummary').textContent, /unsaved schedule/)
         assert.equal(doc.getElementById('presenceSchedulePreview').textContent,
-            'Paused every day from 22:00 to 30 min before sunrise. Today 22:00–06:42.')
+            'Paused every day from 22:00 to 30 min before sunrise. Today 22:00–06:42. '
+            + 'Sunrise and sunset for Kraków, PL, found from the IP address.')
         assert.equal(doc.getElementById('presenceScheduleZone').textContent, 'Times in CET')
     } finally { dom.window.close() }
 })

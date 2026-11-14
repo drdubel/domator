@@ -194,6 +194,18 @@ class ConnectionManager:
                 ADD COLUMN IF NOT EXISTS schedule JSONB;
                 """
             )
+            # The town of the public IP address, for sun times without
+            # [location] coordinates (turbacz.location); a single row.
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ip_location (
+                    id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
+                    latitude DOUBLE PRECISION NOT NULL,
+                    longitude DOUBLE PRECISION NOT NULL,
+                    place TEXT NOT NULL
+                );
+                """
+            )
             # Bookkeeping for the Home Assistant discovery bridge: which
             # retained discovery topics we have published, so entities that
             # disappear from the registry can be cleared even across restarts.
@@ -908,6 +920,26 @@ class ConnectionManager:
             cur.execute(
                 "UPDATE presence_sensors SET schedule = %s WHERE switch_id = %s;",
                 (None if schedule is None else json.dumps(schedule), switch_id),
+            )
+
+        self.conn.commit()
+
+    def get_ip_location(self) -> dict | None:
+        with self.conn.cursor() as cur:
+            row = cur.execute("SELECT latitude, longitude, place FROM ip_location;").fetchone()
+
+        return {"latitude": row[0], "longitude": row[1], "place": row[2]} if row else None
+
+    def set_ip_location(self, location: dict):
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO ip_location (id, latitude, longitude, place)
+                VALUES (TRUE, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE
+                SET latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude, place = EXCLUDED.place;
+                """,
+                (location["latitude"], location["longitude"], location["place"]),
             )
 
         self.conn.commit()

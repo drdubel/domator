@@ -82,10 +82,13 @@ directory = "firmware"
 token = ""
 
 [location]
-# Where the home is, for presence sensor schedules. With coordinates a pause
-# can start or end at sunrise or sunset; two decimals are plenty.
+# Where the home is, for presence sensor pauses at sunrise and sunset. Without
+# coordinates Turbacz looks up the town of its public IP address when it
+# starts (ipinfo.io, or GeoJS) and keeps it; set them when Turbacz runs
+# elsewhere than the sensors. Two decimals are plenty.
 # latitude = 50.06
 # longitude = 19.94
+# lookup = false
 # Schedule times are in this IANA time zone. Unset uses the server's, which is
 # UTC in a container unless TZ is set.
 # timezone = "Europe/Warsaw"

@@ -3,8 +3,8 @@
 import math
 import re
 
+from turbacz.location import coordinates
 from turbacz.presence import CONFIG_KEYS, GATES, SUN_EVENTS, SUN_OFFSET_MAX
-from turbacz.settings import config
 
 
 def integer(value, low=0, high=2**63 - 1):
@@ -81,8 +81,8 @@ def presence_schedule(value):
         elif set(end) == {"sun", "offset"}:
             if end["sun"] not in SUN_EVENTS or type(end["offset"]) is not int or abs(end["offset"]) > SUN_OFFSET_MAX:
                 raise ValueError("Invalid schedule sun event")
-            if not config.location.has_coordinates:
-                raise ValueError("Sunrise and sunset need [location] latitude and longitude")
+            if coordinates() is None:
+                raise ValueError("Sunrise and sunset need the home's location")
         else:
             raise ValueError("Invalid schedule time")
     if value["from"] == value["to"]:

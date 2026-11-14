@@ -145,9 +145,9 @@ def test_rcm_gets_todays_sun_times_in_the_homes_zone(monkeypatch, krakow):
     today = sun_today(at("2026-11-14 12:00"))
     rise, fall = sun_times(date(2026, 11, 14), KRAKOW.latitude, KRAKOW.longitude)
     assert today == {"zone": "CET", "sunrise": f"{rise.astimezone(home_zone()):%H:%M}",
-                     "sunset": f"{fall.astimezone(home_zone()):%H:%M}"}
-    monkeypatch.setattr(config, "location", LocationSettings(timezone="Europe/Warsaw"))
-    assert sun_today(at("2026-07-01 12:00")) == {"zone": "CEST", "sunrise": None, "sunset": None}
+                     "sunset": f"{fall.astimezone(home_zone()):%H:%M}", "ip_place": None}
+    monkeypatch.setattr(config, "location", LocationSettings(timezone="Europe/Warsaw", lookup=False))
+    assert sun_today(at("2026-07-01 12:00")) == {"zone": "CEST", "sunrise": None, "sunset": None, "ip_place": None}
 
 
 @pytest.mark.parametrize("schedule", [

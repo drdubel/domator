@@ -12,6 +12,7 @@ import '../../features/heating/heating_screen.dart';
 import '../../features/heating/heating_service.dart';
 import '../../features/lights/lights_screen.dart';
 import '../../features/lights/lights_service.dart';
+import '../../features/lights_widget/favourite_lights_sheet.dart';
 import 'ui_scale_sheet.dart';
 
 /// Authenticated home: bottom-navigation between Lights, Blinds and Heating.
@@ -132,6 +133,15 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ],
             ),
+            if (_index == 0)
+              // Builder: the sheet needs a context below the providers above.
+              Builder(
+                builder: (context) => IconButton(
+                  icon: const Icon(Icons.widgets_outlined),
+                  tooltip: 'Home screen widget',
+                  onPressed: () => showFavouriteLightsSheet(context),
+                ),
+              ),
             if (_index == 0)
               IconButton(
                 icon: Icon(_reorderMode ? Icons.check : Icons.edit_outlined),

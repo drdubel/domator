@@ -21,7 +21,11 @@ class AuthService extends ChangeNotifier {
   String? message;
   String? get token => _token;
   bool get isLoggedIn => _token != null;
-  String get _tokenKey => 'access_token:${AppConfig.host}';
+  String get _tokenKey => tokenKeyFor(AppConfig.host);
+
+  /// Secure-storage key of the session for [host]; also read by the home
+  /// screen widget's background isolate.
+  static String tokenKeyFor(String? host) => 'access_token:$host';
 
   static DateTime? tokenExpiry(String token) {
     try {

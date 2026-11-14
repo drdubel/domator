@@ -21,6 +21,7 @@ dependencies:
   fl_chart: ^0.69.0
   shared_preferences: ^2.5.5
   material_ui: ^1.11.0
+  home_widget: ^0.10.0
 
 dev_dependencies:
   flutter_test:

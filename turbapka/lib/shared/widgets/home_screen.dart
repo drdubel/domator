@@ -13,6 +13,7 @@ import '../../features/heating/heating_service.dart';
 import '../../features/lights/lights_screen.dart';
 import '../../features/lights/lights_service.dart';
 import '../../features/lights_widget/favourite_lights_sheet.dart';
+import '../../features/updates/update_sheet.dart';
 import 'ui_scale_sheet.dart';
 
 /// Authenticated home: bottom-navigation between Lights, Blinds and Heating.
@@ -96,6 +97,7 @@ class _HomeScreenState extends State<HomeScreen> {
         appBar: AppBar(
           title: Text(_titleFor(_index)),
           actions: [
+            const UpdateButton(),
             PopupMenuButton<String>(
               icon: const Icon(Icons.dns_outlined),
               tooltip: 'Change server',

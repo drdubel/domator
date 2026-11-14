@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../core/config.dart';
 import '../../core/network/ws_client.dart';
+import '../lights_widget/lights_widget_data.dart';
 import 'lights_models.dart';
 
 /// Talks to `/lights/ws`, mirroring `static/scripts/lights.js`'s protocol.
@@ -12,11 +15,22 @@ import 'lights_models.dart';
 /// no concept of section ordering (sections come back in DB-id order on
 /// every `configuration` broadcast), so the persisted order is re-applied
 /// on top of the server's list every time fresh data arrives.
+///
+/// Favourite lights are local too (per server), and are mirrored to the
+/// home screen widget together with their live state.
 class LightsService extends ChangeNotifier {
   static const _sectionOrderKey = 'section_order';
+  static const _widgetPublishDelay = Duration(milliseconds: 400);
 
   final WsClient _ws;
+  final String _host;
   List<int> _sectionOrder = [];
+  List<String> _favourites = [];
+  bool _favouritesLoaded = false;
+  bool _configured = false;
+  Timer? _widgetPublishTimer;
+  LightsWidgetSnapshot? _publishedSnapshot;
+  late final AppLifecycleListener _lifecycle;
 
   List<LightSection> sections = [];
   List<LightOutput> outputs = [];
@@ -31,15 +45,78 @@ class LightsService extends ChangeNotifier {
     String token, {
     void Function()? onAuthFailure,
     void Function()? onConnectionError,
-  }) : _ws = WsClient(
+  }) : _host = AppConfig.host!,
+       _ws = WsClient(
          path: '/lights/ws',
          token: token,
          onAuthFailure: onAuthFailure,
          onConnectionError: onConnectionError,
        ) {
     _loadSectionOrder();
+    _loadFavourites();
+    // Stamp the widget's "updated at" when leaving the app, since that's when
+    // the user is about to look at it.
+    _lifecycle = AppLifecycleListener(
+      onPause: () => _publishToWidget(force: true),
+    );
     _ws.messages.listen(_handleMessage);
     _ws.connect();
+  }
+
+  String get _favouritesKey => 'favourite_lights:$_host';
+
+  Future<void> _loadFavourites() async {
+    final prefs = await SharedPreferences.getInstance();
+    _favourites = prefs.getStringList(_favouritesKey) ?? [];
+    _favouritesLoaded = true;
+    notifyListeners();
+  }
+
+  bool isFavourite(LightOutput output) => _favourites.contains(
+    WidgetLight.favouriteKey(output.relayId, output.outputId),
+  );
+
+  Future<void> setFavourite(LightOutput output, bool favourite) async {
+    final key = WidgetLight.favouriteKey(output.relayId, output.outputId);
+    _favourites = [..._favourites.where((k) => k != key), if (favourite) key];
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_favouritesKey, _favourites);
+  }
+
+  /// Favourites in the same order the Lights tab shows them.
+  List<LightOutput> get favouriteOutputs => [
+    for (final section in sections)
+      ...outputsInSection(section.id).where(isFavourite),
+  ];
+
+  @override
+  void notifyListeners() {
+    super.notifyListeners();
+    // Light states arrive one message per output right after connecting;
+    // batch them into a single widget redraw.
+    _widgetPublishTimer?.cancel();
+    _widgetPublishTimer = Timer(_widgetPublishDelay, _publishToWidget);
+  }
+
+  void _publishToWidget({bool force = false}) {
+    if (!_configured || !_favouritesLoaded) return;
+    final snapshot = LightsWidgetSnapshot(
+      host: _host,
+      updatedAt: DateTime.now(),
+      lights: [
+        for (final o in favouriteOutputs)
+          WidgetLight(
+            relayId: o.relayId,
+            outputId: o.outputId,
+            name: o.name,
+            isOn: o.isOn,
+          ),
+      ],
+    );
+    if (!force && snapshot.sameContentAs(_publishedSnapshot)) return;
+    _publishedSnapshot = snapshot;
+    LightsWidgetStore.write(snapshot);
   }
 
   Future<void> _loadSectionOrder() async {
@@ -115,6 +192,7 @@ class LightsService extends ChangeNotifier {
     }
 
     outputs = newOutputs;
+    _configured = true;
     notifyListeners();
   }
 
@@ -236,6 +314,8 @@ class LightsService extends ChangeNotifier {
 
   @override
   void dispose() {
+    _widgetPublishTimer?.cancel();
+    _lifecycle.dispose();
     _ws.dispose();
     super.dispose();
   }

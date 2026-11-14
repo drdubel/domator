@@ -75,3 +75,11 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // RemoteCollectionItems for the favourite lights widget's grid, with a
+    // fallback service on Android < 12.
+    implementation("androidx.core:core-remoteviews:1.1.0")
+    // Same version home_widget uses; FavouriteLightsWorker keeps network up for taps.
+    implementation("androidx.work:work-runtime-ktx:2.11.2")
+}

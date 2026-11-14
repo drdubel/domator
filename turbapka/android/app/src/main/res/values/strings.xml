@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="favourite_lights_widget_label">Favourite lights</string>
+    <string name="favourite_lights_widget_description">Switch your favourite Turbacz lights from the home screen</string>
+    <string name="favourite_lights_widget_title">Lights</string>
+    <string name="favourite_lights_widget_refresh">Refresh</string>
+    <string name="favourite_lights_widget_updated">Updated %1$s</string>
+    <string name="favourite_lights_widget_setup">Open Turbapka and pick favourite lights</string>
+    <string name="favourite_lights_widget_empty">No favourite lights yet. Pick some in Turbapka.</string>
+    <string name="favourite_lights_widget_open_app">Open Turbapka once, then try again</string>
+</resources>

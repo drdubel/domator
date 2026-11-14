@@ -13,6 +13,8 @@ jobs:
   build:
     permissions:
       contents: write
+    # The signing secrets live in this environment, not at repository level.
+    environment: turbacz
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -68,9 +70,12 @@ jobs:
           if not tools:
               raise SystemExit('apksigner unavailable')
           result = subprocess.run([str(sorted(tools)[-1]), 'verify', '--print-certs', 'build/app/outputs/flutter-apk/app-release.apk'], check=True, capture_output=True, text=True)
-          digests = re.findall(r'Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]+)', result.stdout)
-          if [d.lower() for d in digests] != [expected]:
-              raise SystemExit('APK signing identity does not match expected certificate')
+          # Older apksigner prints "Signer #1 certificate ...", build-tools 37 prints
+          # "V2 Signer: certificate ..." once per signature scheme.
+          digests = {d.lower() for d in re.findall(r'Signer(?: #\d+|:) certificate SHA-256 digest: ([0-9a-fA-F]+)', result.stdout)}
+          if digests != {expected}:
+              # Certificate fingerprints are public, so naming the actual one is safe.
+              raise SystemExit(f'APK signing identity does not match expected certificate; APK is signed by {sorted(digests) or "nothing recognisable"}')
           PYTHON
 
       - name: Remove temporary keystore

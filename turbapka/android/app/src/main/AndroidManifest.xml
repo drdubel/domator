@@ -38,6 +38,22 @@
             </intent-filter>
         </activity>
 
+        <receiver
+            android:name=".FavouriteLightsWidget"
+            android:exported="true"
+            android:label="@string/favourite_lights_widget_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/favourite_lights_widget_info" />
+        </receiver>
+        <!-- Widget taps. Not exported, so other apps can't switch lights. -->
+        <receiver
+            android:name=".FavouriteLightsActionReceiver"
+            android:exported="false" />
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

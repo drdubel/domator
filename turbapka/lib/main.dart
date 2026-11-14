@@ -6,11 +6,13 @@ import 'core/auth/auth_service.dart';
 import 'core/config.dart';
 import 'core/theme.dart';
 import 'core/ui_scale/ui_scale_service.dart';
+import 'features/lights_widget/lights_widget_background.dart';
 import 'shared/widgets/home_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await AppConfig.load();
+  registerLightsWidgetCallback();
   runApp(const TurbaczApp());
 }
 

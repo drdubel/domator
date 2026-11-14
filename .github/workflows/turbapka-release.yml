@@ -13,6 +13,8 @@ jobs:
   build:
     permissions:
       contents: write
+    # The signing secrets live in this environment, not at repository level.
+    environment: turbacz
     runs-on: ubuntu-latest
     defaults:
       run:

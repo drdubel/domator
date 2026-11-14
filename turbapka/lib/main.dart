@@ -7,6 +7,7 @@ import 'core/config.dart';
 import 'core/theme.dart';
 import 'core/ui_scale/ui_scale_service.dart';
 import 'features/lights_widget/lights_widget_background.dart';
+import 'features/updates/update_service.dart';
 import 'shared/widgets/home_screen.dart';
 
 void main() async {
@@ -26,18 +27,21 @@ class TurbaczApp extends StatefulWidget {
 class _TurbaczAppState extends State<TurbaczApp> {
   final _authService = AuthService();
   final _uiScaleService = UiScaleService();
+  final _updateService = UpdateService();
 
   @override
   void initState() {
     super.initState();
     _authService.loadStoredToken();
     _uiScaleService.load();
+    _updateService.check();
   }
 
   @override
   void dispose() {
     _authService.dispose();
     _uiScaleService.dispose();
+    _updateService.dispose();
     super.dispose();
   }
 
@@ -47,6 +51,7 @@ class _TurbaczAppState extends State<TurbaczApp> {
       providers: [
         ChangeNotifierProvider.value(value: _authService),
         ChangeNotifierProvider.value(value: _uiScaleService),
+        ChangeNotifierProvider.value(value: _updateService),
       ],
       child: MaterialApp(
         title: 'Turbacz',

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from datetime import UTC, datetime
 from time import time
 
 import namer
@@ -12,7 +13,7 @@ from turbacz.ha.bridge import ha_bridge
 from turbacz.mesh_metrics import record_node_metrics
 from turbacz.mqtt_client import mqtt
 from turbacz.mqtt_validation import normalize_payload, validate_payload
-from turbacz.presence import command_payload, report_config
+from turbacz.presence import PLAN_REFRESH, command_payload, plan_id, plan_payload, report_config
 from turbacz.security import RateLimiter
 from turbacz.settings import config
 from turbacz.state_manager import state_manager
@@ -25,6 +26,7 @@ _device_task: asyncio.Task | None = None
 _ha_task: asyncio.Task | None = None
 _message_limiter = RateLimiter()
 _config_requests = RateLimiter()  # settings reads asked of presence sensors
+_plan_sends = RateLimiter()  # schedule plans sent to presence sensors
 
 
 async def stop_background_tasks():
@@ -250,6 +252,22 @@ async def ensure_presence_sensor(device_id: int, switches: dict) -> tuple[str, d
     return name, sensors.get(device_id)
 
 
+async def sync_presence_plan(data):
+    """Send a sensor the plan of its schedule when it follows another or runs low.
+
+    The plan is lost when the sensor restarts and lasts PLAN_DAYS, so this
+    also restores it after a restart and renews it about once a day.
+    """
+    if "plan" not in data:
+        return  # firmware without schedules
+    device_id = data["deviceId"]
+    schedule = (await db_call(connection_manager.get_presence_schedules)).get(device_id)
+    expected = plan_id(schedule)
+    stale = data["plan"] != expected or (expected and data["planLeft"] < PLAN_REFRESH)
+    if stale and _plan_sends.allow(device_id, 1, 60):
+        mqtt.client.publish(f"/switch/cmd/{device_id}", plan_payload(schedule, datetime.now(UTC)))
+
+
 async def handle_presence_report(data):
     """Live radar data, or the configuration a sensor read back from its radar."""
     device_id = data["deviceId"]
@@ -344,16 +362,15 @@ async def handle_root_state(payload_str):
 
     elif data["type"] == "presence":
         data["name"], sensor_config = await ensure_presence_sensor(data["deviceId"], switches)
-        state_manager.update_presence(
-            data["deviceId"],
-            presence=data.get("presence", 0),
-            distance=data.get("distance", 0),
-            radar=data.get("radar", 0),
-        )
+        presence = {key: data.get(key, 0) for key in ("presence", "distance", "radar")}
+        if "active" in data:  # whether presence switches outputs, or the schedule pauses it
+            presence["active"] = data["active"]
+        state_manager.update_presence(data["deviceId"], **presence)
         # A sensor reports its settings once its radar is set up; that report is
         # lost when the root or Turbacz is not connected yet, so ask again.
         if sensor_config is None and data.get("radar") and _config_requests.allow(data["deviceId"], 1, 300):
             mqtt.client.publish(f"/switch/cmd/{data['deviceId']}", command_payload({"action": "read"}))
+        await sync_presence_plan(data)
 
     elif data["type"] == "relay8" or data["type"] == "relay16":
         if data["deviceId"] in relays:

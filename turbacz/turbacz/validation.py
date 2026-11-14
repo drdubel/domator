@@ -3,7 +3,8 @@
 import math
 import re
 
-from turbacz.presence import CONFIG_KEYS, GATES
+from turbacz.location import coordinates
+from turbacz.presence import CONFIG_KEYS, GATES, SUN_EVENTS, SUN_OFFSET_MAX
 
 
 def integer(value, low=0, high=2**63 - 1):
@@ -61,6 +62,31 @@ def presence_config(value):
             integer(threshold, 0, 2**32 - 1)
     if not isinstance(value["led"], bool):
         raise ValueError("Invalid presence LED setting")  # noqa: TRY004
+    return value
+
+
+def presence_schedule(value):
+    """A sensor's daily pause, or None. Each end is {"time": "HH:MM"} or
+    {"sun": "sunrise" | "sunset", "offset": minutes after it}."""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != {"from", "to"}:
+        raise ValueError("Invalid presence schedule")
+    for end in value.values():
+        if not isinstance(end, dict):
+            raise ValueError("Invalid schedule time")  # noqa: TRY004
+        if set(end) == {"time"}:
+            if not isinstance(end["time"], str) or not re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", end["time"]):
+                raise ValueError("Invalid schedule time")
+        elif set(end) == {"sun", "offset"}:
+            if end["sun"] not in SUN_EVENTS or type(end["offset"]) is not int or abs(end["offset"]) > SUN_OFFSET_MAX:
+                raise ValueError("Invalid schedule sun event")
+            if coordinates() is None:
+                raise ValueError("Sunrise and sunset need the home's location")
+        else:
+            raise ValueError("Invalid schedule time")
+    if value["from"] == value["to"]:
+        raise ValueError("A pause must end at another time than it starts")
     return value
 
 
@@ -167,6 +193,13 @@ def validate_command(path, cmd, cm):
                 integer(cmd.get("seconds"), 0, 120)
             elif action not in {"read", "factory"}:
                 raise ValueError("Invalid presence action")
+            return
+        if kind == "presence_schedule":
+            if device_id(cmd.get("switch_id")) not in cm.get_presence_sensors():
+                raise ValueError("Unknown presence sensor")
+            if "schedule" not in cmd:
+                raise ValueError("Missing presence schedule")
+            presence_schedule(cmd["schedule"])
             return
         if kind in {
             "update",

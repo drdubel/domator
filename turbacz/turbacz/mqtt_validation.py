@@ -4,6 +4,7 @@ import json
 import math
 import re
 
+from turbacz.presence import PLAN_MAX
 from turbacz.settings import config
 
 
@@ -126,11 +127,15 @@ def validate_payload(topic, payload):
             raise ValueError("Invalid gateway address")
         if "radioChannel" in data:
             integer(data["radioChannel"], 0, 14)
-        for key in ("presence", "radar"):
+        for key in ("presence", "radar", "active"):
             if key in data:
                 integer(data[key], 0, 1)
         if "distance" in data:
             integer(data["distance"], 0, 65535)
+        # The schedule plan a presence sensor follows and how long it lasts.
+        if "plan" in data:
+            integer(data["plan"], 0, 2**32 - 1)
+            integer(data["planLeft"], 0, PLAN_MAX)
     elif topic.startswith(("/relay/state/", "/switch/state/")):
         suffix = topic.rsplit("/", 1)[-1]
         if not re.fullmatch(r"[0-9]{1,19}", suffix):

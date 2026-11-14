@@ -5,6 +5,7 @@ import os
 import secrets
 import tempfile
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Optional
 
@@ -12,6 +13,7 @@ import httpx2
 import sentry_sdk
 import turbacz.auth as auth
 import turbacz.broker  # noqa: F401  -- registers the MQTT on_connect/on_message handlers
+import turbacz.location as location
 from aioprometheus.asgi.middleware import MetricsMiddleware
 from aioprometheus.asgi.starlette import metrics as render_metrics
 from fastapi import (
@@ -45,7 +47,7 @@ from turbacz.mesh_metrics import collect_mesh_metrics
 from turbacz.metrics import collect_host_metrics
 from turbacz.metrics_client import get_metrics_client, metrics_client_lifespan
 from turbacz.mqtt_client import mqtt, publish_blind_action
-from turbacz.presence import command_payload
+from turbacz.presence import command_payload, plan_payload
 from turbacz.security import SecurityMiddleware
 from turbacz.settings import config
 from turbacz.state_manager import state_manager
@@ -108,10 +110,17 @@ if config.monitoring.sentry_dsn is not None:
 @asynccontextmanager
 async def lifespan(app):
     async with metrics_client_lifespan():
+        locating = None
         try:
+            # Presence plans that follow the sun need the location from the start.
+            await location.load_ip_location()
+            locating = asyncio.create_task(location.keep_located())
             await mqtt.mqtt_startup()
             yield
         finally:
+            if locating is not None:
+                locating.cancel()
+                await asyncio.gather(locating, return_exceptions=True)
             await turbacz.broker.stop_background_tasks()
             await mqtt.mqtt_shutdown()
 
@@ -640,6 +649,17 @@ async def websocket_rcm(websocket: WebSocket):
                     continue
                 # The sensor answers with a configuration or live report.
                 mqtt.client.publish(f"/switch/cmd/{device_id}", command_payload(cmd))
+                continue
+
+            if cmd.get("type") == "presence_schedule":
+                device_id = int(cmd["switch_id"])
+                await db_call(connection_manager.set_presence_schedule, device_id, cmd["schedule"])
+                # An offline sensor gets the plan after its next status report.
+                if state_manager.is_switch_online(device_id):
+                    mqtt.client.publish(f"/switch/cmd/{device_id}", plan_payload(cmd["schedule"], datetime.now(UTC)))
+                await ws_manager.broadcast(
+                    {"type": "presence_schedule", "switch_id": device_id, "schedule": cmd["schedule"]}, "/rcm/ws/"
+                )
                 continue
 
             if cmd.get("type") == "gateway_mode":

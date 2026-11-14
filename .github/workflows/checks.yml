@@ -40,7 +40,7 @@ jobs:
           persist-credentials: false
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
-          flutter-version: '3.44.4'
+          flutter-version: '3.50.0'
       - run: flutter pub get --enforce-lockfile
       - run: flutter analyze
       - run: flutter test
@@ -59,6 +59,8 @@ jobs:
           /tmp/remote-button-test
           clang -fsanitize=address,undefined -I uc/buttonsMeshIDF/src uc/buttonsMeshIDF/tests/radar_protocol_test.c -o /tmp/radar-test
           /tmp/radar-test
+          clang -fsanitize=address,undefined -I uc/buttonsMeshIDF/src uc/buttonsMeshIDF/tests/presence_schedule_test.c -o /tmp/presence-schedule-test
+          /tmp/presence-schedule-test
           clang++ -std=c++11 -fsanitize=address,undefined -I uc/blinds_wifi/src uc/blinds_wifi/tests/command_parser_test.cpp -o /tmp/blind-test
           /tmp/blind-test
           clang++ -std=c++11 -fsanitize=address,undefined -I uc/heating/src uc/heating/tests/command_parser_test.cpp -o /tmp/heating-test

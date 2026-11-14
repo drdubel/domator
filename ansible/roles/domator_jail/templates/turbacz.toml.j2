@@ -64,3 +64,10 @@ token = {{ dj_secret.firmware_token | to_json }}
 
 [ha]
 enabled = {{ dj_ha | lower }}
+{% if dj_location | length > 0 %}
+
+# Schedule times use the jail's time zone (domator_timezone).
+[location]
+latitude = {{ dj_location.latitude | float }}
+longitude = {{ dj_location.longitude | float }}
+{% endif %}

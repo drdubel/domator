@@ -60,6 +60,9 @@ class RenderedTest(unittest.TestCase):
             # Quotes and backslashes in secrets survive the JSON-in-TOML quoting.
             self.assertEqual(cfg["session_secret"], 'sess"ion\\\\x')
             self.assertIs(cfg["ha"]["enabled"], False)
+            # Coordinates only where the instance sets them; times use the jail's zone.
+            location = inst.get("location")
+            self.assertEqual(cfg.get("location"), {k: float(v) for k, v in location.items()} if location else None)
 
     def test_deployer_config_matches_what_the_deployer_reads(self):
         used = set(re.findall(r"""(?:cfg|config)\[["'](\w+)["']\]""", DEPLOY))

@@ -308,6 +308,56 @@
                 </label>
             </section>
 
+            <section class="presence-section presence-schedule" id="presenceSchedule">
+                <div class="presence-section-header">
+                    <div class="presence-section-title">Schedule</div>
+                    <span class="presence-schedule-zone" id="presenceScheduleZone"></span>
+                </div>
+                <label class="setting-row" for="presencePause">
+                    <div class="setting-copy">
+                        <span class="setting-title">Pause every day</span>
+                        <span class="setting-description">Presence that starts during the pause switches no outputs.
+                            Outputs it turned on before still turn off once the area is clear.</span>
+                    </div>
+                    <input type="checkbox" id="presencePause" data-schedule-field>
+                </label>
+                <div class="presence-schedule-ends" id="presenceScheduleEnds">
+                    <div class="presence-schedule-end" data-end="from">
+                        <span>From</span>
+                        <select class="setting-select" data-end-kind data-schedule-field aria-label="Pause starts">
+                            <option value="time">At a time</option>
+                            <option value="sunrise">Sunrise</option>
+                            <option value="sunset">Sunset</option>
+                        </select>
+                        <input type="time" data-end-time data-schedule-field aria-label="Pause start time">
+                        <label class="presence-schedule-offset">
+                            <input type="number" min="-240" max="240" step="5" data-end-offset data-schedule-field
+                                aria-label="Minutes after the sun event the pause starts; negative is before">
+                            <span>min</span>
+                        </label>
+                    </div>
+                    <div class="presence-schedule-end" data-end="to">
+                        <span>To</span>
+                        <select class="setting-select" data-end-kind data-schedule-field aria-label="Pause ends">
+                            <option value="time">At a time</option>
+                            <option value="sunrise">Sunrise</option>
+                            <option value="sunset">Sunset</option>
+                        </select>
+                        <input type="time" data-end-time data-schedule-field aria-label="Pause end time">
+                        <label class="presence-schedule-offset">
+                            <input type="number" min="-240" max="240" step="5" data-end-offset data-schedule-field
+                                aria-label="Minutes after the sun event the pause ends; negative is before">
+                            <span>min</span>
+                        </label>
+                    </div>
+                </div>
+                <p class="presence-hint" id="presenceSchedulePreview" aria-live="polite"></p>
+                <div class="presence-schedule-actions">
+                    <button class="modal-btn" type="button" id="presenceScheduleSave" data-schedule-field>Save
+                        schedule</button>
+                </div>
+            </section>
+
             <section class="presence-section">
                 <div class="presence-section-header">
                     <div class="presence-section-title">Sensitivity per gate (dB)</div>

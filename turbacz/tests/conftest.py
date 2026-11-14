@@ -49,6 +49,8 @@ class FakeConnectionManager:
         self.switches = {222: ("Pulsar", 3)}
         self.buttons = {222: {"a": 0, "b": 1}}
         self.presence_sensors: dict[int, dict | None] = {}
+        self.presence_schedules: dict[int, dict | None] = {}
+        self.ip_location: dict | None = None
         self.applied: dict[str, str] = {}
 
     # -- registry reads --
@@ -105,6 +107,18 @@ class FakeConnectionManager:
     def get_presence_sensors(self):
         return dict(self.presence_sensors)
 
+    def get_presence_schedules(self):
+        return {sensor: self.presence_schedules.get(sensor) for sensor in self.presence_sensors}
+
+    def set_presence_schedule(self, switch_id, schedule):
+        self.presence_schedules[switch_id] = schedule
+
+    def get_ip_location(self):
+        return self.ip_location
+
+    def set_ip_location(self, location):
+        self.ip_location = dict(location)
+
     # -- discovery bookkeeping --
     def get_applied_topics(self):
         return dict(self.applied)
@@ -123,6 +137,15 @@ def ha_enabled():
     config.ha.enabled = True
     yield
     config.ha.enabled = previous
+
+
+@pytest.fixture(autouse=True)
+def no_ip_location(monkeypatch):
+    """Tests never locate the home on the internet, and start without a found town."""
+    from turbacz import location
+
+    monkeypatch.setattr(location, "_ip_location", None)
+    monkeypatch.setattr(config, "location", config.location.model_copy(update={"lookup": False}))
 
 
 @pytest.fixture

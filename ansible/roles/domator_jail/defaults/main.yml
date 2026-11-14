@@ -9,6 +9,8 @@
 #   db       database name (default: name)
 #   labels   [monitoring] labels and scrape labels, e.g. {apartment: "59"}
 #   ha       [ha] enabled
+#   location [location] {latitude, longitude}, for presence sensor pauses at
+#            sunrise and sunset; schedule times use the jail's domator_timezone
 domator_instances: []
 
 domator_repo: https://github.com/drdubel/domator.git

@@ -65,10 +65,15 @@ const State = {
     presenceSensors: {},
     // switch id -> {presence, distance (cm), radar}
     presenceStates: {},
-    // Open sensor dialog: {id, draft, dirty, energy, calibrating, live, liveTimer} or null
+    // Open sensor dialog: {id, draft, dirty, energy, calibrating, live, liveTimer,
+    // schedule, scheduleDirty, schedulePending} or null
     presenceModal: null,
     // Sensor commands awaiting a configuration report: switch id (string) -> {action, timer}
-    presencePending: new Map()
+    presencePending: new Map(),
+    // switch id -> daily pause {from, to} stored in Turbacz, or null
+    presenceSchedules: {},
+    // The home's time zone and today's sunrise and sunset ('HH:MM', null without a location)
+    presenceToday: { zone: '', sunrise: null, sunset: null }
 }
 
 // Browser detection for performance optimizations
@@ -360,6 +365,10 @@ const wsManager = new WebSocketManager('/rcm/ws/', function (event) {
     }
     if (msg.type === "presence_live") {
         onPresenceLive(msg)
+        return
+    }
+    if (msg.type === "presence_schedule") {
+        onPresenceSchedule(msg.switch_id, msg.schedule)
         return
     }
     if (msg.type === "presence_state") {
@@ -2225,7 +2234,7 @@ async function loadConfiguration() {
     updateArrangementButton()
 
     try {
-        const [relaysData, outputsData, switchesData, connectionsData, buttonTypesData, blindPairsData, zigbeeDevices, presenceSensors] = await Promise.all([
+        const [relaysData, outputsData, switchesData, connectionsData, buttonTypesData, blindPairsData, zigbeeDevices, presenceSensors, presenceSchedules] = await Promise.all([
             fetchAPI('/lights/get_relays'),
             fetchAPI('/lights/get_outputs'),
             fetchAPI('/lights/get_switches'),
@@ -2233,11 +2242,18 @@ async function loadConfiguration() {
             fetchAPI('/lights/get_all_buttons'),
             fetchAPI('/lights/get_blind_pairs'),
             fetchAPI('/lights/get_zigbee_devices'),
-            fetchAPI('/lights/get_presence_sensors')
+            fetchAPI('/lights/get_presence_sensors'),
+            fetchAPI('/lights/get_presence_schedules')
         ])
         if (version !== State.configurationVersion) return
         State.zigbeeDevices = zigbeeDevices || {}
         State.presenceSensors = presenceSensors || {}
+        State.presenceSchedules = presenceSchedules?.schedules || {}
+        State.presenceToday = {
+            zone: presenceSchedules?.zone || '',
+            sunrise: presenceSchedules?.sunrise ?? null,
+            sunset: presenceSchedules?.sunset ?? null
+        }
 
         const relays_config = relaysData || getDemoRelays()
         const outputs_config = outputsData || getDemoOutputs()
@@ -2773,14 +2789,17 @@ function formatSeconds(seconds) {
     return minutes % 60 ? `${Math.floor(minutes / 60)} h ${minutes % 60} min` : `${minutes / 60} h`
 }
 
+// [state, text, paused]: paused while the schedule stops presence switching outputs.
 function presenceStatus(switchId) {
     const state = State.presenceStates[switchId]
-    if (!online_switches.has(Number(switchId))) return ['offline', 'Offline']
-    if (!state) return ['unknown', 'Waiting for the sensor…']
-    if (state.radar === 0) return ['fault', '⚠ Radar not responding']
+    if (!online_switches.has(Number(switchId))) return ['offline', 'Offline', false]
+    if (!state) return ['unknown', 'Waiting for the sensor…', false]
+    if (state.radar === 0) return ['fault', '⚠ Radar not responding', false]
+    const paused = state.active === 0
+    const suffix = paused ? ' · ⏸ paused' : ''
     return state.presence
-        ? ['occupied', `● Occupied · ${((state.distance || 0) / 100).toFixed(2)} m`]
-        : ['clear', '○ Clear']
+        ? ['occupied', `● Occupied · ${((state.distance || 0) / 100).toFixed(2)} m${suffix}`, paused]
+        : ['clear', `○ Clear${suffix}`, paused]
 }
 
 function applyPresenceControls(switchId) {
@@ -2818,14 +2837,16 @@ function applyPresenceControls(switchId) {
 }
 
 function updatePresenceStatus(switchId) {
-    const [state, text] = presenceStatus(switchId)
+    const [state, text, paused] = presenceStatus(switchId)
     document.querySelectorAll(`[data-presence-status="${switchId}"]`).forEach(element => {
         element.textContent = text
         element.dataset.state = state
+        element.dataset.paused = String(paused)
     })
     if (State.presenceModal?.id === Number(switchId)) {
         renderPresenceSummary()
         renderPresenceActions()
+        renderPresenceSchedule()
     }
 }
 
@@ -2904,19 +2925,25 @@ function showPresenceModal(switchId) {
     const config = State.presenceSensors[switchId]
     State.presenceModal = {
         id: Number(switchId), draft: config ? presenceDraft(config) : null,
-        dirty: false, energy: null, calibrating: 0, live: false, liveTimer: null
+        dirty: false, energy: null, calibrating: 0, live: false, liveTimer: null,
+        schedule: presenceScheduleDraft(State.presenceSchedules[switchId] ?? null), scheduleDirty: false,
+        schedulePending: null
     }
     document.getElementById('presenceModalTitle').textContent = `${switchDisplayName(switchId)} · presence sensor`
     document.getElementById('presenceLive').checked = false
     renderPresenceForm()
+    renderPresenceScheduleFields()
     document.getElementById('presenceModal').classList.add('active')
-    bindModalShortcuts('presenceModal', () => applyPresenceConfig())
+    // Enter saves the section being edited.
+    bindModalShortcuts('presenceModal', () => document.activeElement?.closest('#presenceSchedule')
+        ? savePresenceSchedule() : applyPresenceConfig())
 }
 
 function closePresenceModal() {
     const modal = State.presenceModal
     if (!modal) return
     clearInterval(modal.liveTimer)
+    clearTimeout(modal.schedulePending)
     // The sensor stops on its own within a minute if the server is unreachable.
     if (modal.live && wsManager.isConnected()) sendPresenceCommand(modal.id, 'live', { seconds: 0 }, 0)
     State.presenceModal = null
@@ -3032,6 +3059,7 @@ function renderPresenceSummary() {
     if (fw) parts.push(`radar ${fw}`)
     if (!modal.draft) parts.push('waiting for the sensor to report its settings')
     else if (modal.dirty) parts.push('unsaved changes')
+    if (modal.scheduleDirty) parts.push('unsaved schedule')
     const summary = document.getElementById('presenceSummary')
     summary.textContent = parts.join(' · ')
     summary.dataset.state = state
@@ -3176,6 +3204,212 @@ function initPresenceModal() {
 }
 
 initPresenceModal()
+
+// ========== PRESENCE SCHEDULES ==========
+// A daily pause stored in Turbacz: {from, to}, each {time: 'HH:MM'} or
+// {sun: 'sunrise' | 'sunset', offset: minutes after it}. Turbacz sends the
+// sensor the pauses of the next days, which it then follows on its own.
+
+const PRESENCE_SUN_OFFSET_MAX = 240
+const PRESENCE_SCHEDULE_DEFAULT = { from: { time: '23:00' }, to: { time: '06:00' } }
+// As in Turbacz: a pause passes midnight when it starts later in the day than
+// it ends, with sunrise counted at 06:00 and sunset at 18:00.
+const PRESENCE_NOMINAL_MINUTE = { sunrise: 6 * 60, sunset: 18 * 60 }
+
+function clockMinutes(text) {
+    const [hours, minutes] = text.split(':').map(Number)
+    return hours * 60 + minutes
+}
+
+function formatClock(minutes) {
+    const wrapped = ((minutes % 1440) + 1440) % 1440
+    return `${String(Math.floor(wrapped / 60)).padStart(2, '0')}:${String(wrapped % 60).padStart(2, '0')}`
+}
+
+// Draft ends keep a time and an offset, so switching kinds keeps both.
+function presenceScheduleDraft(schedule) {
+    const end = (saved, fallback) => saved && 'sun' in saved
+        ? { kind: saved.sun, time: fallback.time, offset: saved.offset }
+        : { kind: 'time', time: saved?.time || fallback.time, offset: 0 }
+    return {
+        enabled: Boolean(schedule),
+        from: end(schedule?.from, PRESENCE_SCHEDULE_DEFAULT.from),
+        to: end(schedule?.to, PRESENCE_SCHEDULE_DEFAULT.to)
+    }
+}
+
+function presenceScheduleValue(draft) {
+    if (!draft.enabled) return null
+    const end = ({ kind, time, offset }) => kind === 'time' ? { time } : { sun: kind, offset }
+    return { from: end(draft.from), to: end(draft.to) }
+}
+
+// Stored schedules come back with their keys reordered.
+function sameSchedule(a, b) {
+    const key = schedule => JSON.stringify(presenceScheduleValue(presenceScheduleDraft(schedule)))
+    return key(a) === key(b)
+}
+
+// Why a draft cannot be saved, or null. Turbacz closes the connection on an
+// invalid schedule, so this checks the same.
+function presenceScheduleProblem(draft) {
+    if (!draft.enabled) return null
+    for (const end of [draft.from, draft.to]) {
+        if (end.kind === 'time') {
+            if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(end.time)) return 'Enter the time the pause starts and ends.'
+        } else if (!State.presenceToday.sunrise) {
+            return 'Sunrise and sunset need the home\'s location: set latitude and longitude under [location] in turbacz.toml.'
+        } else if (!Number.isInteger(end.offset) || Math.abs(end.offset) > PRESENCE_SUN_OFFSET_MAX) {
+            return `Offsets from the sun are whole minutes, at most ${PRESENCE_SUN_OFFSET_MAX} before or after it.`
+        }
+    }
+    const { from, to } = presenceScheduleValue(draft)
+    if (JSON.stringify(from) === JSON.stringify(to)) return 'The pause must end at another time than it starts.'
+    return null
+}
+
+function describeScheduleEnd(end) {
+    if (end.kind === 'time') return end.time
+    if (!end.offset) return end.kind
+    return `${Math.abs(end.offset)} min ${end.offset > 0 ? 'after' : 'before'} ${end.kind}`
+}
+
+// Today's minute of the day of an end, or null without today's sun times.
+function scheduleEndToday(end) {
+    if (end.kind === 'time') return clockMinutes(end.time)
+    const event = State.presenceToday[end.kind]
+    return event ? clockMinutes(event) + end.offset : null
+}
+
+function presenceSchedulePreview(draft) {
+    if (!draft.enabled) return 'The sensor works at all hours.'
+    const text = `Paused every day from ${describeScheduleEnd(draft.from)} to ${describeScheduleEnd(draft.to)}.`
+    const start = scheduleEndToday(draft.from)
+    const end = scheduleEndToday(draft.to)
+    if ((draft.from.kind === 'time' && draft.to.kind === 'time') || start === null || end === null) return text
+    const nominal = e => e.kind === 'time' ? clockMinutes(e.time) : (PRESENCE_NOMINAL_MINUTE[e.kind] + e.offset + 1440) % 1440
+    if (nominal(draft.from) <= nominal(draft.to) && start >= end) return `${text} No pause today.`
+    return `${text} Today ${formatClock(start)}–${formatClock(end)}.`
+}
+
+// Input values, when the dialog opens or its draft is replaced.
+function renderPresenceScheduleFields() {
+    const draft = State.presenceModal?.schedule
+    if (!draft) return
+    document.getElementById('presencePause').checked = draft.enabled
+    for (const key of ['from', 'to']) {
+        const row = document.querySelector(`#presenceSchedule [data-end="${key}"]`)
+        row.querySelector('[data-end-kind]').value = draft[key].kind
+        row.querySelector('[data-end-time]').value = draft[key].time
+        row.querySelector('[data-end-offset]').value = draft[key].offset
+    }
+    renderPresenceSchedule()
+}
+
+function renderPresenceSchedule() {
+    const modal = State.presenceModal
+    if (!modal) return
+    const draft = modal.schedule
+    const located = Boolean(State.presenceToday.sunrise)
+    const locked = Boolean(modal.schedulePending)
+    document.querySelectorAll('#presenceSchedule [data-schedule-field]').forEach(field => { field.disabled = locked })
+    document.getElementById('presenceScheduleEnds').hidden = !draft.enabled
+    for (const key of ['from', 'to']) {
+        const row = document.querySelector(`#presenceSchedule [data-end="${key}"]`)
+        const time = draft[key].kind === 'time'
+        row.querySelector('[data-end-time]').hidden = !time
+        row.querySelector('.presence-schedule-offset').hidden = time
+        // Without a location sun events cannot be chosen, only kept if saved.
+        row.querySelectorAll('option[value="sunrise"], option[value="sunset"]').forEach(option => {
+            option.disabled = !located && draft[key].kind !== option.value
+        })
+    }
+    const problem = presenceScheduleProblem(draft)
+    const state = State.presenceStates[modal.id]
+    const unsupported = draft.enabled && state && 'radar' in state && !('active' in state)
+    const preview = document.getElementById('presenceSchedulePreview')
+    preview.textContent = problem || presenceSchedulePreview(draft)
+        + (unsupported ? ' The sensor\'s firmware has no schedules: update it to apply the pause.' : '')
+    preview.classList.toggle('warning', Boolean(problem) || unsupported)
+    document.getElementById('presenceScheduleZone').textContent =
+        State.presenceToday.zone ? `Times in ${State.presenceToday.zone}` : ''
+    const save = document.getElementById('presenceScheduleSave')
+    save.disabled = locked || !modal.scheduleDirty || Boolean(problem)
+    save.textContent = locked ? 'Saving…' : 'Save schedule'
+}
+
+function editPresenceSchedule(change) {
+    const modal = State.presenceModal
+    if (!modal) return
+    change(modal.schedule)
+    modal.scheduleDirty = !sameSchedule(presenceScheduleValue(modal.schedule), State.presenceSchedules[modal.id] ?? null)
+    renderPresenceSchedule()
+    renderPresenceSummary()
+}
+
+function savePresenceSchedule() {
+    const modal = State.presenceModal
+    if (!modal || modal.schedulePending || !modal.scheduleDirty) return
+    const problem = presenceScheduleProblem(modal.schedule)
+    if (problem) {
+        showToast(problem, true)
+        return
+    }
+    const schedule = presenceScheduleValue(modal.schedule)
+    if (!wsManager.isConnected() || !wsManager.send(JSON.stringify({ type: 'presence_schedule', switch_id: modal.id, schedule }))) {
+        showToast('Not connected to the server', true)
+        return
+    }
+    // Turbacz confirms by sending the stored schedule to every RCM.
+    modal.schedulePending = setTimeout(() => {
+        modal.schedulePending = null
+        renderPresenceSchedule()
+        showToast(`The schedule of ${switchDisplayName(modal.id)} was not saved. Check the connection to the server.`, true)
+    }, PRESENCE_CONFIRM_TIMEOUT_MS)
+    renderPresenceSchedule()
+}
+
+function onPresenceSchedule(switchId, schedule) {
+    State.presenceSchedules[switchId] = schedule
+    const modal = State.presenceModal
+    if (modal?.id !== Number(switchId)) return
+    const own = modal.schedulePending
+    if (own) {
+        clearTimeout(own)
+        modal.schedulePending = null
+        showToast(schedule ? `Schedule saved on ${switchDisplayName(switchId)}` : `Schedule removed from ${switchDisplayName(switchId)}`)
+    }
+    // Keep unsaved edits unless this answers the dialog's own request.
+    if (own || !modal.scheduleDirty) {
+        modal.schedule = presenceScheduleDraft(schedule)
+        renderPresenceScheduleFields()
+    }
+    editPresenceSchedule(() => {})
+}
+
+function initPresenceSchedule() {
+    const section = document.getElementById('presenceSchedule')
+    if (!section) return
+    document.getElementById('presencePause').addEventListener('change', event => {
+        editPresenceSchedule(draft => { draft.enabled = event.target.checked })
+    })
+    for (const key of ['from', 'to']) {
+        const row = section.querySelector(`[data-end="${key}"]`)
+        row.querySelector('[data-end-kind]').addEventListener('change', event => {
+            editPresenceSchedule(draft => { draft[key].kind = event.target.value })
+        })
+        row.querySelector('[data-end-time]').addEventListener('input', event => {
+            editPresenceSchedule(draft => { draft[key].time = event.target.value })
+        })
+        const offset = row.querySelector('[data-end-offset]')
+        offset.addEventListener('input', () => {
+            editPresenceSchedule(draft => { draft[key].offset = offset.value === '' ? NaN : Number(offset.value) })
+        })
+    }
+    document.getElementById('presenceScheduleSave').addEventListener('click', savePresenceSchedule)
+}
+
+initPresenceSchedule()
 
 function copyIdToClipboard(id, element) {
     navigator.clipboard.writeText(id).then(() => {

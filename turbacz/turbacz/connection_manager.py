@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 from threading import RLock
 from typing import Optional
 
@@ -7,7 +8,7 @@ import turbacz.auth as auth
 from fastapi import APIRouter, Cookie, Form, HTTPException, Request
 from fastapi.responses import JSONResponse
 from turbacz.database import serialized_manager
-from turbacz.presence import PRESENCE_BUTTONS
+from turbacz.presence import PRESENCE_BUTTONS, sun_today
 from turbacz.settings import config
 from turbacz.validation import relay_output
 from turbacz.zigbee_devices import ZIGBEE_ID_END, ZIGBEE_ID_START, is_zigbee_id, validate_action, zigbee_device_id
@@ -177,13 +178,20 @@ class ConnectionManager:
                 );
                 """
             )
-            # mmWave presence sensors; config is what the radar last reported.
+            # mmWave presence sensors; config is what the radar last reported,
+            # schedule the daily pause set in RCM.
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS presence_sensors (
                     switch_id BIGINT PRIMARY KEY REFERENCES switches(id) ON DELETE CASCADE,
                     config JSONB
                 );
+                """
+            )
+            cur.execute(
+                """
+                ALTER TABLE presence_sensors
+                ADD COLUMN IF NOT EXISTS schedule JSONB;
                 """
             )
             # Bookkeeping for the Home Assistant discovery bridge: which
@@ -888,6 +896,22 @@ class ConnectionManager:
 
         self.conn.commit()
 
+    def get_presence_schedules(self) -> dict[int, dict | None]:
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT switch_id, schedule FROM presence_sensors;")
+            sensors = cur.fetchall()
+
+        return {row[0]: row[1] for row in sensors}
+
+    def set_presence_schedule(self, switch_id: int, schedule: dict | None):
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE presence_sensors SET schedule = %s WHERE switch_id = %s;",
+                (None if schedule is None else json.dumps(schedule), switch_id),
+            )
+
+        self.conn.commit()
+
     def get_buttons(self, switch_id: int) -> dict[str, int]:
         with self.conn.cursor() as cur:
             cur.execute(
@@ -1235,6 +1259,22 @@ def get_presence_sensors(
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     return JSONResponse(content=connection_manager.get_presence_sensors())
+
+
+@connection_router.get("/get_presence_schedules")
+def get_presence_schedules(
+    request: Request,
+    access_token: str | None = Cookie(None),
+):
+    user = auth.get_current_user(auth.bearer_token_from_header(request.headers.get("authorization")) or access_token)
+
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    # Today's sun times let RCM preview a pause without a round trip.
+    return JSONResponse(
+        content={"schedules": connection_manager.get_presence_schedules(), **sun_today(datetime.now(UTC))}
+    )
 
 
 @connection_router.post("/remove_connection")

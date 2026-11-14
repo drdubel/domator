@@ -1,7 +1,8 @@
 import os
 from typing import Literal, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     NestedSecretsSettingsSource,
@@ -84,6 +85,36 @@ class HASettings(BaseModel):
     resync_interval: int = 60
 
 
+class LocationSettings(BaseModel):
+    """Where the home is, for presence sensor schedules."""
+
+    # Sunrise and sunset need both; two decimals (about 1 km) are plenty.
+    latitude: Optional[float] = Field(default=None, gt=-90, lt=90)
+    longitude: Optional[float] = Field(default=None, ge=-180, le=180)
+    # IANA name such as "Europe/Warsaw"; unset uses the system time zone.
+    timezone: Optional[str] = None
+
+    @field_validator("timezone")
+    @classmethod
+    def known_timezone(cls, value):
+        if value is not None:
+            try:
+                ZoneInfo(value)
+            except ZoneInfoNotFoundError as exc:
+                raise ValueError(f"Unknown time zone {value!r}") from exc
+        return value
+
+    @model_validator(mode="after")
+    def both_coordinates(self):
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("Set both latitude and longitude, or neither")
+        return self
+
+    @property
+    def has_coordinates(self) -> bool:
+        return self.latitude is not None
+
+
 class SecuritySettings(BaseModel):
     # The configured OIDC redirect origin/host is also trusted. No forwarded
     # header is used to derive these allowlists.
@@ -119,6 +150,7 @@ class TurbaczSettings(BaseSettings):
     psql: PSQLSettings = PSQLSettings()
     ha: HASettings = HASettings()
     firmware: FirmwareSettings = FirmwareSettings()
+    location: LocationSettings = LocationSettings()
     security: SecuritySettings = SecuritySettings()
     use_mqtt: bool = True
 

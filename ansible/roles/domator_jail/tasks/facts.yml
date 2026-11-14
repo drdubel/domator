@@ -8,6 +8,7 @@
     dj_db: "{{ domator.db | default(domator.name) }}"
     dj_labels: "{{ domator.labels | default({}) }}"
     dj_ha: "{{ domator.ha | default(false) | bool }}"
+    dj_location: "{{ domator.location | default({}) }}"
     dj_epair: "epair{{ domator.net }}"
     dj_gw_ip: "192.168.{{ domator.net }}.10"
     dj_jail_ip: "192.168.{{ domator.net }}.11"

@@ -14,6 +14,9 @@
  * flash. Turbacz changes them with {"radar": ...} JSON commands; every change
  * is read back from the radar and reported as a {"report":"config"} status.
  * Only this task touches the UART: mesh handlers just queue commands.
+ *
+ * A schedule pauses the sensor every day (presence_schedule.h): presence that
+ * starts during the pause is not sent, so it switches no outputs.
  */
 
 #include <stdio.h>
@@ -25,6 +28,7 @@
 #include "driver/gpio.h"
 #include "driver/uart.h"
 #include "nvs.h"
+#include "presence_schedule.h"
 #include "radar_protocol.h"
 
 static const char* TAG = "PRESENCE";
@@ -44,14 +48,17 @@ static const char* TAG = "PRESENCE";
 #define CALIBRATE_MIN_SAMPLES 10
 #define PRESENCE_INPUTS "abc"
 
-enum { OP_READ, OP_APPLY, OP_FACTORY, OP_CALIBRATE, OP_LIVE, OP_COUNT };
-static const char* const OP_NAMES[OP_COUNT] = {"read", "apply", "factory", "calibrate", "live"};
+enum { OP_READ, OP_APPLY, OP_FACTORY, OP_CALIBRATE, OP_LIVE, OP_SCHEDULE, OP_COUNT };
+static const char* const OP_NAMES[OP_COUNT] = {"read", "apply", "factory", "calibrate", "live", "schedule"};
 
 typedef struct {
     uint8_t op;
     uint8_t led;
     uint16_t seconds;
-    radar_config_t config;
+    union {
+        radar_config_t config;  // apply
+        presence_plan_t plan;   // schedule
+    };
 } presence_cmd_t;
 
 /* Defaults of the vendor's configuration tool (appConfig.xml): 12 gates, a 30 s
@@ -78,12 +85,25 @@ static uint32_t s_samples;
 static int64_t s_last_report, s_sync_at, s_live_until, s_next_live;
 static int64_t s_calibrate_from, s_calibrate_until;
 static bool s_seen, s_pending, s_calibrating, s_config_pending;
+// The schedule's plan and when it arrived; the presence the outputs were told.
+static presence_plan_t s_plan;
+static int64_t s_plan_at;
+static bool s_reported;
+// For status reports, which other tasks send.
+static volatile bool s_active = true;
+static volatile uint32_t s_plan_id, s_plan_left;
 // What arrived since the last report, to explain a failed setup.
 static bool s_replied;
 static uint32_t s_rx_bytes;
 static uint8_t s_rx_sample[16], s_rx_sample_len;
 
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
+
+// Seconds since the schedule's plan arrived.
+static uint32_t plan_elapsed(int64_t now) { return now > s_plan_at ? (uint32_t)((now - s_plan_at) / 1000) : 0; }
+
+// Whether presence switches outputs now, or the schedule pauses the sensor.
+static bool presence_active(int64_t now) { return plan_active(&s_plan, plan_elapsed(now)); }
 
 static void presence_led_update(void) {
     gpio_set_level(LED_GPIO, s_led && s_presence ? REMOTE_LED_ON_LEVEL : REMOTE_LED_OFF_LEVEL);
@@ -104,16 +124,16 @@ static void presence_send_inputs(void) {
     for (const char* input = PRESENCE_INPUTS; *input; input++) {
         mesh_app_msg_t msg = {.src_id = g_device_id, .msg_type = MSG_TYPE_BUTTON};
         msg.data[0] = *input;
-        msg.data[1] = s_presence ? '1' : '0';
+        msg.data[1] = s_reported ? '1' : '0';
         msg.data[2] = '0';  // releases carry the short-press flag, like switches
-        msg.data_len = s_presence ? 2 : 3;
+        msg.data_len = s_reported ? 2 : 3;
         mesh_queue_to_node(&msg, TX_PRIO_NORMAL, NULL);
     }
     if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         g_stats.button_presses++;
         xSemaphoreGive(g_stats_mutex);
     }
-    ESP_LOGI(TAG, "Presence %s sent", s_presence ? "detected" : "cleared");
+    ESP_LOGI(TAG, "Presence %s sent", s_reported ? "detected" : "cleared");
 }
 
 static cJSON* presence_report_json(const char* kind) {
@@ -176,6 +196,9 @@ void presence_add_status(cJSON* json) {
     cJSON_AddNumberToObject(json, "presence", s_presence);
     cJSON_AddNumberToObject(json, "distance", s_distance);
     cJSON_AddNumberToObject(json, "radar", s_radar_ok);
+    cJSON_AddNumberToObject(json, "active", s_active);
+    cJSON_AddNumberToObject(json, "plan", s_plan_id);
+    cJSON_AddNumberToObject(json, "planLeft", s_plan_left);
 }
 
 // ====================
@@ -207,8 +230,8 @@ static void presence_report(const radar_report_t* report) {
         s_sync_at = now + (delay > PRESENCE_SYNC_MIN_MS ? delay : PRESENCE_SYNC_MIN_MS);
     } else if (report->presence != s_presence) {
         s_presence = report->presence;
-        s_pending = true;
         s_sync_at = 0;
+        if (presence_route(s_presence, presence_active(now), &s_reported)) s_pending = true;
     }
     presence_led_update();
 }
@@ -379,6 +402,23 @@ static bool json_gates(const cJSON* array, uint32_t* out) {
     return true;
 }
 
+static bool json_plan(const cJSON* json, presence_plan_t* plan) {
+    const cJSON* off = cJSON_GetObjectItem(json, "off");
+    if (!json_number(cJSON_GetObjectItem(json, "id"), UINT32_MAX, &plan->id) ||
+        !json_number(cJSON_GetObjectItem(json, "for"), PLAN_MAX_S, &plan->length_s) || !cJSON_IsArray(off) ||
+        cJSON_GetArraySize(off) > PLAN_PERIODS)
+        return false;
+    const cJSON* period;
+    cJSON_ArrayForEach(period, off) {
+        uint32_t* bounds = plan->off[plan->count++];
+        if (!cJSON_IsArray(period) || cJSON_GetArraySize(period) != 2 ||
+            !json_number(cJSON_GetArrayItem(period, 0), PLAN_MAX_S, &bounds[0]) ||
+            !json_number(cJSON_GetArrayItem(period, 1), PLAN_MAX_S, &bounds[1]))
+            return false;
+    }
+    return plan_valid(plan);
+}
+
 bool presence_handle_command(const char* data, size_t len) {
     if (g_node_type != NODE_TYPE_PRESENCE || !len || data[0] != '{') return false;
     cJSON* json = cJSON_ParseWithLength(data, len);
@@ -407,6 +447,8 @@ bool presence_handle_command(const char* data, size_t len) {
         uint32_t high = cmd.op == OP_CALIBRATE ? CALIBRATE_MAX_S : LIVE_MAX_S;
         valid = json_number(cJSON_GetObjectItem(json, "seconds"), high, &value) && value >= low;
         cmd.seconds = value;
+    } else if (cmd.op == OP_SCHEDULE) {
+        valid = json_plan(json, &cmd.plan);
     }
     cJSON_Delete(json);
     if (!valid) {
@@ -444,8 +486,17 @@ static void presence_live_until(int64_t until) {
 }
 
 static void presence_run(const presence_cmd_t* cmd) {
-    radar_config_t want = cmd->op == OP_FACTORY ? RADAR_DEFAULTS : cmd->config;
+    radar_config_t want;
     switch (cmd->op) {
+        case OP_SCHEDULE:
+            s_plan = cmd->plan;
+            s_plan_at = now_ms();
+            if (s_plan.id)
+                ESP_LOGI(TAG, "Schedule %" PRIu32 ": %u pause(s) in the next %" PRIu32 " h", s_plan.id,
+                         (unsigned)s_plan.count, s_plan.length_s / 3600);
+            else
+                ESP_LOGI(TAG, "Schedule cleared");
+            return;
         case OP_LIVE:
             presence_live_until(cmd->seconds ? now_ms() + cmd->seconds * 1000LL : 0);
             return;
@@ -468,6 +519,7 @@ static void presence_run(const presence_cmd_t* cmd) {
             }
             // fall through
         case OP_FACTORY:
+            want = cmd->op == OP_FACTORY ? RADAR_DEFAULTS : cmd->config;
             if (radar_session(&want)) s_config_pending = true;
             return;
         default:
@@ -543,9 +595,15 @@ void presence_task(void* arg) {
         presence_cmd_t cmd;
         if (xQueueReceive(s_commands, &cmd, 0) == pdTRUE) presence_run(&cmd);
         if (s_calibrating && now >= s_calibrate_until) presence_calibrated();
+        bool active = presence_active(now);
+        if (active != s_active) ESP_LOGI(TAG, "Schedule: %s", active ? "active" : "paused");
+        s_active = active;
+        s_plan_id = s_plan.id;
+        s_plan_left = plan_left(&s_plan, plan_elapsed(now));
+        // The first state after boot (see presence_report).
         if (s_sync_at && now >= s_sync_at) {
-            s_pending = true;
             s_sync_at = 0;
+            if (presence_route(s_presence, active, &s_reported)) s_pending = true;
         }
         // Undelivered changes wait for the mesh; only the latest state is sent.
         if (s_pending && g_mesh_connected) {

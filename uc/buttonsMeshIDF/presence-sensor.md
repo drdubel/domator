@@ -77,7 +77,7 @@ root-capable node to this firmware: an older root toggles connected outputs
 on each presence change instead. Home Assistant receives the inputs as event
 entities: `press` when presence starts, `release` when the area is clear.
 
-**⚙ Sensor** opens the radar settings:
+**⚙ Sensor** opens the radar settings and the [schedule](#schedule):
 
 - **Detection range**: nearest and farthest range gate. Each gate covers
   0.7 m (gate 12 ≈ 8.4 m); movement outside the range is ignored.
@@ -105,6 +105,45 @@ every value back and reports it; RCM shows those values, and an error when no
 report arrives within 15 seconds (calibration: after the measurement). The
 sensor also reports its settings after starting, once it has joined the mesh;
 while Turbacz has none stored, it asks the sensor again every 5 minutes.
+
+## Schedule
+
+**Schedule** in the sensor dialog pauses the sensor every day. Presence that
+starts during the pause switches no outputs, and Home Assistant gets no event
+for it. The radar keeps detecting, so the card still shows occupancy, marked
+*⏸ paused*.
+
+- Each end of the pause is a time, or sunrise or sunset with an offset in
+  minutes (−240 to 240; negative is before). From 23:00 to 06:00 pauses the
+  sensor at night; from sunrise to sunset lets it work only in the dark.
+- A pause that starts later in the day than it ends lasts past midnight.
+  For this, sunrise counts as 06:00 and sunset as 18:00, so a pause from
+  sunset to 22:00 is skipped on days when the sun sets after 22:00.
+- Outputs the sensor turned on before a pause still turn off once the area is
+  clear. After a pause the area becoming clear is reported even if presence
+  began during it, so lights switched on by hand go off; presence that lasts
+  past the end of a pause turns nothing on until it starts again.
+- Sunrise and sunset need the home's coordinates in `turbacz.toml`; RCM
+  offers them only then:
+
+  ```toml
+  [location]
+  latitude = 50.06
+  longitude = 19.94
+  timezone = "Europe/Warsaw"  # optional, else the server's time zone
+  ```
+
+  Times are in this time zone, shown next to the section title.
+- Turbacz stores the schedule, so it can be changed while the sensor is
+  offline or before it reports its radar settings. **Save schedule** saves
+  it; **Apply** only sends the radar settings.
+
+The sensor has no clock. Turbacz sends it the pauses of the next 7 days in
+seconds from now and renews them daily; the sensor follows them on its own
+while Turbacz is unreachable. After a restart the sensor works at all hours
+until Turbacz sends them again, which happens after its first status report.
+Without Turbacz for more than 7 days, the sensor works at all hours once
+they run out.
 
 ## Behaviour
 
@@ -151,12 +190,24 @@ ten times a second. This is the protocol of the HLK-LD2420, which uses the
 same chip; [src/radar_protocol.h](src/radar_protocol.h) is the parser, tested
 on the host by [tests/radar_protocol_test.c](tests/radar_protocol_test.c).
 
-Turbacz sends `{"radar": "read" | "apply" | "factory" | "calibrate" | "live"}`
-commands to `/switch/cmd/<id>`. The sensor answers with
+Turbacz sends `{"radar": "read" | "apply" | "factory" | "calibrate" | "live" |
+"schedule"}` commands to `/switch/cmd/<id>`. The sensor answers with
 `{"type": "presence", "report": "config" | "live", ...}` status messages, which
 the root publishes on `/switch/state/root`. Its regular status reports also
-carry `presence`, `distance` and `radar`.
+carry `presence`, `distance`, `radar`, and for schedules `active` (0 while
+paused), `plan` and `planLeft`.
 
-Check detection range, calibration and the root's on/off routing on the real
-hardware before relying on the sensor; this firmware has only been verified on
-the host and by building the image.
+A schedule arrives as a plan,
+`{"radar": "schedule", "id": N, "for": S, "off": [[from, to], ...]}`: up to 16
+ordered, disjoint pauses within the next `S` seconds (at most 14 days), in
+seconds after the command arrives. `id` 0 clears the schedule. The sensor
+reports the `id` it follows as `plan` and the seconds it still covers as
+`planLeft`; Turbacz sends a new plan when `plan` differs from the schedule's
+or `planLeft` drops below 6 days.
+[src/presence_schedule.h](src/presence_schedule.h) holds the plan and which
+presence changes are sent, tested on the host by
+[tests/presence_schedule_test.c](tests/presence_schedule_test.c).
+
+Check detection range, calibration, schedules and the root's on/off routing on
+the real hardware before relying on the sensor; this firmware has only been
+verified on the host and by building the image.

@@ -81,6 +81,15 @@ directory = "firmware"
 # Leaving this empty blocks device downloads entirely.
 token = ""
 
+[location]
+# Where the home is, for presence sensor schedules. With coordinates a pause
+# can start or end at sunrise or sunset; two decimals are plenty.
+# latitude = 50.06
+# longitude = 19.94
+# Schedule times are in this IANA time zone. Unset uses the server's, which is
+# UTC in a container unless TZ is set.
+# timezone = "Europe/Warsaw"
+
 [ha]
 # Publish lights, blinds, the heating loop and wall-button events to Home
 # Assistant over MQTT Discovery. Home Assistant must use the same broker.

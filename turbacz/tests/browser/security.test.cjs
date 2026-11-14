@@ -564,7 +564,7 @@ test('RCM overlapping loads ignore stale HTTP responses and deferred connection 
                 '/lights/get_connections': {9: {a: [[1, 'a']]}},
                 '/lights/get_outputs': {}, '/lights/get_all_buttons': {},
                 '/lights/get_blind_pairs': {}, '/lights/get_zigbee_devices': {},
-                '/lights/get_presence_sensors': {}
+                '/lights/get_presence_sensors': {}, '/lights/get_presence_schedules': {schedules: {}}
             };
             fetchAPI = path => new Promise(resolve => responses.push(() => resolve(configuration[path])));
             const firstLoad = loadConfiguration(), secondLoad = loadConfiguration();
@@ -1065,7 +1065,10 @@ test('RCM loads presence sensors with the configuration and waits for an unrepor
                 '/lights/get_switches': {9: ['Sensor', 3], 10: ['Switch', 2]},
                 '/lights/get_all_buttons': {9: {a: 2, b: 3, c: 4}, 10: {a: 0, b: 1}},
                 '/lights/get_blind_pairs': {}, '/lights/get_zigbee_devices': {},
-                '/lights/get_presence_sensors': {9: null}
+                '/lights/get_presence_sensors': {9: null},
+                // PostgreSQL returns JSONB keys in its own order.
+                '/lights/get_presence_schedules': {schedules: {9: {to: {offset: -30, sun: 'sunrise'}, from: {time: '22:00'}}},
+                    zone: 'CET', sunrise: '07:12', sunset: '15:48'}
             })[path];
             wsManager.isConnected = () => true;
             const sent = []; wsManager.send = data => { sent.push(JSON.parse(data)); return true };
@@ -1088,5 +1091,156 @@ test('RCM loads presence sensors with the configuration and waits for an unrepor
         assert.equal(doc.getElementById('presenceCalibrate').disabled, true)
         assert.equal(doc.getElementById('presenceReload').disabled, false)
         assert.match(doc.getElementById('presenceSummary').textContent, /waiting for the sensor to report its settings/)
+        // The schedule is Turbacz's, so it shows and can be edited meanwhile.
+        const to = doc.querySelector('#presenceSchedule [data-end="to"]')
+        assert.equal(doc.getElementById('presencePause').checked, true)
+        assert.equal(doc.querySelector('#presenceSchedule [data-end="from"] [data-end-time]').value, '22:00')
+        assert.equal(to.querySelector('[data-end-kind]').value, 'sunrise')
+        assert.equal(to.querySelector('[data-end-offset]').value, '-30')
+        assert.equal(doc.getElementById('presencePause').disabled, false)
+        assert.equal(doc.getElementById('presenceScheduleSave').disabled, true)
+        assert.doesNotMatch(doc.getElementById('presenceSummary').textContent, /unsaved schedule/)
+        assert.equal(doc.getElementById('presenceSchedulePreview').textContent,
+            'Paused every day from 22:00 to 30 min before sunrise. Today 22:00–06:42.')
+        assert.equal(doc.getElementById('presenceScheduleZone').textContent, 'Times in CET')
+    } finally { dom.window.close() }
+})
+
+test('RCM presence schedule pauses a sensor at times or around the sun and waits for Turbacz to store it', () => {
+    const dom = rcmPage()
+    try {
+        dom.window.hostileName = payloads[0]
+        run(dom, `var sensorConfig = ${JSON.stringify(SENSOR_CONFIG)};
+            const timers = new Map(); let timerId = 0;
+            window.setTimeout = (callback, delay) => { timers.set(++timerId, {callback, delay}); return timerId };
+            window.clearTimeout = id => timers.delete(id);
+            const toasts = []; showToast = (message, isError = false) => toasts.push({message, isError});
+            wsManager.isConnected = () => true;
+            const sent = []; wsManager.send = data => { sent.push(JSON.parse(data)); return true };
+            State.presenceSensors = {555: sensorConfig};
+            State.presenceSchedules = {555: null};
+            State.presenceToday = {zone: 'CET', sunrise: '07:12', sunset: '15:48'};
+            State.presenceStates = {555: {presence: 1, distance: 140, radar: 1, active: 1}};
+            online_switches = new Set([555]);
+            createSwitch(555, hostileName, 3, 0, 0);
+            showPresenceModal(555);`)
+        const doc = dom.window.document
+        const Event = dom.window.Event
+        const last = () => JSON.parse(run(dom, 'JSON.stringify(sent.at(-1))'))
+        const end = key => doc.querySelector(`#presenceSchedule [data-end="${key}"]`)
+        const preview = doc.getElementById('presenceSchedulePreview')
+        const save = doc.getElementById('presenceScheduleSave')
+        const set = (element, value, type = 'input') => {
+            element.value = value
+            element.dispatchEvent(new Event(type, { bubbles: true }))
+        }
+        assert.equal(preview.textContent, 'The sensor works at all hours.')
+        assert.equal(doc.getElementById('presenceScheduleEnds').hidden, true)
+        assert.equal(save.disabled, true)
+
+        // A night pause by default; sun events show an offset instead of a time.
+        doc.getElementById('presencePause').click()
+        assert.equal(doc.getElementById('presenceScheduleEnds').hidden, false)
+        assert.equal(preview.textContent, 'Paused every day from 23:00 to 06:00.')
+        assert.match(doc.getElementById('presenceSummary').textContent, /unsaved schedule/)
+        set(end('to').querySelector('[data-end-kind]'), 'sunrise', 'change')
+        assert.equal(end('to').querySelector('[data-end-time]').hidden, true)
+        assert.equal(end('to').querySelector('.presence-schedule-offset').hidden, false)
+        set(end('to').querySelector('[data-end-offset]'), '30')
+        assert.equal(preview.textContent, 'Paused every day from 23:00 to 30 min after sunrise. Today 23:00–07:42.')
+        assert.equal(preview.classList.contains('warning'), false)
+        save.click()
+        assert.deepEqual(last(), { type: 'presence_schedule', switch_id: 555,
+            schedule: { from: { time: '23:00' }, to: { sun: 'sunrise', offset: 30 } } })
+        assert.equal(save.textContent, 'Saving…')
+        assert.equal(save.disabled, true)
+        assert.equal(doc.getElementById('presencePause').disabled, true)
+        assert.equal(run(dom, '[...timers.values()].at(-1).delay'), 15000)
+
+        // Turbacz confirms by broadcasting what it stored.
+        run(dom, `wsManager.onMessage({data: JSON.stringify({type: 'presence_schedule', switch_id: 555,
+            schedule: {to: {offset: 30, sun: 'sunrise'}, from: {time: '23:00'}}})})`)
+        assert.equal(run(dom, 'toasts.at(-1).message'), `Schedule saved on ${payloads[0]}`)
+        assert.equal(save.textContent, 'Save schedule')
+        assert.equal(save.disabled, true)
+        assert.equal(doc.getElementById('presencePause').disabled, false)
+        assert.doesNotMatch(doc.getElementById('presenceSummary').textContent, /unsaved schedule/)
+
+        // Enter in the schedule saves it, not the radar settings.
+        const from = end('from').querySelector('[data-end-time]')
+        set(from, '22:30')
+        from.focus()
+        from.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+        assert.equal(last().type, 'presence_schedule')
+        assert.deepEqual(last().schedule.from, { time: '22:30' })
+        run(dom, `wsManager.onMessage({data: JSON.stringify({type: 'presence_schedule', switch_id: 555,
+            schedule: {from: {time: '22:30'}, to: {sun: 'sunrise', offset: 30}}})})`)
+
+        // A pause that ends when it starts is refused before it reaches Turbacz.
+        set(end('to').querySelector('[data-end-kind]'), 'time', 'change')
+        set(end('to').querySelector('[data-end-time]'), '22:30')
+        assert.equal(preview.textContent, 'The pause must end at another time than it starts.')
+        assert.ok(preview.classList.contains('warning'))
+        assert.equal(save.disabled, true)
+        set(end('to').querySelector('[data-end-time]'), '')
+        assert.equal(preview.textContent, 'Enter the time the pause starts and ends.')
+
+        // Removing the pause sends null; a request without an answer times out.
+        doc.getElementById('presencePause').click()
+        save.click()
+        assert.equal(last().schedule, null)
+        run(dom, '[...timers.values()].at(-1).callback()')
+        assert.equal(run(dom, 'toasts.at(-1).isError'), true)
+        assert.equal(save.disabled, false)
+        save.click()
+        run(dom, `wsManager.onMessage({data: JSON.stringify({type: 'presence_schedule', switch_id: 555, schedule: null})})`)
+        assert.equal(run(dom, 'toasts.at(-1).message'), `Schedule removed from ${payloads[0]}`)
+        assert.equal(run(dom, 'State.presenceSchedules[555]'), null)
+
+        // Firmware that reports no schedule state cannot follow one.
+        doc.getElementById('presencePause').click()
+        run(dom, `State.presenceStates[555] = {presence: 0, distance: 0, radar: 1}; updatePresenceStatus(555)`)
+        assert.match(preview.textContent, /firmware has no schedules/)
+        assert.ok(preview.classList.contains('warning'))
+        assert.equal(doc.querySelectorAll('[onerror], [onfocus], [autofocus]').length, 0)
+    } finally { dom.window.close() }
+})
+
+test('RCM shows paused sensors and needs the home location for sun events', () => {
+    const dom = rcmPage()
+    try {
+        run(dom, `var sensorConfig = ${JSON.stringify(SENSOR_CONFIG)};
+            State.presenceSensors = {555: sensorConfig};
+            State.presenceSchedules = {555: {from: {sun: 'sunrise', offset: 0}, to: {sun: 'sunset', offset: 0}}};
+            State.presenceToday = {zone: 'UTC', sunrise: null, sunset: null};
+            State.presenceStates = {555: {presence: 1, distance: 140, radar: 1, active: 0}};
+            online_switches = new Set([555]);
+            createSwitch(555, 'Hall sensor', 3, 0, 0);`)
+        const doc = dom.window.document
+        const status = doc.querySelector('[data-presence-status="555"]')
+        assert.equal(status.textContent, '● Occupied · 1.40 m · ⏸ paused')
+        assert.equal(status.dataset.paused, 'true')
+        run(dom, `wsManager.onMessage({data: JSON.stringify({type: 'presence_state', switch_id: 555,
+            presence: 0, distance: 0, radar: 1, active: 1})})`)
+        assert.equal(status.textContent, '○ Clear')
+        assert.equal(status.dataset.paused, 'false')
+
+        // A saved sun schedule stays visible, but cannot be saved again without a location.
+        run(dom, 'showPresenceModal(555)')
+        const kind = doc.querySelector('#presenceSchedule [data-end="from"] [data-end-kind]')
+        assert.equal(kind.value, 'sunrise')
+        assert.equal(kind.querySelector('option[value="sunrise"]').disabled, false)
+        assert.equal(kind.querySelector('option[value="sunset"]').disabled, true)
+        const preview = doc.getElementById('presenceSchedulePreview')
+        assert.match(preview.textContent, /\[location\] in turbacz\.toml/)
+        assert.equal(doc.getElementById('presenceScheduleSave').disabled, true)
+
+        // A pause from sunset to a time is skipped on days the sun sets later.
+        run(dom, `State.presenceToday = {zone: 'CEST', sunrise: '04:35', sunset: '21:40'};
+            closeModal('presenceModal');
+            State.presenceSchedules = {555: {from: {sun: 'sunset', offset: 0}, to: {time: '21:00'}}};
+            showPresenceModal(555);`)
+        assert.equal(preview.textContent, 'Paused every day from sunset to 21:00. No pause today.')
+        assert.equal(doc.getElementById('presenceScheduleZone').textContent, 'Times in CEST')
     } finally { dom.window.close() }
 })

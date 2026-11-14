@@ -610,6 +610,11 @@ body {
     color: #fcd34d;
 }
 
+/* The schedule pauses the sensor: presence switches no outputs. */
+.presence-status[data-paused="true"] {
+    border-style: dashed;
+}
+
 .zigbee-command {
     background: #1e293b;
     color: #e2e8f0;
@@ -1562,8 +1567,79 @@ body.hide-device-metrics .signal-icon {
     font-weight: 700;
 }
 
-#presenceModal.presence-empty .presence-section {
+/* The schedule is stored in Turbacz, so it can be set before the radar reports. */
+#presenceModal.presence-empty .presence-section:not(.presence-schedule) {
     opacity: 0.5;
+}
+
+.presence-schedule-zone {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.presence-schedule-ends {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.presence-schedule-end {
+    display: grid;
+    grid-template-columns: 3rem 10rem auto;
+    align-items: center;
+    gap: 0.6rem;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.presence-schedule-end .setting-select {
+    min-width: 0;
+}
+
+.presence-schedule-end input {
+    padding: 0.45rem 0.6rem;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.5);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+    color-scheme: dark;
+}
+
+.presence-schedule-offset {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.presence-schedule-end input[type="time"] {
+    width: 8.5rem;
+}
+
+.presence-schedule-offset input {
+    width: 5.5rem;
+}
+
+.presence-schedule-ends[hidden],
+.presence-schedule-end [hidden] {
+    display: none;
+}
+
+.presence-hint.warning {
+    color: #fcd34d;
+}
+
+.presence-schedule-actions {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.presence-schedule-actions .modal-btn {
+    flex: 0 0 auto;
 }
 
 .presence-actions {

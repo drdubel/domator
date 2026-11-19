@@ -130,6 +130,29 @@ enabled = true
 base_topic = "zigbee2mqtt"
 ```
 
+### Lights page
+
+`/lights` shows every named relay output, grouped by section. Outputs that
+form a blind pair are left out and the lights socket refuses to switch them:
+switching one of them alone can reverse a running motor, so blinds are driven
+from `/blinds`.
+
+- Viewers see the lights, operators also switch them, including **All off**
+  for one section or the whole house.
+- Admins arrange the page with **Edit**: drag lights, or select one for move
+  buttons, and add, rename, reorder or delete sections. A deleted section's
+  lights move to the default section (id 1), which new outputs join and which
+  cannot be deleted. Section names are unique, ignoring case.
+- A light pulses until its relay confirms the change and reports an error after
+  five seconds without an answer. **Offline** marks lights whose relay stopped
+  reporting, **No status** lights whose state is not known yet.
+- Collapsed sections are remembered per browser. The section order is shared
+  and stored in PostgreSQL; turbapka keeps its own order on the phone.
+
+A rejected lights command is answered with `{"type": "error", "message": ...}`
+and, for layout changes, the current configuration. The socket stays open,
+unlike the other pages' sockets, which close on a rejected command.
+
 ### PostgreSQL setup (local)
 
 On Ubuntu:

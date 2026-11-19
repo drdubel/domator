@@ -35,6 +35,9 @@ def command_capability(path, command):
             return "operator" if command.get("action") in {"read", "live"} else "admin"
         if kind in {
             "add_section",
+            "rename_section",
+            "remove_section",
+            "reorder_sections",
             "change_section",
             "change_positions",
             "layout_update",

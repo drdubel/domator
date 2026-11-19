@@ -1,539 +1,700 @@
-var lights = {}
-var pendingClicks = new Set()
-var namedOutputs = {}
-var sections = {}
-var active_sections = new Set()
-var draggedCard = null
-var preventCardToggleUntil = 0
-var LONG_PRESS_MS = 380
-var LONG_PRESS_MOVE_CANCEL_PX = 10
-var touchPressTimer = null
-var touchPressCandidate = null
-var touchDragState = {
-	active: false,
-	card: null,
-	placeholder: null,
-	sourceGrid: null,
-	offsetX: 0,
-	offsetY: 0,
+// ============================================
+// LIGHTS - switching lights and editing their layout
+// Requires: common.js
+// ============================================
+
+const LONG_PRESS_MS = 380
+const LONG_PRESS_MOVE_CANCEL_PX = 10
+// Relays answer a command with their new state well within this.
+const PENDING_TIMEOUT_MS = 5000
+const COLLAPSED_SECTIONS_KEY = 'lights_collapsed_sections'
+const IMAGE_ON = '/static/data/img/on.png'
+const IMAGE_OFF = '/static/data/img/off.png'
+const NOT_CONNECTED = 'Not connected to Turbacz. Reconnecting…'
+const VIEW_ONLY = 'Your account can view the lights but not switch them'
+const CONNECTION_LABELS = { connecting: 'Connecting…', connected: 'Connected', reconnecting: 'Reconnecting…' }
+const SECTION_ID = /^[0-9]{1,10}$/
+const RELAY_ID = /^[0-9]{1,19}$/
+const OUTPUT_ID = /^[a-p]$/
+
+const Lights = {
+	sections: [], // [{ id, name }] in display order
+	outputs: new Map(), // card id -> { cardId, relayId, outputId, name, sectionId, outputIdx }
+	states: new Map(), // card id -> 0 | 1, missing while unknown
+	cards: new Map(), // card id -> rendered card
+	onlineRelays: null, // relay ids, null until the server reports them
+	permissions: { control: false, edit: false },
+	defaultSection: '1',
+	configured: false,
+	connection: 'connecting', // 'connecting' | 'connected' | 'reconnecting'
+	editMode: false,
+	pending: new Map(), // card id -> timer of the command waiting for its relay
+	collapsed: loadCollapsedSections(),
+	drag: null, // the light being dragged, see bindMouseDrag() and startTouchDrag()
+	press: null, // a touch that becomes a drag if held
+	deferredConfiguration: null,
+	suppressClickUntil: 0,
+	confirmResolve: null,
+	moveCardId: null,
+	renamedSectionId: null, // null while the section dialog adds one
 }
-var invisibleDragImage = null
+
+let invisibleDragImage = null
+
+function byId(id) {
+	return document.getElementById(id)
+}
+
+function textElement(tag, className, text) {
+	const element = document.createElement(tag)
+	element.className = className
+	element.textContent = text
+	return element
+}
+
+// ============================================
+// SERVER MESSAGES
+// ============================================
+
+const wsManager = new WebSocketManager('/lights/ws/', function (event) {
+	handleMessage(JSON.parse(event.data))
+})
+
+function handleMessage(msg) {
+	if (msg.type === 'configuration') {
+		receiveConfiguration(msg)
+	} else if (msg.type === 'light_state') {
+		receiveLightState(msg)
+	} else if (msg.type === 'relay_status') {
+		receiveRelayStatus(msg.online_relays)
+	} else if (msg.type === 'error') {
+		showToast(msg.message || 'Turbacz rejected the change', 'error')
+	}
+}
+
+function receiveConfiguration(msg) {
+	// Rebuilding the page would drop the light being dragged.
+	if (Lights.drag) {
+		Lights.deferredConfiguration = msg
+		return
+	}
+	applyConfiguration(msg)
+}
 
 function parseOutputMeta(outputMeta) {
 	if (Array.isArray(outputMeta)) {
 		return {
-			name: outputMeta[0],
-			sectionId: outputMeta[1],
-			outputIdx: typeof outputMeta[2] === 'number' ? outputMeta[2] : Number(outputMeta[2]) || 0,
+			name: String(outputMeta[0] ?? ''),
+			sectionId: String(outputMeta[1]),
+			outputIdx: Number(outputMeta[2]) || 0,
 		}
 	}
 
-	return {
-		name: String(outputMeta || ''),
-		sectionId: 1,
-		outputIdx: 0,
-	}
+	return { name: String(outputMeta ?? ''), sectionId: '1', outputIdx: 0 }
 }
 
-// Initialize WebSocket manager
-var wsManager = new WebSocketManager('/lights/ws/', function (event) {
-	var msg = JSON.parse(event.data)
-	console.log('Received:', msg)
+function applyConfiguration(msg) {
+	const names = msg.sections && typeof msg.sections === 'object' ? msg.sections : {}
+	const ids = Object.keys(names).filter(id => SECTION_ID.test(id))
+	const order = (Array.isArray(msg.section_order) ? msg.section_order : []).map(String).filter(id => ids.includes(id))
+	// Sections missing from the order follow by id; a plain sort() would put 10 before 2.
+	const rest = ids.filter(id => !order.includes(id)).sort((a, b) => Number(a) - Number(b))
+	Lights.sections = [...new Set([...order, ...rest])].map(id => ({ id, name: String(names[id]) }))
+	if (msg.default_section !== undefined) {
+		Lights.defaultSection = String(msg.default_section)
+	}
 
-	if (msg.type == "configuration") {
-		namedOutputs = msg.named_outputs || {}
-		active_sections.clear()
-		const select = document.getElementById("buttons")
-		select.innerHTML = ""
-		Object.entries(msg.named_outputs).forEach(([relayId, outputs]) => {
-			const sortedOutputs = Object.entries(outputs)
-				.map(([outputKey, outputMeta]) => [outputKey, parseOutputMeta(outputMeta)])
-				.sort((a, b) => a[1].outputIdx - b[1].outputIdx)
+	const known = new Set(Lights.sections.map(section => section.id))
+	const fallback = known.has(Lights.defaultSection) ? Lights.defaultSection : Lights.sections[0]?.id
+	Lights.outputs = new Map()
+	for (const [relayId, outputs] of Object.entries(msg.named_outputs || {})) {
+		if (!RELAY_ID.test(relayId) || !outputs || typeof outputs !== 'object') continue
+		for (const [outputId, outputMeta] of Object.entries(outputs)) {
+			if (!OUTPUT_ID.test(outputId)) continue
+			const output = parseOutputMeta(outputMeta)
+			// A light left in a section that no longer exists stays reachable.
+			if (!known.has(output.sectionId)) output.sectionId = fallback
+			const cardId = `${relayId}${outputId}`
+			Lights.outputs.set(cardId, { cardId, relayId, outputId, ...output })
+		}
+	}
 
-			// Optional optgroup per relay
-			const group = document.createElement("optgroup")
-			group.label = `Relay ${relayId}`
-
-			sortedOutputs.forEach(([outputKey, outputMeta]) => {
-				const option = document.createElement("option")
-
-				// Value encodes relay + output
-				option.value = `${relayId}:${outputKey}`
-				option.textContent = `${outputMeta.name}`
-
-				group.appendChild(option)
-			})
-
-			select.appendChild(group)
-		})
-
-		const buttonSectionSelect = document.getElementById("sections")
-		buttonSectionSelect.innerHTML = ""
-		sections = Object.entries(msg.sections)
-		sections.sort()
-		sections.forEach(([sectionId, sectionName]) => {
-			const option = document.createElement("option")
-			option.value = sectionId
-			option.textContent = sectionName
-			buttonSectionSelect.appendChild(option)
-		})
-
-		const room = document.getElementById("room")
-		room.innerHTML = ""
-
-		Object.entries(msg.sections).forEach(([sectionId, sectionName]) => {
-			const section = document.createElement(`section-${sectionId}`)
-			section.className = "room"
-
-			const header = document.createElement("h2")
-			header.textContent = sectionName
-			section.appendChild(header)
-
-			const grid = document.createElement("div")
-			grid.className = "light-grid"
-			grid.dataset.sectionId = `${sectionId}`
-			section.appendChild(grid)
-
-			room.appendChild(section)
-		})
-
-		const outputsBySection = {}
-		Object.entries(msg.named_outputs).forEach(([relayId, outputs]) => {
-			Object.entries(outputs).forEach(([outputKey, outputMeta]) => {
-				const parsed = parseOutputMeta(outputMeta)
-				const sectionId = `${parsed.sectionId}`
-				if (!outputsBySection[sectionId]) {
-					outputsBySection[sectionId] = []
-				}
-
-				outputsBySection[sectionId].push({
-					relayId: `${relayId}`,
-					outputKey: `${outputKey}`,
-					outputName: parsed.name,
-					outputIdx: parsed.outputIdx,
-					sectionId: sectionId,
-				})
-			})
-		})
-
-		Object.values(outputsBySection).forEach(cards => {
-			cards.sort((a, b) => {
-				if (a.outputIdx !== b.outputIdx) {
-					return a.outputIdx - b.outputIdx
-				}
-
-				if (a.relayId !== b.relayId) {
-					return a.relayId.localeCompare(b.relayId)
-				}
-
-				return a.outputKey.localeCompare(b.outputKey)
-			})
-		})
-
-		Object.entries(outputsBySection).forEach(([sectionId, cards]) => {
-			const section = document.querySelector(`section-${sectionId} .light-grid`)
-			if (!section) return
-
-			cards.forEach(card => {
-				const button = document.createElement("div")
-				button.className = "light-card"
-				button.draggable = true
-				button.dataset.cardId = `${card.relayId}${card.outputKey}`
-				button.dataset.relayId = card.relayId
-				button.dataset.outputId = card.outputKey
-				button.dataset.sectionId = card.sectionId
-				button.dataset.outputIdx = `${card.outputIdx}`
-				button.onclick = function () {
-					if (Date.now() < preventCardToggleUntil) {
-						return
-					}
-					changeSwitchState(`${card.relayId}${card.outputKey}`)
-				}
-
-				const img = document.createElement("img")
-				img.id = `${card.relayId}${card.outputKey}`
-				img.src = "/static/data/img/off.png"
-				img.alt = card.outputName
-
-				const label = document.createElement("span")
-				label.className = "light-label"
-				label.textContent = card.outputName
-
-				button.appendChild(img)
-				button.appendChild(label)
-				section.appendChild(button)
-				active_sections.add(Number(card.sectionId))
-			})
-		})
-
-		bindLightCardDnDHandlers()
-
-		sections.forEach(([section, sectionName]) => {
-			section = parseInt(section)
-			if (!(active_sections.has(section))) {
-				document.querySelector(`section-${section}`).style.display = "none"
-			} else {
-				document.querySelector(`section-${section}`).style.display = "block"
+	// Only a page's own configuration carries these; broadcasts keep them.
+	if (msg.permissions) {
+		Lights.permissions = { control: msg.permissions.control === true, edit: msg.permissions.edit === true }
+		if (!Lights.permissions.edit) Lights.editMode = false
+	}
+	if (Array.isArray(msg.online_relays)) {
+		Lights.onlineRelays = new Set(msg.online_relays.map(String))
+	}
+	if (msg.states && typeof msg.states === 'object') {
+		Lights.states = new Map()
+		for (const [relayId, outputs] of Object.entries(msg.states)) {
+			for (const [outputId, state] of Object.entries(outputs || {})) {
+				Lights.states.set(`${relayId}${outputId}`, state === 1 ? 1 : 0)
 			}
-		})
-
-		makeSectionsCollapsible()
-		for (const [id, state] of Object.entries(lights)) {
-			updateLightUI(id, state)
 		}
 	}
 
-	if (msg.type == "light_state") {
-		pendingClicks.delete(msg.relay_id + msg.output_id)
-		lights[msg.relay_id + msg.output_id] = msg.state
-		updateLightUI(msg.relay_id + msg.output_id, msg.state)
+	Lights.configured = true
+	render()
+}
+
+function receiveLightState(msg) {
+	const cardId = `${msg.relay_id}${msg.output_id}`
+	Lights.states.set(cardId, msg.state === 1 ? 1 : 0)
+	Lights.pending.delete(cardId)
+	const card = Lights.cards.get(cardId)
+	if (card) updateCard(card)
+	updateSummaries()
+}
+
+function receiveRelayStatus(onlineRelays) {
+	if (!Array.isArray(onlineRelays)) return
+	Lights.onlineRelays = new Set(onlineRelays.map(String))
+	updateCards()
+}
+
+function setConnection(connection) {
+	Lights.connection = connection
+	if (connection !== 'connected') {
+		// Answers to earlier commands are lost with the connection.
+		Lights.pending.clear()
 	}
-})
 
-// Setup WebSocket callbacks
-wsManager.onOpen(function () {
-	pendingClicks.clear()
-})
+	const status = byId('connectionStatus')
+	status.dataset.state = connection
+	status.querySelector('.connection-label').textContent = CONNECTION_LABELS[connection]
+	status.title = connection === 'connected' ? 'Connected to Turbacz' : 'Lights can be switched once Turbacz is reachable again'
+	document.body.classList.toggle('lights-disconnected', connection !== 'connected')
+	updateCards()
+}
 
-// Connect and start connection monitoring
-wsManager.connect()
-wsManager.startConnectionCheck()
-wsManager.setupVisibilityHandler()
+// ============================================
+// RENDERING
+// ============================================
 
-function updateLightUI(id, state) {
-	var element = document.getElementById(id)
-	if (!element) return
+function render() {
+	const focusKey = document.activeElement?.dataset?.focusKey
+	Lights.cards = new Map()
+	const sections = Lights.sections.map(renderSection)
+	const room = byId('room')
+	room.replaceChildren(...sections)
+	if (sections.every(section => section.hidden)) {
+		room.appendChild(textElement('p', 'room-placeholder',
+			'No lights to show yet. Lights appear here once their relay outputs are named in Connections.'))
+	}
 
-	if (state === 1) {
-		element.src = "/static/data/img/on.png"
-		element.parentElement.classList.add('active')
-	} else {
-		element.src = "/static/data/img/off.png"
-		element.parentElement.classList.remove('active')
+	document.body.classList.toggle('lights-edit-mode', Lights.editMode)
+	updateSummaries()
+	updateNotice()
+	if (focusKey) {
+		const target = [...document.querySelectorAll('[data-focus-key]')].find(element => element.dataset.focusKey === focusKey)
+		if (target) target.focus()
 	}
 }
 
-function changeSwitchState(id) {
-	if (!wsManager.isConnected()) {
-		return
-	}
-
-	if (pendingClicks.has(id)) {
-		return
-	}
-
-	pendingClicks.add(id)
-
-	var newState = lights[id] === 1 ? 0 : 1
-
-	console.log('Changing state of', id, 'to', newState)
-	var msg = JSON.stringify({ "relay_id": id.slice(0, -1), "output_id": id.slice(-1), "state": newState })
-	console.log(msg)
-
-	if (!wsManager.send(msg)) {
-		pendingClicks.delete(id)
-	}
-
-	setTimeout(function () {
-		pendingClicks.delete(id)
-	}, 2000)
+function sectionOutputs(sectionId) {
+	return [...Lights.outputs.values()]
+		.filter(output => output.sectionId === sectionId)
+		.sort((a, b) => a.outputIdx - b.outputIdx
+			|| a.relayId.localeCompare(b.relayId, undefined, { numeric: true })
+			|| a.outputId.localeCompare(b.outputId))
 }
 
-function bindLightCardDnDHandlers() {
-	const cards = document.querySelectorAll('.light-card')
-	const grids = document.querySelectorAll('.light-grid')
-	ensureInvisibleDragImage()
-
-	cards.forEach(card => {
-		card.style.cursor = 'grab'
-
-		card.addEventListener('dragstart', function (e) {
-			draggedCard = this
-			this.dataset.sourceSectionId = this.dataset.sectionId || ''
-			this.classList.add('dragging')
-			e.dataTransfer.effectAllowed = 'move'
-			e.dataTransfer.setData('text/plain', this.dataset.cardId || '')
-			if (invisibleDragImage && e.dataTransfer.setDragImage) {
-				e.dataTransfer.setDragImage(invisibleDragImage, 0, 0)
-			}
-		})
-
-		card.addEventListener('dragend', function () {
-			this.classList.remove('dragging')
-			delete this.dataset.sourceSectionId
-			draggedCard = null
-			document.querySelectorAll('.light-grid.drag-over').forEach(grid => grid.classList.remove('drag-over'))
-		})
-
-		bindTouchReorderHandlers(card)
-	})
-
-	grids.forEach(grid => {
-		grid.addEventListener('dragover', function (e) {
-			e.preventDefault()
-			if (!draggedCard) return
-
-			this.classList.add('drag-over')
-
-			const afterElement = getDragAfterElement(this, e.clientX, e.clientY)
-			if (!afterElement) {
-				this.appendChild(draggedCard)
-			} else if (afterElement !== draggedCard) {
-				this.insertBefore(draggedCard, afterElement)
-			}
-		})
-
-		grid.addEventListener('dragleave', function () {
-			this.classList.remove('drag-over')
-		})
-
-		grid.addEventListener('drop', function (e) {
-			e.preventDefault()
-			if (!draggedCard) return
-
-			const sourceGrid = getCardGridFromSectionId(draggedCard.dataset.sourceSectionId)
-			const movedCard = draggedCard
-			const sourceSectionId = movedCard.dataset.sourceSectionId || movedCard.dataset.sectionId
-			const targetSectionId = this.dataset.sectionId
-			const sectionChanged = !!targetSectionId && sourceSectionId !== targetSectionId
-
-			movedCard.dataset.sectionId = targetSectionId || movedCard.dataset.sectionId
-
-			preventCardToggleUntil = Date.now() + 250
-			const positions = collectPositionsFromGrids([sourceGrid, this])
-			sendLayoutUpdate(
-				positions,
-				movedCard.dataset.relayId,
-				movedCard.dataset.outputId,
-				sectionChanged ? targetSectionId : null,
-			)
-			this.classList.remove('drag-over')
-		})
-	})
+function isOn(output) {
+	return Lights.states.get(output.cardId) === 1
 }
 
-function ensureInvisibleDragImage() {
-	if (invisibleDragImage) {
-		return
-	}
+function renderSection(section, index) {
+	const outputs = sectionOutputs(section.id)
+	const collapsed = Lights.collapsed.has(section.id)
 
-	const canvas = document.createElement('canvas')
-	canvas.width = 1
-	canvas.height = 1
-	invisibleDragImage = canvas
-}
+	const element = document.createElement('section')
+	element.className = 'room'
+	element.classList.toggle('collapsed', collapsed)
+	element.dataset.sectionId = section.id
+	// Empty sections only matter while arranging lights.
+	element.hidden = !Lights.editMode && outputs.length === 0
 
-function bindTouchReorderHandlers(card) {
-	card.addEventListener('touchstart', function (e) {
-		if (e.touches.length !== 1) {
-			clearTouchPressState()
-			return
-		}
+	const toggle = document.createElement('button')
+	toggle.type = 'button'
+	toggle.className = 'section-toggle'
+	toggle.dataset.focusKey = `section-toggle-${section.id}`
+	toggle.setAttribute('aria-expanded', String(!collapsed))
+	toggle.setAttribute('aria-controls', `section-grid-${section.id}`)
+	toggle.addEventListener('click', () => toggleSection(section.id))
+	const chevron = textElement('span', 'section-chevron', '▾')
+	chevron.setAttribute('aria-hidden', 'true')
+	const count = textElement('span', 'section-count', '')
+	count.hidden = true
+	toggle.append(chevron, textElement('span', 'section-name', section.name), count)
+	const heading = document.createElement('h2')
+	heading.appendChild(toggle)
 
-		const touch = e.touches[0]
-		touchPressCandidate = {
-			card: this,
-			startX: touch.clientX,
-			startY: touch.clientY,
-		}
-
-		clearTimeout(touchPressTimer)
-		touchPressTimer = setTimeout(function () {
-			if (!touchPressCandidate || touchDragState.active) {
-				return
-			}
-
-			startTouchDrag(touchPressCandidate.card, touchPressCandidate.startX, touchPressCandidate.startY)
-		}, LONG_PRESS_MS)
-	}, { passive: true })
-
-	card.addEventListener('touchmove', function (e) {
-		if (touchDragState.active) {
-			e.preventDefault()
-			if (!e.touches.length) return
-
-			moveTouchDrag(e.touches[0].clientX, e.touches[0].clientY)
-			return
-		}
-
-		if (!touchPressCandidate || touchPressCandidate.card !== this || !e.touches.length) {
-			return
-		}
-
-		const touch = e.touches[0]
-		const dx = touch.clientX - touchPressCandidate.startX
-		const dy = touch.clientY - touchPressCandidate.startY
-		if (Math.hypot(dx, dy) > LONG_PRESS_MOVE_CANCEL_PX) {
-			clearTouchPressState()
-		}
-	}, { passive: false })
-
-	card.addEventListener('touchend', function () {
-		if (touchDragState.active) {
-			finishTouchDrag(false)
-			return
-		}
-
-		clearTouchPressState()
-	}, { passive: true })
-
-	card.addEventListener('touchcancel', function () {
-		if (touchDragState.active) {
-			finishTouchDrag(true)
-			return
-		}
-
-		clearTouchPressState()
-	}, { passive: true })
-}
-
-function startTouchDrag(card, startX, startY) {
-	const sourceGrid = card.parentElement
-	if (!sourceGrid || !sourceGrid.classList.contains('light-grid')) {
-		return
-	}
-
-	const rect = card.getBoundingClientRect()
-	const placeholder = document.createElement('div')
-	placeholder.className = 'light-card-placeholder'
-	placeholder.style.width = `${rect.width}px`
-	placeholder.style.height = `${rect.height}px`
-
-	sourceGrid.insertBefore(placeholder, card.nextSibling)
-
-	touchDragState.active = true
-	touchDragState.card = card
-	touchDragState.placeholder = placeholder
-	touchDragState.sourceGrid = sourceGrid
-	touchDragState.offsetX = startX - rect.left
-	touchDragState.offsetY = startY - rect.top
-
-	preventCardToggleUntil = Date.now() + 800
-	document.body.classList.add('touch-reordering')
-
-	card.classList.add('touch-dragging')
-	card.style.width = `${rect.width}px`
-	card.style.height = `${rect.height}px`
-	card.style.left = '0'
-	card.style.top = '0'
-	card.style.position = 'fixed'
-	card.style.zIndex = '2500'
-	card.style.pointerEvents = 'none'
-
-	moveTouchDrag(startX, startY)
-}
-
-function moveTouchDrag(clientX, clientY) {
-	if (!touchDragState.active || !touchDragState.card) {
-		return
-	}
-
-	const card = touchDragState.card
-	const x = clientX - touchDragState.offsetX
-	const y = clientY - touchDragState.offsetY
-	card.style.transform = `translate3d(${x}px, ${y}px, 0)`
-
-	const elementUnderTouch = document.elementFromPoint(clientX, clientY)
-	const targetGrid = elementUnderTouch ? elementUnderTouch.closest('.light-grid') : null
-	if (!targetGrid) {
-		return
-	}
-
-	const afterElement = getDragAfterElement(targetGrid, clientX, clientY)
-	if (!afterElement) {
-		targetGrid.appendChild(touchDragState.placeholder)
-	} else if (afterElement !== touchDragState.placeholder) {
-		targetGrid.insertBefore(touchDragState.placeholder, afterElement)
-	}
-
-	targetGrid.classList.add('drag-over')
-}
-
-function finishTouchDrag(cancelled) {
-	if (!touchDragState.active || !touchDragState.card) {
-		clearTouchPressState()
-		return
-	}
-
-	const card = touchDragState.card
-	const placeholder = touchDragState.placeholder
-
-	document.querySelectorAll('.light-grid.drag-over').forEach(grid => grid.classList.remove('drag-over'))
-
-	if (!cancelled && placeholder && placeholder.parentElement) {
-		const targetGrid = placeholder.parentElement
-		const sourceGrid = touchDragState.sourceGrid
-		const sourceSectionId = card.dataset.sectionId
-		const targetSectionId = targetGrid.dataset.sectionId
-		const sectionChanged = !!targetSectionId && sourceSectionId !== targetSectionId
-
-		placeholder.parentElement.insertBefore(card, placeholder)
-		card.dataset.sectionId = targetSectionId || card.dataset.sectionId
-
-		const positions = collectPositionsFromGrids([sourceGrid, targetGrid])
-		sendLayoutUpdate(
-			positions,
-			card.dataset.relayId,
-			card.dataset.outputId,
-			sectionChanged ? targetSectionId : null,
+	const actions = document.createElement('div')
+	actions.className = 'section-actions'
+	if (Lights.editMode) {
+		const deletable = section.id !== Lights.defaultSection && Lights.sections.length > 1
+		actions.append(
+			iconButton('↑', `Move ${section.name} up`, `section-up-${section.id}`, () => moveSection(section.id, -1), index === 0),
+			iconButton('↓', `Move ${section.name} down`, `section-down-${section.id}`, () => moveSection(section.id, 1),
+				index === Lights.sections.length - 1),
+			iconButton('✏️', `Rename ${section.name}`, `section-rename-${section.id}`, () => openSectionDialog(section.id)),
+			iconButton('🗑️', deletable ? `Delete ${section.name}` : `${section.name} can't be deleted: new lights are added to it`,
+				`section-delete-${section.id}`, () => deleteSection(section.id), !deletable),
 		)
-	} else if (touchDragState.sourceGrid) {
-		touchDragState.sourceGrid.appendChild(card)
+	} else {
+		const allOff = textElement('button', 'section-all-off', 'All off')
+		allOff.type = 'button'
+		allOff.hidden = true
+		allOff.dataset.focusKey = `section-off-${section.id}`
+		allOff.setAttribute('aria-label', `Turn off the lights in ${section.name}`)
+		allOff.addEventListener('click', () => switchSectionOff(section.id))
+		actions.appendChild(allOff)
 	}
 
-	if (placeholder && placeholder.parentElement) {
-		placeholder.parentElement.removeChild(placeholder)
+	const header = document.createElement('div')
+	header.className = 'section-header'
+	header.append(heading, actions)
+
+	const grid = document.createElement('div')
+	grid.className = 'light-grid'
+	grid.id = `section-grid-${section.id}`
+	grid.dataset.sectionId = section.id
+	grid.hidden = collapsed
+	for (const output of outputs) {
+		const card = Lights.editMode ? renderEditableCard(output) : renderCard(output)
+		Lights.cards.set(output.cardId, card)
+		grid.appendChild(card)
 	}
+	if (Lights.editMode) bindDropTarget(grid)
 
-	card.classList.remove('touch-dragging')
-	card.style.width = ''
-	card.style.height = ''
-	card.style.left = ''
-	card.style.top = ''
-	card.style.position = ''
-	card.style.zIndex = ''
-	card.style.pointerEvents = ''
-	card.style.transform = ''
-
-	document.body.classList.remove('touch-reordering')
-
-	touchDragState.active = false
-	touchDragState.card = null
-	touchDragState.placeholder = null
-	touchDragState.sourceGrid = null
-	touchDragState.offsetX = 0
-	touchDragState.offsetY = 0
-
-	clearTouchPressState()
+	element.append(header, grid)
+	return element
 }
 
-function clearTouchPressState() {
-	if (touchPressTimer) {
-		clearTimeout(touchPressTimer)
-	}
-
-	touchPressTimer = null
-	touchPressCandidate = null
+function iconButton(icon, label, focusKey, onClick, disabled = false) {
+	const button = textElement('button', 'icon-btn', icon)
+	button.type = 'button'
+	button.title = label
+	button.setAttribute('aria-label', label)
+	button.dataset.focusKey = focusKey
+	button.disabled = disabled
+	button.addEventListener('click', onClick)
+	return button
 }
 
-function canDropInGrid(card, grid) {
-	if (!card || !grid) {
-		return false
-	}
+function renderCard(output) {
+	const card = document.createElement('button')
+	card.type = 'button'
+	card.className = 'light-card'
+	card.dataset.cardId = output.cardId
+	card.dataset.focusKey = `card-${output.cardId}`
+	card.addEventListener('click', () => toggleLight(output.cardId))
 
-	return !!grid.dataset.sectionId
+	const image = document.createElement('img')
+	image.alt = ''
+	card.append(image, textElement('span', 'light-label', output.name), textElement('span', 'light-status', ''))
+	updateCard(card)
+	return card
 }
 
-function getCardGridFromSectionId(sectionId) {
-	if (!sectionId) {
-		return null
+function renderEditableCard(output) {
+	// Firefox cannot drag <button>s, so lights being arranged are plain elements.
+	const card = document.createElement('div')
+	card.className = 'light-card is-editing'
+	card.dataset.cardId = output.cardId
+	card.dataset.focusKey = `card-${output.cardId}`
+	card.tabIndex = 0
+	card.draggable = true
+	card.setAttribute('role', 'button')
+	card.setAttribute('aria-haspopup', 'dialog')
+	card.setAttribute('aria-label', `Move ${output.name}`)
+
+	const grip = textElement('span', 'drag-grip', '⠿')
+	grip.setAttribute('aria-hidden', 'true')
+	const image = document.createElement('img')
+	image.alt = ''
+	image.src = IMAGE_OFF
+	card.append(grip, image, textElement('span', 'light-label', output.name))
+
+	card.addEventListener('click', () => {
+		if (Date.now() >= Lights.suppressClickUntil) openMoveDialog(output.cardId)
+	})
+	card.addEventListener('keydown', event => {
+		if (event.key === 'Enter' || event.key === ' ') {
+			event.preventDefault()
+			openMoveDialog(output.cardId)
+		}
+	})
+	bindMouseDrag(card)
+	bindTouchDrag(card)
+	return card
+}
+
+function updateCard(card) {
+	const output = Lights.outputs.get(card.dataset.cardId)
+	if (!output || card.classList.contains('is-editing')) return
+
+	const state = Lights.states.get(output.cardId)
+	const offline = Lights.onlineRelays !== null && !Lights.onlineRelays.has(output.relayId)
+	const pending = Lights.pending.has(output.cardId)
+	const usable = Lights.permissions.control && Lights.connection === 'connected'
+	card.classList.toggle('is-on', state === 1)
+	card.classList.toggle('is-unknown', state === undefined)
+	card.classList.toggle('is-offline', offline)
+	card.classList.toggle('is-pending', pending)
+	card.setAttribute('aria-pressed', String(state === 1))
+	card.setAttribute('aria-busy', String(pending))
+	card.setAttribute('aria-disabled', String(!usable))
+	card.title = offline ? 'Its relay is not responding, so this light may not switch' : ''
+	card.querySelector('img').src = state === 1 ? IMAGE_ON : IMAGE_OFF
+
+	const status = card.querySelector('.light-status')
+	status.textContent = offline ? 'Offline' : state === undefined ? 'No status' : ''
+	status.hidden = !status.textContent
+}
+
+function updateCards() {
+	Lights.cards.forEach(updateCard)
+}
+
+function updateSummaries() {
+	for (const element of document.querySelectorAll('#room .room')) {
+		const on = sectionOutputs(element.dataset.sectionId).filter(isOn).length
+		const count = element.querySelector('.section-count')
+		count.textContent = on ? `${on} on` : ''
+		count.hidden = !on
+		const allOff = element.querySelector('.section-all-off')
+		if (allOff) allOff.hidden = !on || !Lights.permissions.control
+	}
+	updateToolbar()
+}
+
+function updateToolbar() {
+	const editing = Lights.editMode
+	byId('editButton').hidden = !Lights.permissions.edit || editing
+	byId('addSectionButton').hidden = !editing
+	byId('rcmLink').hidden = !editing
+	byId('doneButton').hidden = !editing
+	byId('allOffButton').hidden = editing || !Lights.permissions.control || ![...Lights.outputs.values()].some(isOn)
+}
+
+function updateNotice() {
+	const notice = byId('pageNotice')
+	if (Lights.editMode) {
+		notice.textContent = 'Drag lights to reorder them or move them to another section, or select a light to move it with buttons.'
+	} else if (Lights.configured && !Lights.permissions.control) {
+		notice.textContent = 'View only: your account can see the lights but not switch them.'
+	} else {
+		notice.textContent = ''
+	}
+	notice.hidden = !notice.textContent
+}
+
+// ============================================
+// SWITCHING
+// ============================================
+
+function toggleLight(cardId) {
+	const output = Lights.outputs.get(cardId)
+	if (!output || Lights.pending.has(cardId)) return
+	if (!Lights.permissions.control) {
+		showToast(VIEW_ONLY, 'error')
+		return
 	}
 
-	return document.querySelector(`.light-grid[data-section-id="${sectionId}"]`)
+	// An unknown state is switched on, as before states were reported.
+	const state = Lights.states.get(cardId) === 1 ? 0 : 1
+	if (sendCommand({ relay_id: output.relayId, output_id: output.outputId, state })) {
+		markPending([cardId])
+	}
+}
+
+function switchSectionOff(sectionId) {
+	const on = sectionOutputs(sectionId).filter(isOn)
+	if (sendCommand({ type: 'all_off', section: Number(sectionId) })) {
+		markPending(on.map(output => output.cardId))
+	}
+}
+
+async function switchEverythingOff() {
+	const on = [...Lights.outputs.values()].filter(isOn)
+	const confirmed = await confirmDialog({
+		title: 'Turn off all lights?',
+		message: on.length === 1 ? `${on[0].name} is on.` : `${on.length} lights are on.`,
+		confirmLabel: 'Turn all off',
+	})
+	if (confirmed && sendCommand({ type: 'all_off' })) {
+		markPending(on.map(output => output.cardId))
+	}
+}
+
+function markPending(cardIds) {
+	const waiting = cardIds.filter(cardId => !Lights.pending.has(cardId))
+	if (!waiting.length) return
+
+	const timer = setTimeout(() => {
+		const late = waiting.filter(cardId => Lights.pending.get(cardId) === timer)
+		if (!late.length) return
+		late.forEach(cardId => Lights.pending.delete(cardId))
+		updateCards()
+		const name = Lights.outputs.get(late[0])?.name
+		showToast(late.length === 1 && name
+			? `${name} did not respond. Its relay may be offline.`
+			: `${late.length} lights did not respond. Their relays may be offline.`, 'error')
+	}, PENDING_TIMEOUT_MS)
+	waiting.forEach(cardId => Lights.pending.set(cardId, timer))
+	updateCards()
+}
+
+function sendCommand(command) {
+	if (Lights.connection === 'connected' && wsManager.send(JSON.stringify(command))) {
+		return true
+	}
+
+	showToast(NOT_CONNECTED, 'error')
+	return false
+}
+
+// ============================================
+// SECTIONS
+// ============================================
+
+function sectionElement(sectionId) {
+	return [...document.querySelectorAll('#room .room')].find(element => element.dataset.sectionId === sectionId) || null
+}
+
+function gridElement(sectionId) {
+	return [...document.querySelectorAll('#room .light-grid')].find(grid => grid.dataset.sectionId === sectionId) || null
+}
+
+function toggleSection(sectionId) {
+	const collapsed = !Lights.collapsed.has(sectionId)
+	if (collapsed) {
+		Lights.collapsed.add(sectionId)
+	} else {
+		Lights.collapsed.delete(sectionId)
+	}
+	saveCollapsedSections()
+
+	const element = sectionElement(sectionId)
+	if (!element) return
+	element.classList.toggle('collapsed', collapsed)
+	element.querySelector('.section-toggle').setAttribute('aria-expanded', String(!collapsed))
+	element.querySelector('.light-grid').hidden = collapsed
+}
+
+function loadCollapsedSections() {
+	try {
+		const ids = JSON.parse(localStorage.getItem(COLLAPSED_SECTIONS_KEY) || '[]')
+		return new Set(Array.isArray(ids) ? ids.map(String) : [])
+	} catch (error) {
+		return new Set()
+	}
+}
+
+function saveCollapsedSections() {
+	const known = new Set(Lights.sections.map(section => section.id))
+	try {
+		localStorage.setItem(COLLAPSED_SECTIONS_KEY, JSON.stringify([...Lights.collapsed].filter(id => known.has(id))))
+	} catch (error) {
+		// Storage can be unavailable, e.g. in private browsing; collapsing still works until a reload.
+	}
+}
+
+function moveSection(sectionId, delta) {
+	const order = Lights.sections.map(section => section.id)
+	const index = order.indexOf(sectionId)
+	const target = index + delta
+	if (index < 0 || target < 0 || target >= order.length) return
+
+	order.splice(index, 1)
+	order.splice(target, 0, sectionId)
+	sendCommand({ type: 'reorder_sections', order: order.map(Number) })
+}
+
+function openSectionDialog(sectionId = null) {
+	const section = Lights.sections.find(candidate => candidate.id === sectionId)
+	Lights.renamedSectionId = section ? section.id : null
+	byId('sectionDialogTitle').textContent = section ? `Rename ${section.name}` : 'Add section'
+	byId('sectionSubmit').textContent = section ? 'Rename' : 'Add'
+	byId('sectionName').value = section ? section.name : ''
+	showSectionNameError('')
+	openDialog(byId('sectionDialog'))
+	byId('sectionName').focus()
+}
+
+function showSectionNameError(message) {
+	const error = byId('sectionNameError')
+	error.textContent = message
+	error.hidden = !message
+	byId('sectionName').setAttribute('aria-invalid', String(Boolean(message)))
+}
+
+function submitSectionForm(event) {
+	event.preventDefault()
+	const name = byId('sectionName').value.trim()
+	const renamed = Lights.renamedSectionId
+	if (!name) {
+		showSectionNameError('Enter a name for the section.')
+		return
+	}
+	if (Lights.sections.some(section => section.id !== renamed && section.name.trim().toLowerCase() === name.toLowerCase())) {
+		showSectionNameError('A section with this name already exists.')
+		return
+	}
+
+	const command = renamed === null
+		? { type: 'add_section', name }
+		: { type: 'rename_section', section: Number(renamed), name }
+	if (sendCommand(command)) closeDialog(byId('sectionDialog'))
+}
+
+async function deleteSection(sectionId) {
+	const section = Lights.sections.find(candidate => candidate.id === sectionId)
+	if (!section) return
+
+	const lights = sectionOutputs(sectionId).length
+	const target = Lights.sections.find(candidate => candidate.id === Lights.defaultSection)
+		|| Lights.sections.find(candidate => candidate.id !== sectionId)
+	const confirmed = await confirmDialog({
+		title: `Delete ${section.name}?`,
+		message: !lights ? 'It has no lights.'
+			: `${lights === 1 ? 'Its light moves' : `Its ${lights} lights move`} to ${target ? target.name : 'another section'}.`,
+		confirmLabel: 'Delete section',
+	})
+	if (confirmed) sendCommand({ type: 'remove_section', section: Number(sectionId) })
+}
+
+// ============================================
+// EDIT MODE AND MOVING LIGHTS
+// ============================================
+
+function setEditMode(on) {
+	if (on && !Lights.permissions.edit) return
+	Lights.editMode = on
+	cancelLongPress()
+	render()
+	byId(on ? 'doneButton' : 'editButton').focus()
+}
+
+function positionOf(card) {
+	return { grid: card.parentElement, next: card.nextElementSibling }
+}
+
+function restorePosition(card, from) {
+	from.grid.insertBefore(card, from.next)
+}
+
+function openMoveDialog(cardId) {
+	const output = Lights.outputs.get(cardId)
+	const card = Lights.cards.get(cardId)
+	if (!output || !card || !card.parentElement) return
+
+	Lights.moveCardId = cardId
+	const sectionId = card.parentElement.dataset.sectionId
+	const section = Lights.sections.find(candidate => candidate.id === sectionId)
+	const siblings = [...card.parentElement.children]
+	const index = siblings.indexOf(card)
+	byId('moveDialogTitle').textContent = `Move ${output.name}`
+	byId('moveDialogText').textContent = `Light ${index + 1} of ${siblings.length} in ${section ? section.name : 'its section'}.`
+	byId('moveEarlierButton').disabled = index === 0
+	byId('moveLaterButton').disabled = index === siblings.length - 1
+
+	const select = byId('moveSection')
+	select.replaceChildren(...Lights.sections.map(candidate => {
+		const option = document.createElement('option')
+		option.value = candidate.id
+		option.textContent = candidate.name
+		return option
+	}))
+	select.value = sectionId
+	openDialog(byId('moveDialog'))
+}
+
+function moveWithinSection(delta) {
+	const card = Lights.cards.get(Lights.moveCardId)
+	closeDialog(byId('moveDialog'))
+	if (!card || !card.parentElement) return
+
+	const from = positionOf(card)
+	if (delta < 0 && card.previousElementSibling) {
+		card.parentElement.insertBefore(card, card.previousElementSibling)
+	} else if (delta > 0 && card.nextElementSibling) {
+		card.parentElement.insertBefore(card.nextElementSibling, card)
+	}
+	commitMove(card, from)
+}
+
+function submitMoveForm(event) {
+	event.preventDefault()
+	const card = Lights.cards.get(Lights.moveCardId)
+	const grid = gridElement(byId('moveSection').value)
+	closeDialog(byId('moveDialog'))
+	if (!card || !grid || grid === card.parentElement) return
+
+	const from = positionOf(card)
+	grid.appendChild(card)
+	commitMove(card, from)
+}
+
+function commitMove(card, from) {
+	const grid = card.parentElement
+	// Put back where it started.
+	if (grid === from.grid && card.nextElementSibling === from.next) return
+
+	const moves = []
+	for (const affected of new Set([from.grid, grid])) {
+		[...affected.querySelectorAll('.light-card[data-card-id]')].forEach((element, index) => {
+			const output = Lights.outputs.get(element.dataset.cardId)
+			if (output) moves.push({ output, sectionId: affected.dataset.sectionId, index })
+		})
+	}
+
+	const moved = Lights.outputs.get(card.dataset.cardId)
+	const command = {
+		type: 'layout_update',
+		positions: moves.map(({ output, index }) => ({ relay_id: output.relayId, output_id: output.outputId, output_idx: index })),
+	}
+	if (grid !== from.grid) {
+		Object.assign(command, { relay_id: moved.relayId, output_id: moved.outputId, section: Number(grid.dataset.sectionId) })
+	}
+	if (!sendCommand(command)) {
+		restorePosition(card, from)
+		return
+	}
+
+	// Match the page until the server broadcasts the new layout.
+	for (const { output, sectionId, index } of moves) {
+		output.sectionId = sectionId
+		output.outputIdx = index
+	}
+}
+
+function endDrag() {
+	Lights.drag = null
+	const deferred = Lights.deferredConfiguration
+	Lights.deferredConfiguration = null
+	if (deferred) applyConfiguration(deferred)
+}
+
+function clearDropHighlights() {
+	document.querySelectorAll('.light-grid.drag-over').forEach(grid => grid.classList.remove('drag-over'))
+}
+
+function dragImage() {
+	if (!invisibleDragImage) {
+		invisibleDragImage = document.createElement('canvas')
+		invisibleDragImage.width = 1
+		invisibleDragImage.height = 1
+	}
+	return invisibleDragImage
 }
 
 function getDragAfterElement(container, x, y) {
-	const cards = [...container.querySelectorAll('.light-card:not(.dragging)')]
+	const cards = [...container.querySelectorAll('.light-card:not(.dragging):not(.touch-dragging)')]
 
 	let closest = null
 	let closestScore = Infinity
@@ -555,166 +716,242 @@ function getDragAfterElement(container, x, y) {
 	return closest
 }
 
-function sendSectionPositions(sectionGrid) {
-	if (!wsManager.isConnected()) {
-		return
+function placeAt(grid, element, x, y) {
+	const after = getDragAfterElement(grid, x, y)
+	if (!after) {
+		if (grid.lastElementChild !== element) grid.appendChild(element)
+	} else if (after !== element && after.previousElementSibling !== element) {
+		grid.insertBefore(element, after)
 	}
+}
 
-	const cards = [...sectionGrid.querySelectorAll('.light-card')]
-	const positions = cards.map((card, index) => {
-		card.dataset.outputIdx = `${index}`
-		return {
-			relay_id: card.dataset.relayId,
-			output_id: card.dataset.outputId,
-			output_idx: index,
+function bindMouseDrag(card) {
+	card.addEventListener('dragstart', event => {
+		if (Lights.drag) return
+		Lights.drag = { card, kind: 'mouse', from: positionOf(card), dropped: false }
+		card.classList.add('dragging')
+		if (event.dataTransfer) {
+			event.dataTransfer.effectAllowed = 'move'
+			event.dataTransfer.setData('text/plain', card.dataset.cardId)
+			// The card itself moves through the page, so hide the browser's ghost image.
+			if (event.dataTransfer.setDragImage) event.dataTransfer.setDragImage(dragImage(), 0, 0)
 		}
 	})
 
-	if (!positions.length) {
-		return
-	}
-
-	wsManager.send(JSON.stringify({ type: 'change_positions', positions: positions }))
+	card.addEventListener('dragend', () => {
+		const drag = Lights.drag
+		if (!drag || drag.card !== card) return
+		card.classList.remove('dragging')
+		clearDropHighlights()
+		// Released outside a section or cancelled with Escape.
+		if (!drag.dropped) restorePosition(card, drag.from)
+		endDrag()
+	})
 }
 
-function collectPositionsFromGrids(grids) {
-	const uniqueGrids = [...new Set(grids.filter(Boolean))]
-	const positions = []
-
-	uniqueGrids.forEach(grid => {
-		const cards = [...grid.querySelectorAll('.light-card')]
-		cards.forEach((card, index) => {
-			card.dataset.outputIdx = `${index}`
-			positions.push({
-				relay_id: card.dataset.relayId,
-				output_id: card.dataset.outputId,
-				output_idx: index,
-			})
-		})
+function bindDropTarget(grid) {
+	grid.addEventListener('dragover', event => {
+		const drag = Lights.drag
+		if (!drag || drag.kind !== 'mouse') return
+		event.preventDefault()
+		grid.classList.add('drag-over')
+		placeAt(grid, drag.card, event.clientX, event.clientY)
 	})
 
-	return positions
+	grid.addEventListener('dragleave', () => grid.classList.remove('drag-over'))
+
+	grid.addEventListener('drop', event => {
+		const drag = Lights.drag
+		if (!drag || drag.kind !== 'mouse') return
+		event.preventDefault()
+		drag.dropped = true
+		grid.classList.remove('drag-over')
+		if (drag.card.parentElement !== grid) placeAt(grid, drag.card, event.clientX, event.clientY)
+		Lights.suppressClickUntil = Date.now() + 250
+		commitMove(drag.card, drag.from)
+	})
 }
 
-function sendLayoutUpdate(positions, relayId, outputId, sectionId) {
-	if (!wsManager.isConnected()) {
-		return
-	}
+function bindTouchDrag(card) {
+	card.addEventListener('touchstart', event => {
+		cancelLongPress()
+		if (event.touches.length !== 1 || Lights.drag) return
 
-	if (!positions || !positions.length) {
-		return
-	}
+		const touch = event.touches[0]
+		const press = { card, x: touch.clientX, y: touch.clientY }
+		press.timer = setTimeout(() => {
+			if (Lights.press === press) startTouchDrag(press)
+		}, LONG_PRESS_MS)
+		Lights.press = press
+	}, { passive: true })
 
-	const payload = {
-		type: 'layout_update',
-		positions: positions,
-	}
-
-	if (sectionId && relayId && outputId) {
-		payload.relay_id = relayId
-		payload.output_id = outputId
-		payload.section = sectionId
-	}
-
-	wsManager.send(JSON.stringify(payload))
-}
-
-function sendChangeSection(relayId, outputId, sectionId) {
-	if (!wsManager.isConnected()) {
-		return
-	}
-
-	if (!relayId || !outputId || !sectionId) {
-		return
-	}
-
-	wsManager.send(JSON.stringify({
-		type: 'change_section',
-		relay_id: relayId,
-		output_id: outputId,
-		section: sectionId,
-	}))
-}
-
-// Navigation functions are now in common.js
-
-function showChangeSectionModal() {
-	document.getElementById('changeSectionModal').classList.add('active')
-	document.getElementById('buttons').value = ''
-	document.getElementById('sections').value = ''
-	document.getElementById('buttons').focus()
-	document.addEventListener('keydown', function handleModalKeys(e) {
-		if (e.key === 'Escape') {
-			closeModal('changeSectionModal')
-			document.removeEventListener('keydown', handleModalKeys)
-		} else if (e.key === 'Enter') {
-			submitChangeSectionForm()
-			document.removeEventListener('keydown', handleModalKeys)
+	card.addEventListener('touchmove', event => {
+		const drag = Lights.drag
+		if (drag && drag.kind === 'touch' && drag.card === card) {
+			event.preventDefault()
+			if (event.touches.length) moveTouchDrag(event.touches[0].clientX, event.touches[0].clientY)
+			return
 		}
+
+		// Scrolling the page, not holding the light.
+		const press = Lights.press
+		if (!press || press.card !== card || !event.touches.length) return
+		const touch = event.touches[0]
+		if (Math.hypot(touch.clientX - press.x, touch.clientY - press.y) > LONG_PRESS_MOVE_CANCEL_PX) cancelLongPress()
+	}, { passive: false })
+
+	card.addEventListener('touchend', () => endTouch(card, false), { passive: true })
+	card.addEventListener('touchcancel', () => endTouch(card, true), { passive: true })
+}
+
+function cancelLongPress() {
+	if (Lights.press) clearTimeout(Lights.press.timer)
+	Lights.press = null
+}
+
+function endTouch(card, cancelled) {
+	cancelLongPress()
+	const drag = Lights.drag
+	if (drag && drag.kind === 'touch' && drag.card === card) finishTouchDrag(cancelled)
+}
+
+function startTouchDrag(press) {
+	Lights.press = null
+	const { card, x, y } = press
+	const grid = card.parentElement
+	if (!grid || !grid.classList.contains('light-grid')) return
+
+	const rect = card.getBoundingClientRect()
+	const from = positionOf(card)
+	const placeholder = document.createElement('div')
+	placeholder.className = 'light-card-placeholder'
+	placeholder.style.width = `${rect.width}px`
+	placeholder.style.height = `${rect.height}px`
+	grid.insertBefore(placeholder, card.nextSibling)
+
+	Lights.drag = { card, kind: 'touch', from, placeholder, offsetX: x - rect.left, offsetY: y - rect.top }
+	document.body.classList.add('touch-reordering')
+	card.classList.add('touch-dragging')
+	Object.assign(card.style, {
+		width: `${rect.width}px`,
+		height: `${rect.height}px`,
+		left: '0',
+		top: '0',
+		position: 'fixed',
+		zIndex: '2500',
+		pointerEvents: 'none',
+	})
+	moveTouchDrag(x, y)
+}
+
+function moveTouchDrag(x, y) {
+	const drag = Lights.drag
+	drag.card.style.transform = `translate3d(${x - drag.offsetX}px, ${y - drag.offsetY}px, 0)`
+
+	const target = document.elementFromPoint ? document.elementFromPoint(x, y) : null
+	const grid = target ? target.closest('.light-grid') : null
+	if (!grid || grid.hidden) return
+
+	clearDropHighlights()
+	grid.classList.add('drag-over')
+	placeAt(grid, drag.placeholder, x, y)
+}
+
+function finishTouchDrag(cancelled) {
+	const { card, placeholder, from } = Lights.drag
+	clearDropHighlights()
+	if (cancelled || !placeholder.parentElement) {
+		restorePosition(card, from)
+	} else {
+		placeholder.parentElement.insertBefore(card, placeholder)
+	}
+	placeholder.remove()
+
+	card.classList.remove('touch-dragging')
+	for (const property of ['width', 'height', 'left', 'top', 'position', 'zIndex', 'pointerEvents', 'transform']) {
+		card.style[property] = ''
+	}
+	document.body.classList.remove('touch-reordering')
+	// The lifted finger still produces a click.
+	Lights.suppressClickUntil = Date.now() + 400
+
+	if (!cancelled) commitMove(card, from)
+	endDrag()
+}
+
+// ============================================
+// DIALOGS AND MESSAGES
+// ============================================
+
+function openDialog(dialog) {
+	document.querySelectorAll('dialog[open]').forEach(other => {
+		if (other !== dialog) other.close()
+	})
+	if (!dialog.open) dialog.showModal()
+}
+
+function closeDialog(dialog) {
+	if (dialog && dialog.open) dialog.close()
+}
+
+function confirmDialog({ title, message, confirmLabel }) {
+	settleConfirm(false)
+	byId('confirmDialogTitle').textContent = title
+	byId('confirmDialogText').textContent = message
+	byId('confirmSubmit').textContent = confirmLabel
+	return new Promise(resolve => {
+		Lights.confirmResolve = resolve
+		openDialog(byId('confirmDialog'))
 	})
 }
 
-function showAddSectionModal() {
-	document.getElementById('addSectionModal').classList.add('active')
-	document.getElementById('sectionName').value = ''
-	document.addEventListener('keydown', function handleModalKeys(e) {
-		if (e.key === 'Escape') {
-			closeModal('addSectionModal')
-			document.removeEventListener('keydown', handleModalKeys)
-		} else if (e.key === 'Enter') {
-			submitAddSectionForm()
-			document.removeEventListener('keydown', handleModalKeys)
-		}
+function settleConfirm(confirmed) {
+	const resolve = Lights.confirmResolve
+	Lights.confirmResolve = null
+	if (resolve) resolve(confirmed)
+}
+
+function showToast(message, kind = 'info') {
+	const region = byId('toastRegion')
+	const toast = textElement('div', `toast toast-${kind}`, message)
+	region.appendChild(toast)
+	while (region.children.length > 3) region.firstElementChild.remove()
+	setTimeout(() => toast.remove(), kind === 'error' ? 6000 : 4000)
+}
+
+// ============================================
+// SETUP
+// ============================================
+
+document.querySelector('.openbtn').addEventListener('click', openNav)
+document.querySelector('.closebtn').addEventListener('click', closeNav)
+byId('editButton').addEventListener('click', () => setEditMode(true))
+byId('doneButton').addEventListener('click', () => setEditMode(false))
+byId('addSectionButton').addEventListener('click', () => openSectionDialog())
+byId('allOffButton').addEventListener('click', switchEverythingOff)
+byId('sectionForm').addEventListener('submit', submitSectionForm)
+byId('sectionName').addEventListener('input', () => showSectionNameError(''))
+byId('moveForm').addEventListener('submit', submitMoveForm)
+byId('moveEarlierButton').addEventListener('click', () => moveWithinSection(-1))
+byId('moveLaterButton').addEventListener('click', () => moveWithinSection(1))
+byId('confirmForm').addEventListener('submit', event => {
+	event.preventDefault()
+	settleConfirm(true)
+	closeDialog(byId('confirmDialog'))
+})
+byId('confirmDialog').addEventListener('close', () => settleConfirm(false))
+document.querySelectorAll('dialog').forEach(dialog => {
+	// A click on the backdrop lands on the dialog itself.
+	dialog.addEventListener('click', event => {
+		if (event.target === dialog) closeDialog(dialog)
 	})
-}
+})
+document.querySelectorAll('[data-close-dialog]').forEach(button => {
+	button.addEventListener('click', () => closeDialog(button.closest('dialog')))
+})
 
-function closeModal(modalId) {
-	document.getElementById(modalId).classList.remove('active')
-}
-
-function submitChangeSectionForm() {
-	var buttonOutput = document.getElementById('buttons').value.trim()
-	var buttonSection = document.getElementById('sections').value.trim()
-	console.log('Changing section of', buttonOutput, 'to', buttonSection)
-
-	if (buttonOutput === '' || buttonSection === '') {
-		alert('Please fill in all fields.')
-		return
-	}
-
-	if (wsManager.send(JSON.stringify({ "type": "change_section", "relay_id": buttonOutput.slice(0, -2), "output_id": buttonOutput.slice(-1), "section": buttonSection }))) {
-		closeModal('changeSectionModal')
-	}
-}
-
-function submitAddSectionForm() {
-	var sectionName = document.getElementById('sectionName').value.trim()
-
-	if (sectionName === '') {
-		alert('Please enter a section name.')
-		return
-	}
-
-	if (wsManager.send(JSON.stringify({ "type": "add_section", "name": sectionName }))) {
-		closeModal('addSectionModal')
-	}
-}
-
-function makeSectionsCollapsible() {
-	const headers = document.querySelectorAll('.room h2');
-
-	headers.forEach(header => {
-		// Prevent duplicate listeners
-		if (header.dataset.collapsibleBound) return;
-
-		header.dataset.collapsibleBound = "true";
-
-		header.addEventListener('click', function () {
-			const grid = this.nextElementSibling;
-			if (!grid) return;
-
-			this.classList.toggle('collapsed');
-			grid.classList.toggle('collapsed');
-		});
-	});
-}
+wsManager.onOpen(() => setConnection('connected'))
+wsManager.onClose(() => setConnection(Lights.connection === 'connecting' ? 'connecting' : 'reconnecting'))
+wsManager.connect()
+wsManager.startConnectionCheck()
+wsManager.setupVisibilityHandler()

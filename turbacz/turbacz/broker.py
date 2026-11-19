@@ -44,6 +44,7 @@ async def periodic_check_devices(interval: int = 15):
         try:
             await state_manager.check_relays_if_online()
             await state_manager.check_switches_if_online()
+            await state_manager.send_relay_status()
 
         except Exception as e:
             print(f"Error checking relays/switches: {e}")
@@ -397,6 +398,7 @@ async def handle_root_state(payload_str):
     state_manager.set_device_role(data["deviceId"], data)
     state_manager.mark_relay_online(data["deviceId"], int(time()))
     state_manager.mark_switch_online(data["deviceId"], int(time()))
+    await state_manager.send_relay_status()
     ha_bridge.publish_relay_availability(data["deviceId"], True)
     # Presence sensors run the C3 switch image, so they share its newest version.
     image = "switch" if data["type"] == "presence" else data["type"]

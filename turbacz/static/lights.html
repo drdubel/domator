@@ -8,72 +8,104 @@
 	<link rel="icon" href="/static/favicon.ico" type="image/x-icon">
 	<script src="/sentry-config.js"></script>
 	<script src="/static/scripts/sentry.js"></script>
-	<link rel="stylesheet" href="/static/styles/common.css">
-	<link rel="stylesheet" href="/static/styles/lights.css">
+	<!-- New URLs for files this page's rework changed: copies cached before /static
+		was revalidated would otherwise outlive the markup. -->
+	<link rel="stylesheet" href="/static/styles/common.css?v=2">
+	<link rel="stylesheet" href="/static/styles/lights.css?v=2">
 	<script src="/static/scripts/common.js"></script>
 </head>
 
 <body>
 	<!-- Sidebar -->
-	<div id="sidenav" class="sidenav">
-		<a href="javascript:void(0)" class="closebtn" onclick="closeNav()">&times;</a>
+	<nav id="sidenav" class="sidenav" aria-label="Pages">
+		<button type="button" class="closebtn" aria-label="Close menu">&times;</button>
 		<a href="/auto">🏡 Home</a>
 		<a href="blinds">🪟 Blinds</a>
 		<a href="heating">🌡️ Heating</a>
+		<a href="rcm">🔌 Connections</a>
 		<a id="logout" href="/logout">Logout</a>
-	</div>
+	</nav>
 
 	<!-- Main Content -->
 	<div id="main">
 		<header class="header">
 			<div class="header-title">
-				<button class="openbtn" onclick="openNav()">☰</button>
-				<h1>💡 Lights Control</h1>
+				<button type="button" class="openbtn" aria-label="Open menu">☰</button>
+				<h1>💡 Lights<span class="title-suffix"> Control</span></h1>
 			</div>
 			<div id="toolbar">
-				<button class="toolbar-btn btn-secondary" onclick="window.location.href='/rcm'">🔌 Relay Connection
-					Manager</button>
-				<button class="toolbar-btn btn-refresh" onclick="showChangeSectionModal()"><span>➕</span> <a>Change
-						Section</a></button>
-				<button class="toolbar-btn btn-danger" onclick="showAddSectionModal()">➕ Add Section</button>
+				<span id="connectionStatus" class="connection-status" data-state="connecting" role="status">
+					<span class="connection-dot" aria-hidden="true"></span>
+					<span class="connection-label">Connecting…</span>
+				</span>
+				<button type="button" id="allOffButton" class="toolbar-btn btn-all-off" aria-label="Turn off all lights"
+					hidden>⏻<span class="btn-label"> All off</span></button>
+				<button type="button" id="editButton" class="toolbar-btn btn-ghost" aria-label="Edit layout"
+					hidden>✏️<span class="btn-label"> Edit</span></button>
+				<button type="button" id="addSectionButton" class="toolbar-btn btn-primary" aria-label="Add section"
+					hidden>➕<span class="btn-label"> Section</span></button>
+				<a id="rcmLink" class="toolbar-btn btn-ghost" href="/rcm" aria-label="Relay Connection Manager"
+					hidden>🔌<span class="btn-label"> Connections</span></a>
+				<button type="button" id="doneButton" class="toolbar-btn btn-secondary" hidden>✓ Done</button>
 			</div>
 		</header>
 
-		<div id="room"></div>
+		<p id="pageNotice" class="page-notice" hidden></p>
 
-		<div id="changeSectionModal" class="modal">
-			<div class="modal-content">
-				<div class="modal-header">Change Button Section</div>
-				<div class="form-group">
-					<label>Button</label>
-					<select id="buttons"></select>
-				</div>
-				<div class="form-group">
-					<label>Section</label>
-					<select id="sections"></select>
-				</div>
-				<div class="modal-buttons">
-					<button class="modal-btn save" onclick="submitChangeSectionForm()">Save</button>
-					<button class="modal-btn cancel" onclick="closeModal('changeSectionModal')">Cancel</button>
-				</div>
-			</div>
+		<div id="room">
+			<p class="room-placeholder">Loading lights…</p>
 		</div>
 
-		<div id="addSectionModal" class="modal">
-			<div class="modal-content">
-				<div class="modal-header">Add New Section</div>
+		<div id="toastRegion" class="toast-region" role="status" aria-live="polite"></div>
+
+		<dialog id="sectionDialog" class="modal" aria-labelledby="sectionDialogTitle">
+			<form id="sectionForm" class="modal-content" novalidate>
+				<h2 id="sectionDialogTitle" class="modal-header">Add section</h2>
 				<div class="form-group">
-					<label>Section Name</label>
-					<input type="text" id="sectionName" placeholder="Enter unique section name">
+					<label for="sectionName">Section name</label>
+					<input type="text" id="sectionName" maxlength="64" autocomplete="off" required
+						aria-describedby="sectionNameError">
+					<p id="sectionNameError" class="field-error" hidden></p>
 				</div>
 				<div class="modal-buttons">
-					<button class="modal-btn save" onclick="submitAddSectionForm()">Save</button>
-					<button class="modal-btn cancel" onclick="closeModal('addSectionModal')">Cancel</button>
+					<button type="submit" id="sectionSubmit" class="modal-btn save">Add</button>
+					<button type="button" class="modal-btn cancel" data-close-dialog>Cancel</button>
 				</div>
-			</div>
-		</div>
+			</form>
+		</dialog>
+
+		<dialog id="moveDialog" class="modal" aria-labelledby="moveDialogTitle" aria-describedby="moveDialogText">
+			<form id="moveForm" class="modal-content">
+				<h2 id="moveDialogTitle" class="modal-header">Move light</h2>
+				<p id="moveDialogText" class="dialog-text"></p>
+				<div class="move-buttons">
+					<button type="button" id="moveEarlierButton" class="modal-btn secondary">← Earlier</button>
+					<button type="button" id="moveLaterButton" class="modal-btn secondary">Later →</button>
+				</div>
+				<div class="form-group">
+					<label for="moveSection">Section</label>
+					<select id="moveSection"></select>
+				</div>
+				<div class="modal-buttons">
+					<button type="submit" class="modal-btn save">Move to section</button>
+					<button type="button" class="modal-btn cancel" data-close-dialog>Close</button>
+				</div>
+			</form>
+		</dialog>
+
+		<dialog id="confirmDialog" class="modal" aria-labelledby="confirmDialogTitle"
+			aria-describedby="confirmDialogText">
+			<form id="confirmForm" class="modal-content">
+				<h2 id="confirmDialogTitle" class="modal-header"></h2>
+				<p id="confirmDialogText" class="dialog-text"></p>
+				<div class="modal-buttons">
+					<button type="submit" id="confirmSubmit" class="modal-btn danger"></button>
+					<button type="button" class="modal-btn cancel" data-close-dialog>Cancel</button>
+				</div>
+			</form>
+		</dialog>
 	</div>
-	<script src="/static/scripts/lights.js"></script>
+	<script src="/static/scripts/lights.js?v=2"></script>
 </body>
 
 </html>

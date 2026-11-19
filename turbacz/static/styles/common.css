@@ -19,6 +19,12 @@
     --danger-color: #ef4444;
     --warning-color: #f59e0b;
 
+    /* Names from before the palette was renamed, still used by many rules. */
+    --color-primary: var(--primary-color);
+    --color-primary-dark: var(--primary-dark);
+    --color-success: var(--success-color);
+    --color-warning: var(--warning-color);
+
     /* Background */
     --bg-primary: #0f172a;
     --bg-secondary: #1e293b;

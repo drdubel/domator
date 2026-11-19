@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from turbacz.database import serialized_manager
 from turbacz.presence import PRESENCE_BUTTONS, sun_today
 from turbacz.settings import config
-from turbacz.validation import relay_output
+from turbacz.validation import DEFAULT_SECTION_ID, relay_output
 from turbacz.zigbee_devices import ZIGBEE_ID_END, ZIGBEE_ID_START, is_zigbee_id, validate_action, zigbee_device_id
 from turbacz.zigbee_knob import KNOB_ACTION_BUTTONS, KNOB_BUTTONS, KNOB_COMMANDS
 
@@ -81,8 +81,16 @@ class ConnectionManager:
                 """
                 CREATE TABLE IF NOT EXISTS sections (
                     id SERIAL PRIMARY KEY,
-                    name TEXT NOT NULL
+                    name TEXT NOT NULL,
+                    position INTEGER NOT NULL DEFAULT 0
                 );
+                """
+            )
+            # Sections created before they could be reordered keep their id order.
+            cur.execute(
+                """
+                ALTER TABLE sections
+                ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0;
                 """
             )
             cur.execute(
@@ -539,6 +547,19 @@ class ConnectionManager:
 
         return named_outputs
 
+    def get_light_outputs(self) -> dict[int, dict[str, tuple[str, int, int, int]]]:
+        """Named outputs shown as lights; blind pairs are driven from the blinds page."""
+        blind_outputs = self.get_blind_pair_outputs()
+
+        return {
+            relay_id: {
+                output_id: output
+                for output_id, output in outputs.items()
+                if (int(relay_id), output_id) not in blind_outputs
+            }
+            for relay_id, outputs in self.get_named_outputs().items()
+        }
+
     def get_output_auto_off_seconds(self, relay_id: int, output_id: str) -> int:
         with self.conn.cursor() as cur:
             row = cur.execute(
@@ -678,49 +699,79 @@ class ConnectionManager:
             )
         self.conn.commit()
 
-    def add_section(self, section_name: str):
+    def add_section(self, section_name: str) -> int:
+        with self.conn.cursor() as cur:
+            section_id = cur.execute(
+                """
+                INSERT INTO sections (name, position)
+                SELECT %s, COALESCE(MAX(position) + 1, 0) FROM sections
+                RETURNING id;
+                """,
+                (section_name,),
+            ).fetchone()[0]
+
+        self.conn.commit()
+        return section_id
+
+    def rename_section(self, section_id: int, section_name: str):
         with self.conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO sections (name)
-                VALUES (%s)
-                ON CONFLICT (id) DO NOTHING;
+                UPDATE sections
+                SET name = %s
+                WHERE id = %s;
                 """,
-                (section_name,),
+                (section_name, section_id),
             )
 
         self.conn.commit()
 
-    def remove_section(self, section_name: str):
+    def remove_section(self, section_id: int) -> int:
+        """Delete a section, appending its outputs to the default section.
+
+        Returns the section that received them.
+        """
+        sections = self.get_sections()
+        remaining = [other for other in sections if other != section_id]
+        if section_id not in sections or not remaining:
+            raise ValueError("Only an existing section other than the last can be deleted")
+        target = DEFAULT_SECTION_ID if DEFAULT_SECTION_ID in remaining else remaining[0]
+
         with self.conn.cursor() as cur:
+            # Outputs reference their section, so move them before deleting it.
             cur.execute(
                 """
-                SELECT id FROM sections
-                WHERE name = %s;
+                UPDATE outputs
+                SET section_id = %s,
+                    output_idx = output_idx + (
+                        SELECT COALESCE(MAX(output_idx) + 1, 0) FROM outputs WHERE section_id = %s
+                    )
+                WHERE section_id = %s;
                 """,
-                (section_name,),
+                (target, target, section_id),
             )
-            section = cur.fetchone()
-            if not section:
-                return
-
-            section_id = section[0]
-
             cur.execute(
                 """
-                    DELETE FROM sections
+                DELETE FROM sections
+                WHERE id = %s;
+                """,
+                (section_id,),
+            )
+
+        self.conn.commit()
+        return target
+
+    def reorder_sections(self, order: list[int]):
+        with self.conn.cursor() as cur:
+            for position, section_id in enumerate(order):
+                cur.execute(
+                    """
+                    UPDATE sections
+                    SET position = %s
                     WHERE id = %s;
                     """,
-                (section_id,),
-            )
-            cur.execute(
-                """
-                    UPDATE outputs
-                    SET section_id = 0
-                    WHERE section_id = %s;
-                    """,
-                (section_id,),
-            )
+                    (position, section_id),
+                )
 
         self.conn.commit()
 
@@ -753,8 +804,9 @@ class ConnectionManager:
         self.conn.commit()
 
     def get_sections(self) -> dict[int, str] | None:
+        """Sections in display order."""
         with self.conn.cursor() as cur:
-            cur.execute("SELECT id, name FROM sections;")
+            cur.execute("SELECT id, name FROM sections ORDER BY position, id;")
             sections = cur.fetchall()
 
         return {row[0]: row[1] for row in sections}

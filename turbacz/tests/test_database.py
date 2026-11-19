@@ -1,6 +1,6 @@
 import os
 from threading import RLock
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import psycopg
@@ -152,5 +152,62 @@ def test_second_instance_can_initialize_after_first_instance_reads():
                 assert restarted.get_zigbee_devices()[sid]["buttons"][left]["command"] == "up"
                 assert restarted.get_all_connections()[sid][left] == [(111, "a")]
                 assert second.info.transaction_status == TransactionStatus.IDLE
+        finally:
+            admin.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(schema))
+
+
+def test_sections_keep_their_order_and_pass_their_lights_on():
+    """Opt in with a disposable PostgreSQL DSN; only a unique schema is used."""
+    dsn = os.environ.get("TURBACZ_TEST_POSTGRES_DSN")
+    if not dsn:
+        pytest.skip("set TURBACZ_TEST_POSTGRES_DSN to run PostgreSQL regression")
+
+    connection = MagicMock()
+    cursor = connection.cursor.return_value.__enter__.return_value
+    cursor.execute.return_value = cursor
+    cursor.fetchone.return_value = [1]
+    cursor.fetchall.return_value = []
+    with patch("psycopg.connect", return_value=connection):
+        from turbacz.connection_manager import ConnectionManager
+
+    schema = sql.Identifier("turbacz_test_" + uuid4().hex)
+    with psycopg.connect(dsn, autocommit=True) as admin:
+        admin.execute(sql.SQL("CREATE SCHEMA {}").format(schema))
+        try:
+            with psycopg.connect(dsn) as conn:
+                conn.execute(sql.SQL("SET search_path TO {}").format(schema))
+                conn.execute("SET statement_timeout = '2s'")
+                # Sections as they were before they could be reordered.
+                conn.execute("CREATE TABLE sections (id SERIAL PRIMARY KEY, name TEXT NOT NULL)")
+                conn.execute("INSERT INTO sections (name) VALUES ('Default'), ('Kitchen')")
+                conn.commit()
+                manager = ConnectionManager.__new__(ConnectionManager)
+                manager._db_lock = RLock()
+                manager._registry_cache = {}
+                manager.conn = conn
+
+                manager.create_tables()
+                assert list(manager.get_sections().items()) == [(1, "Default"), (2, "Kitchen")]
+                garden = manager.add_section("Garden")
+                assert list(manager.get_sections()) == [1, 2, garden]
+                manager.reorder_sections([garden, 2, 1])
+                manager.rename_section(garden, "Patio")
+                assert list(manager.get_sections().items()) == [(garden, "Patio"), (2, "Kitchen"), (1, "Default")]
+
+                manager.add_relay(111, "Relay")  # outputs a-h in the default section
+                for output_id, name in (("a", "Lamp"), ("b", "Blind power"), ("c", "Blind direction")):
+                    manager.name_output(111, output_id, name)
+                    manager.change_output_section(111, output_id, 2)
+                manager.add_blind_pair(111, "b", "c")
+                assert manager.get_light_outputs()[111] == {"a": ("Lamp", 2, 0, 0)}
+
+                assert manager.remove_section(2) == 1
+                assert list(manager.get_sections()) == [garden, 1]
+                outputs = manager.get_outputs()[111]
+                # They follow the default section's own outputs (d-h at 3-7), in their old order.
+                assert [outputs[output_id][1:3] for output_id in "abc"] == [(1, 8), (1, 9), (1, 10)]
+                with pytest.raises(ValueError):
+                    manager.remove_section(2)
+                assert conn.info.transaction_status == TransactionStatus.IDLE
         finally:
             admin.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(schema))

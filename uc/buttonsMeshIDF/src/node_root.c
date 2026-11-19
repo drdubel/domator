@@ -61,6 +61,14 @@ static blind_pair_t g_blind_pairs[MAX_BLIND_PAIRS];
 static int g_blind_pair_count = 0;
 static SemaphoreHandle_t g_blind_pairs_mutex = NULL;
 
+/* Relay output states reported to this root, so that a momentary button
+ * switches all of its outputs alike (relay_group.h). */
+static relay_states_t relay_states;
+static portMUX_TYPE relay_states_lock = portMUX_INITIALIZER_UNLOCKED;
+_Static_assert(RELAY_STATES_RELAYS >= MAX_NODES &&
+                   RELAY_STATES_OUTPUTS >= MAX_RELAYS_16,
+               "relay_states_t must hold every relay output");
+
 static void route_button_to_relays(uint64_t from_id, char button, int state);
 static void route_blind_press(uint64_t from_id, char button,
                               bool is_long_press);
@@ -152,6 +160,21 @@ static bool send_remote_or_mesh(mesh_app_msg_t* msg, tx_priority_t prio,
         }
     }
     return mesh_queue_to_node(msg, prio, dest);
+}
+
+static void relay_state_record(uint64_t relay_id, char output, bool on) {
+    portENTER_CRITICAL(&relay_states_lock);
+    relay_states_set(&relay_states, relay_id, output, on);
+    portEXIT_CRITICAL(&relay_states_lock);
+}
+
+/** @brief Ask a relay to report every output with MSG_TYPE_RELAY_STATE. */
+static void request_relay_sync(uint64_t relay_id, mesh_addr_t* addr) {
+    mesh_app_msg_t sync_msg = {0};
+    sync_msg.src_id = g_device_id;
+    sync_msg.msg_type = MSG_TYPE_SYNC_REQUEST;
+    mesh_queue_to_node(&sync_msg, TX_PRIO_NORMAL, addr);
+    ESP_LOGI(TAG, "Sent sync request to device %" PRIu64, relay_id);
 }
 
 /**
@@ -370,6 +393,7 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
             char state_char = msg->data[1];
             ESP_LOGI(TAG, "Relay state '%c'='%c' from device %" PRIu64,
                      relay_char, state_char, msg->src_id);
+            relay_state_record(msg->src_id, relay_char, state_char == '1');
 
             if (g_mqtt_connected) {
                 char topic[64];
@@ -390,6 +414,15 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
         }
 
         case MSG_TYPE_STATUS: {
+            // Relays announce themselves only when they join the mesh, so one
+            // that stayed connected while this node became root is asked for
+            // its outputs once its status arrives.
+            if (strstr(msg->data, "\"type\":\"relay")) {
+                portENTER_CRITICAL(&relay_states_lock);
+                bool known = relay_states_known(&relay_states, msg->src_id);
+                portEXIT_CRITICAL(&relay_states_lock);
+                if (!known) request_relay_sync(msg->src_id, from);
+            }
             if (g_mqtt_connected) {
                 char topic[64];
                 snprintf(topic, sizeof(topic), "/switch/state/root");
@@ -408,14 +441,8 @@ void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg) {
                      type_str[0]);
             registry_update(msg->src_id, from, type_str);
 
-            if (type_str[0] == DEVICE_TYPE_RELAY) {
-                mesh_app_msg_t sync_msg = {0};
-                sync_msg.src_id = g_device_id;
-                sync_msg.msg_type = MSG_TYPE_SYNC_REQUEST;
-                mesh_queue_to_node(&sync_msg, TX_PRIO_NORMAL, from);
-                ESP_LOGI(TAG, "Sent sync request to device %" PRIu64,
-                         msg->src_id);
-            }
+            if (type_str[0] == DEVICE_TYPE_RELAY)
+                request_relay_sync(msg->src_id, from);
 
             break;
         }
@@ -573,7 +600,8 @@ static int button_relay_level(int type, int state) {
  * Looks up the routing table (g_connections) for the source device and
  * button character, then sends a MSG_TYPE_COMMAND to each target relay node.
  * Stateful and presence inputs set an explicit level (see
- * button_relay_level); momentary buttons send a single-byte toggle command.
+ * button_relay_level). A momentary button sets one level on all of its
+ * outputs (relay_group_level), or toggles a single output.
  *
  * @param from_id Source device ID (the switch that was pressed).
  * @param button  Button character ('a' – 'x').
@@ -620,6 +648,13 @@ static void route_button_to_relays(uint64_t from_id, char button, int state) {
         return;
     }
 
+    // A single output is still toggled by its relay, against its own state.
+    if (!level && count > 1) {
+        portENTER_CRITICAL(&relay_states_lock);
+        level = relay_group_level(&relay_states, targets, count);
+        portEXIT_CRITICAL(&relay_states_lock);
+    }
+
     for (int j = 0; j < count; j++) {
         route_target_t* target = &targets[j];
         mesh_addr_t dest = {0};
@@ -630,12 +665,15 @@ static void route_button_to_relays(uint64_t from_id, char button, int state) {
             cmd.data[0] = target->relay_command[0];
             cmd.data_len = 1;
             if (level) cmd.data[cmd.data_len++] = level;
-            mesh_queue_to_node(&cmd, TX_PRIO_NORMAL, &dest);
+            // Assumed until the relay confirms it, so that a press right
+            // after this one already finds the group switched.
+            if (mesh_queue_to_node(&cmd, TX_PRIO_NORMAL, &dest) && level)
+                relay_state_record(target->target_node_id, cmd.data[0],
+                                   level == '1');
             ESP_LOGI(TAG,
                      "Routed button '%c' of type %d from %" PRIu64
-                     " to relay command '%c' on device %" PRIu64,
-                     button, type, from_id, target->relay_command[0],
-                     target->target_node_id);
+                     " to relay command '%s' on device %" PRIu64,
+                     button, type, from_id, cmd.data, target->target_node_id);
         } else {
             ESP_LOGW(TAG, "No mesh address found for target device %" PRIu64,
                      target->target_node_id);
@@ -1663,6 +1701,11 @@ void node_root_stop(void) {
     }
 
     telnet_stop();  // Stop telnet server if running
+
+    // Relays report to the new root now; its states would go out of date.
+    portENTER_CRITICAL(&relay_states_lock);
+    memset(&relay_states, 0, sizeof(relay_states));
+    portEXIT_CRITICAL(&relay_states_lock);
 
     g_is_root = false;  // Ensure we update root status
     ESP_LOGI(TAG, "Root services stopped");

@@ -134,6 +134,7 @@
 #define NUM_RELAY_BUTTONS 8
 
 #include "mesh_protocol.h"
+#include "relay_group.h"
 
 /** @brief Node role/type in the mesh network. */
 typedef enum {
@@ -186,12 +187,6 @@ typedef struct {
     uint8_t g;
     uint8_t b;
 } led_color_t;
-
-/** @brief One relay target within a button routing entry. */
-typedef struct {
-    uint64_t target_node_id;
-    char relay_command[2];
-} route_target_t;
 
 /** @brief All routing targets for a single button. */
 typedef struct {

@@ -149,6 +149,20 @@ static bool wrap_remote_command(uint64_t id, mesh_app_msg_t* msg) {
     return !remote || remote_wrap_command(id, msg);
 }
 
+/**
+ * @brief Register a battery remote, which is reached through @p gateway.
+ *
+ * Only then are commands for it wrapped for ESP-NOW, instead of being taken
+ * by the gateway as its own. Its type never crosses the mesh, where
+ * mesh_message_valid() rejects it: the root sets it for authenticated packets.
+ */
+void root_register_remote(uint64_t device_id, mesh_addr_t* gateway) {
+    const char type[2] = {REMOTE_DEVICE_TYPE, 0};
+    registry_update(device_id, gateway, type);
+    ESP_LOGI(TAG, "Remote %" PRIu64 " reached through " MACSTR, device_id,
+             MAC2STR(gateway->addr));
+}
+
 static bool send_remote_or_mesh(mesh_app_msg_t* msg, tx_priority_t prio,
                                  mesh_addr_t* dest) {
     if (msg->msg_type == MSG_TYPE_ESPNOW && remote_gateway_enabled()) {

@@ -405,6 +405,9 @@ void status_report_task(void* arg);
  */
 void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg);
 
+/** @brief Register an authenticated battery remote reached via @p gateway. */
+void root_register_remote(uint64_t device_id, mesh_addr_t* gateway);
+
 /** @brief Initialise root-only resources (node registry mutex, etc.). */
 void node_root_start(void);
 bool node_root_ready(void);

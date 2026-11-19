@@ -1,5 +1,6 @@
 #include <assert.h>
 #include "mesh_protocol.h"
+#include "remote_protocol.h"
 
 int main(void) {
     mesh_app_msg_t msg = {.src_id = 1, .msg_type = MSG_TYPE_BUTTON, .data_len = 2, .data = {'a', '1'}};
@@ -18,5 +19,8 @@ int main(void) {
         }
     msg.msg_type = MSG_TYPE_TYPE_INFO; msg.data_len = 1; msg.data[0] = DEVICE_TYPE_RELAY;
     assert(mesh_message_valid(&msg, sizeof(msg)));
+    // Only the root marks a remote, once it has authenticated the remote's packet.
+    msg.data[0] = REMOTE_DEVICE_TYPE; assert(!mesh_message_valid(&msg, sizeof(msg)));
+    msg.data[0] = DEVICE_TYPE_RELAY;
     msg.target_type = '?'; assert(!mesh_message_valid(&msg, sizeof(msg)));
 }

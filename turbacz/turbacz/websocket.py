@@ -30,6 +30,10 @@ def bounded_json(value, remaining, depth=0):
         raise ValueError("Non-finite number")
 
 
+class CommandForbidden(Exception):
+    """The account's roles do not allow the command; carries the capability it needs."""
+
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections = []
@@ -95,7 +99,13 @@ class ConnectionManager:
 
         return run
 
-    async def messages(self, websocket):
+    async def messages(self, websocket, on_reject=None):
+        """Yield the permitted, valid commands a socket sends.
+
+        A rejected command closes the socket unless on_reject is given; it is
+        then awaited with the socket, the command and the reason instead.
+        Malformed or oversized messages always close it.
+        """
         from turbacz.auth import websocket_auth
         from turbacz.authorization import command_capability, permitted
         from turbacz.connection_manager import connection_manager
@@ -138,18 +148,25 @@ class ConnectionManager:
             try:
                 cmd = json.loads(raw)
                 bounded_json(cmd, [config.security.ws_max_items])
-                if not permitted(user, command_capability(websocket.url.path, cmd)):
-                    await self.close(websocket, 1008)
-                    return
+            except (ValueError, TypeError, RecursionError):
+                await self.close(websocket, 1008)
+                return
+            try:
+                capability = command_capability(websocket.url.path, cmd)
+                if not permitted(user, capability):
+                    raise CommandForbidden(capability)
                 if cmd == {"type": "ping"}:
                     await self.send_personal_message({"type": "pong"}, websocket)
                     continue
                 await db_call(
                     validate_command, websocket.url.path, cmd, connection_manager
                 )
-            except (ValueError, TypeError, KeyError, RecursionError, HTTPException):
-                await self.close(websocket, 1008)
-                return
+            except (CommandForbidden, ValueError, TypeError, KeyError, RecursionError, HTTPException) as error:
+                if on_reject is None:
+                    await self.close(websocket, 1008)
+                    return
+                await on_reject(websocket, cmd, error)
+                continue
             yield cmd
 
     async def send_personal_message(self, message, websocket):

@@ -17,6 +17,7 @@ class StateManager:
         self._up_to_date_firmware_versions: dict[str, int] = {}
         self._ping_times: dict[int, list[int]] = {}
         self._presence: dict[int, dict] = {}
+        self._announced_relays: list[int] | None = None
 
     async def update_state(self, relay_id: int, output_id: str, state: int):
         if self.get_state(relay_id, output_id) == state:
@@ -152,6 +153,17 @@ class StateManager:
 
     def is_relay_online(self, relay_id: int) -> bool:
         return relay_id in self._online_relays
+
+    def online_relays(self) -> list[int]:
+        return sorted(self._online_relays)
+
+    async def send_relay_status(self):
+        """Tell lights pages which relays respond, whenever that changes."""
+        online = self.online_relays()
+        if online == self._announced_relays:
+            return
+        self._announced_relays = online
+        await ws_manager.broadcast({"type": "relay_status", "online_relays": online}, "/lights/ws/")
 
     async def check_relays_if_online(self):
         to_remove = []

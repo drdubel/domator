@@ -193,7 +193,7 @@ async def test_remote_registers_reported_button_count(application, monkeypatch, 
     manager.get_relays.return_value = {}
     manager.get_switches.return_value = {}
     monkeypatch.setattr(broker, "connection_manager", manager)
-    monkeypatch.setattr(broker, "state_manager", MagicMock())
+    monkeypatch.setattr(broker, "state_manager", MagicMock(send_relay_status=AsyncMock()))
     monkeypatch.setattr(broker, "ha_bridge", MagicMock())
     monkeypatch.setattr(broker, "record_node_metrics", MagicMock())
     monkeypatch.setattr(broker.ws_manager, "broadcast", AsyncMock())

@@ -39,6 +39,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
+from turbacz.authorization import permitted
 from turbacz.body_limit import CustomRequestSizeMiddleware
 from turbacz.connection_manager import connection_manager, connection_router
 from turbacz.database import db_call
@@ -52,7 +53,8 @@ from turbacz.security import SecurityMiddleware
 from turbacz.settings import config
 from turbacz.state_manager import state_manager
 from turbacz.temperature_history import merge_temperature_series
-from turbacz.websocket import ws_manager
+from turbacz.validation import DEFAULT_SECTION_ID
+from turbacz.websocket import CommandForbidden, ws_manager
 from turbacz.zigbee_knob import mesh_switch_config
 
 logger = logging.getLogger(__name__)
@@ -517,21 +519,69 @@ async def websocket_heating(websocket: WebSocket):
     await receive_command(websocket)
 
 
+# Layout changes reach every lights page. A rejected one is answered with the
+# current layout, which undoes whatever the sender already moved on screen.
+LIGHTS_LAYOUT_COMMANDS = {
+    "add_section",
+    "rename_section",
+    "remove_section",
+    "reorder_sections",
+    "change_section",
+    "change_positions",
+    "layout_update",
+}
+
+
+async def lights_configuration(websocket: WebSocket | None = None) -> dict:
+    """The lights layout; a page that just connected also gets its permissions and the live state."""
+    sections = await db_call(connection_manager.get_sections)
+    message = {
+        "type": "configuration",
+        "sections": sections,
+        # Browsers reorder numeric object keys, so the order travels separately.
+        "section_order": list(sections),
+        "default_section": DEFAULT_SECTION_ID,
+        "named_outputs": await db_call(connection_manager.get_light_outputs),
+    }
+    if websocket is not None:
+        user = await auth.websocket_auth(websocket)
+        message["permissions"] = {"control": permitted(user, "operator"), "edit": permitted(user, "admin")}
+        message["online_relays"] = state_manager.online_relays()
+        message["states"] = state_manager.get_all()
+    return message
+
+
+def lights_rejection(cmd, error: Exception) -> str:
+    if isinstance(error, CommandForbidden):
+        if isinstance(cmd, dict) and cmd.get("type") in LIGHTS_LAYOUT_COMMANDS:
+            return "Only admins can change the lights layout"
+        return "Your account can view the lights but not switch them"
+    if isinstance(error, HTTPException):
+        return str(error.detail)
+    if isinstance(error, ValueError) and str(error):
+        return str(error)
+    return "Invalid command"
+
+
+async def switch_lights_off(section_id: int | None):
+    """Turn off every light, or those of one section, that is not known to be off."""
+    for relay_id, outputs in (await db_call(connection_manager.get_light_outputs)).items():
+        for output_id, output in outputs.items():
+            if section_id is not None and output[1] != section_id:
+                continue
+            if state_manager.get_state(int(relay_id), output_id) != 0:
+                mqtt.client.publish(f"/relay/cmd/{relay_id}", f"{output_id}0")
+
+
 @app.websocket("/lights/ws/{client_id}")
 @ws_manager.endpoint
 async def websocket_lights(websocket: WebSocket):
-    await ws_manager.send_personal_message(
-        {
-            "type": "configuration",
-            "sections": await db_call(connection_manager.get_sections),
-            "named_outputs": await db_call(connection_manager.get_named_outputs),
-        },
-        websocket,
-    )
+    await ws_manager.send_personal_message(await lights_configuration(websocket), websocket)
 
     for relay_id in await db_call(connection_manager.get_relays):
         mqtt.client.publish(f"/relay/cmd/{relay_id}", "S")
 
+    # The configuration carries these too; older clients read them from here.
     current_states = state_manager.get_all()
     for relay_id, outputs in current_states.items():
         for output_id, state in outputs.items():
@@ -545,46 +595,54 @@ async def websocket_lights(websocket: WebSocket):
                 websocket,
             )
 
+    async def reject(websocket: WebSocket, cmd, error: Exception):
+        await ws_manager.send_personal_message({"type": "error", "message": lights_rejection(cmd, error)}, websocket)
+        if isinstance(cmd, dict) and cmd.get("type") in LIGHTS_LAYOUT_COMMANDS:
+            await ws_manager.send_personal_message(await lights_configuration(websocket), websocket)
+
+    async def broadcast_configuration():
+        await ws_manager.broadcast(await lights_configuration(), "/lights/ws/")
+
     async def receive_command(websocket: WebSocket):
-        async for cmd in ws_manager.messages(websocket):
+        async for cmd in ws_manager.messages(websocket, on_reject=reject):
             if cmd.get("type") == "add_section":
-                await db_call(connection_manager.add_section, cmd["name"])
-                await ws_manager.broadcast(
-                    {
-                        "type": "configuration",
-                        "sections": await db_call(connection_manager.get_sections),
-                        "named_outputs": await db_call(connection_manager.get_named_outputs),
-                    },
-                    "/lights/ws/",
-                )
+                await db_call(connection_manager.add_section, cmd["name"].strip())
+                await broadcast_configuration()
+                continue
+
+            if cmd.get("type") == "rename_section":
+                await db_call(connection_manager.rename_section, int(cmd["section"]), cmd["name"].strip())
+                ha_bridge.schedule_resync()
+                await broadcast_configuration()
+                continue
+
+            if cmd.get("type") == "remove_section":
+                await db_call(connection_manager.remove_section, int(cmd["section"]))
+                ha_bridge.schedule_resync()
+                await broadcast_configuration()
+                continue
+
+            if cmd.get("type") == "reorder_sections":
+                await db_call(connection_manager.reorder_sections, [int(section) for section in cmd["order"]])
+                await broadcast_configuration()
+                continue
+
+            if cmd.get("type") == "all_off":
+                section = cmd.get("section")
+                await switch_lights_off(None if section is None else int(section))
                 continue
 
             if cmd.get("type") == "change_section":
                 await db_call(connection_manager.change_output_section, int(cmd["relay_id"]), cmd["output_id"], int(cmd["section"]))
                 ha_bridge.schedule_resync()
-                await ws_manager.broadcast(
-                    {
-                        "type": "configuration",
-                        "sections": await db_call(connection_manager.get_sections),
-                        "named_outputs": await db_call(connection_manager.get_named_outputs),
-                    },
-                    "/lights/ws/",
-                )
+                await broadcast_configuration()
                 continue
 
             if cmd.get("type") == "change_positions":
                 positions = cmd.get("positions", [])
                 if isinstance(positions, list) and positions:
                     await db_call(connection_manager.set_output_positions, positions)
-
-                    await ws_manager.broadcast(
-                        {
-                            "type": "configuration",
-                            "sections": await db_call(connection_manager.get_sections),
-                            "named_outputs": await db_call(connection_manager.get_named_outputs),
-                        },
-                        "/lights/ws/",
-                    )
+                    await broadcast_configuration()
                 continue
 
             if cmd.get("type") == "layout_update":
@@ -595,18 +653,13 @@ async def websocket_lights(websocket: WebSocket):
 
                 if section is not None and relay_id is not None and output_id is not None:
                     await db_call(connection_manager.change_output_section, int(relay_id), str(output_id), int(section))
+                    # Home Assistant groups lights by section.
+                    ha_bridge.schedule_resync()
 
                 if isinstance(positions, list) and positions:
                     await db_call(connection_manager.set_output_positions, positions)
 
-                await ws_manager.broadcast(
-                    {
-                        "type": "configuration",
-                        "sections": await db_call(connection_manager.get_sections),
-                        "named_outputs": await db_call(connection_manager.get_named_outputs),
-                    },
-                    "/lights/ws/",
-                )
+                await broadcast_configuration()
                 continue
 
             try:

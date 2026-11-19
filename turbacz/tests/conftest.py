@@ -66,6 +66,45 @@ class FakeConnectionManager:
             for r, o in self.outputs.items()
         }
 
+    def get_light_outputs(self):
+        blind_outputs = self.get_blind_pair_outputs()
+        return {
+            r: {oid: meta for oid, meta in o.items() if (r, oid) not in blind_outputs}
+            for r, o in self.get_named_outputs().items()
+        }
+
+    # -- lights layout --
+    def add_section(self, name):
+        section_id = max(self.sections, default=0) + 1
+        self.sections[section_id] = name
+        return section_id
+
+    def rename_section(self, section_id, name):
+        self.sections[section_id] = name
+
+    def remove_section(self, section_id):
+        del self.sections[section_id]
+        target = 1 if 1 in self.sections else next(iter(self.sections))
+        offset = max((meta[2] + 1 for o in self.outputs.values() for meta in o.values() if meta[1] == target), default=0)
+        for outputs in self.outputs.values():
+            for oid, (name, section, idx, auto_off) in outputs.items():
+                if section == section_id:
+                    outputs[oid] = (name, target, idx + offset, auto_off)
+        return target
+
+    def reorder_sections(self, order):
+        self.sections = {section_id: self.sections[section_id] for section_id in order}
+
+    def change_output_section(self, relay_id, output_id, section_id):
+        name, _, idx, auto_off = self.outputs[relay_id][output_id]
+        self.outputs[relay_id][output_id] = (name, section_id, idx, auto_off)
+
+    def set_output_positions(self, positions):
+        for position in positions:
+            relay_id, output_id = int(position["relay_id"]), position["output_id"]
+            name, section, _, auto_off = self.outputs[relay_id][output_id]
+            self.outputs[relay_id][output_id] = (name, section, int(position["output_idx"]), auto_off)
+
     def get_blind_pair_outputs(self):
         return {
             (int(r), oid)

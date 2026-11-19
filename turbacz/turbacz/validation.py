@@ -6,6 +6,10 @@ import re
 from turbacz.location import coordinates
 from turbacz.presence import CONFIG_KEYS, GATES, SUN_EVENTS, SUN_OFFSET_MAX
 
+# New outputs land in this section (the outputs.section_id column default),
+# so it can be renamed but never deleted.
+DEFAULT_SECTION_ID = 1
+
 
 def integer(value, low=0, high=2**63 - 1):
     if isinstance(value, bool) or not isinstance(value, (int, str)):
@@ -144,19 +148,54 @@ def validate_command(path, cmd, cm):
         return
     if path.startswith("/lights/") and kind in {
         "add_section",
+        "rename_section",
+        "remove_section",
+        "reorder_sections",
         "change_section",
         "change_positions",
         "layout_update",
+        "all_off",
     }:
+        sections = cm.get_sections()
+
+        def section(value):
+            section_id = integer(value, 1)
+            if section_id not in sections:
+                raise ValueError("Unknown section")
+            return section_id
+
+        def section_name(value, renamed=None):
+            result = name(value)
+            if any(other.strip().casefold() == result.casefold() for other_id, other in sections.items() if other_id != renamed):
+                raise ValueError("A section with this name already exists")
+            return result
+
         if kind == "add_section":
-            name(cmd.get("name"))
+            section_name(cmd.get("name"))
+            return
+        if kind == "rename_section":
+            section_name(cmd.get("name"), section(cmd.get("section")))
+            return
+        if kind == "remove_section":
+            if section(cmd.get("section")) == DEFAULT_SECTION_ID:
+                raise ValueError("New lights are added to the default section, so it can't be deleted")
+            if len(sections) < 2:
+                raise ValueError("The last section can't be deleted")
+            return
+        if kind == "reorder_sections":
+            order = cmd.get("order")
+            if not isinstance(order, list) or sorted(section(value) for value in order) != sorted(sections):
+                raise ValueError("The section order must list every section once")
+            return
+        if kind == "all_off":
+            if cmd.get("section") is not None:
+                section(cmd["section"])
             return
         if kind == "change_section" or (
             kind == "layout_update" and cmd.get("section") is not None
         ):
             check_output(cmd.get("relay_id"), cmd.get("output_id"))
-            if integer(cmd.get("section"), 1) not in cm.get_sections():
-                raise ValueError("Unknown section")
+            section(cmd.get("section"))
         positions = cmd.get("positions", [])
         if not isinstance(positions, list):
             raise ValueError("Invalid positions")
@@ -247,5 +286,8 @@ def validate_command(path, cmd, cm):
             return
     if kind is not None:
         raise ValueError("Unknown command")
-    check_output(cmd.get("relay_id"), cmd.get("output_id"))
+    relay, output = check_output(cmd.get("relay_id"), cmd.get("output_id"))
     integer(cmd.get("state"), 0, 1)
+    # Switching one leg of a blind pair on its own can reverse a running motor.
+    if path.startswith("/lights/") and (relay, output) in cm.get_blind_pair_outputs():
+        raise ValueError("Blinds are controlled from the Blinds page")

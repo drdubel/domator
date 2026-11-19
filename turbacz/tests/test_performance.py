@@ -31,7 +31,7 @@ async def test_mesh_reports_are_scraped_while_pool_only_serves_history(applicati
     monkeypatch.setattr(application.main.mqtt, "mqtt_startup", AsyncMock())
     monkeypatch.setattr(application.main.mqtt, "mqtt_shutdown", AsyncMock())
     monkeypatch.setattr(broker, "connection_manager", application.cm)
-    monkeypatch.setattr(broker, "state_manager", MagicMock())
+    monkeypatch.setattr(broker, "state_manager", MagicMock(send_relay_status=AsyncMock()))
     broker.state_manager.get_device_ping.return_value = 5
     monkeypatch.setattr(broker, "ha_bridge", MagicMock())
     broker.ha_bridge._resync_task = None

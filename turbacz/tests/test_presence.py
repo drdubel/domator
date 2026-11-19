@@ -81,7 +81,7 @@ def broker_env(application, monkeypatch):
     manager.get_switches.return_value = {}
     manager.get_presence_sensors.return_value = {}
     manager.get_all_buttons.return_value = {SENSOR: {"a": 2, "b": 3, "c": 4}}
-    state = MagicMock()
+    state = MagicMock(send_relay_status=AsyncMock())
     client = MagicMock()
     monkeypatch.setattr(broker, "connection_manager", manager)
     monkeypatch.setattr(broker, "state_manager", state)

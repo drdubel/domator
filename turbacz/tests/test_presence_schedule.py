@@ -221,11 +221,22 @@ def schedule_sends(client):
             if call.args[0] == f"/switch/cmd/{SENSOR}" and '"schedule"' in call.args[1]]
 
 
+class Noon(datetime):
+    """The broker's clock, stopped at noon: no night pause is in progress."""
+
+    @classmethod
+    def now(cls, tz=None):
+        return at("2026-11-14 12:00").astimezone(tz)
+
+
 @pytest.fixture
 def scheduled_env(broker_env, monkeypatch):
     broker, manager, state, client = broker_env
     now = [0]
     monkeypatch.setattr(broker, "_plan_sends", RateLimiter(clock=lambda: now[0]))
+    # A plan made during a pause also lists the rest of it, so the number of
+    # pauses in a week's plan would depend on the hour the tests run.
+    monkeypatch.setattr(broker, "datetime", Noon)
     manager.get_switches.return_value = {SENSOR: ("Hall", 3)}
     manager.get_presence_sensors.return_value = {SENSOR: None}
     manager.get_presence_schedules.return_value = {SENSOR: None}

@@ -334,11 +334,7 @@ void remote_root_receive(mesh_addr_t* from, mesh_app_msg_t* msg) {
     portEXIT_CRITICAL(&history_lock);
     if (full) return;
     if (!duplicate) {
-        if (register_type) {
-            mesh_app_msg_t info = {.src_id = p.device_id, .msg_type = MSG_TYPE_TYPE_INFO,
-                                   .data_len = 1, .data = {REMOTE_DEVICE_TYPE}};
-            root_handle_mesh_message(from, &info);
-        }
+        if (register_type) root_register_remote(p.device_id, from);
         mesh_app_msg_t event = {.src_id = p.device_id, .msg_type = type,
                                 .data_len = p.length - 1};
         memcpy(event.data, p.payload + 1, event.data_len);

@@ -111,6 +111,8 @@ Connect those buttons to relay outputs using RCM's usual connection lines,
 then choose **Light: Toggle / On / Off** or **Blind: Up / Down / Stop** from
 each action's dropdown. For a blind, connect either output of an existing
 blind pair; Turbacz controls the whole pair. Multiple targets are supported.
+Like a momentary mesh button, Toggle switches its lights together: all off
+when any of them is on, all on when they are all off.
 Each device has independent connections and command choices, stored in
 PostgreSQL and preserved across restarts. Unconnected actions do nothing.
 

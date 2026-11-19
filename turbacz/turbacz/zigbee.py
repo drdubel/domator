@@ -5,6 +5,7 @@ from turbacz.database import db_call
 from turbacz.ha.bridge import ha_bridge
 from turbacz.mqtt_client import mqtt, publish_blind_action
 from turbacz.settings import config
+from turbacz.state_manager import state_manager
 from turbacz.websocket import ws_manager
 from turbacz.zigbee_devices import action_values, validate_zigbee_payload, zigbee_topic
 
@@ -89,10 +90,18 @@ async def handle_device_action(device: dict, action: str) -> None:
         if entry not in planned:
             planned.append(entry)
 
+    if command == "toggle" and len(planned) > 1:
+        # Lights on one button switch together: off if any is on, else on.
+        lit = any(
+            state_manager.get_state(relay_id, output_id) == 1
+            for relay_id, output_id in planned
+        )
+        command = "off" if lit else "on"
+
     for relay_id, target in planned:
         if command in {"up", "down", "stop"}:
             publish_blind_action(mqtt.client, relay_id, target[0], target[1], command)
         else:
-            # Relay firmware handles toggle atomically, without stale state.
+            # A single light is toggled by its relay, without stale state.
             suffix = {"on": "1", "off": "0", "toggle": ""}[command]
             mqtt.client.publish(f"/relay/cmd/{relay_id}", f"{target}{suffix}")

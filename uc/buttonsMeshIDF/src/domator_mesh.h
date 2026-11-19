@@ -134,6 +134,7 @@
 #define NUM_RELAY_BUTTONS 8
 
 #include "mesh_protocol.h"
+#include "relay_group.h"
 
 /** @brief Node role/type in the mesh network. */
 typedef enum {
@@ -186,12 +187,6 @@ typedef struct {
     uint8_t g;
     uint8_t b;
 } led_color_t;
-
-/** @brief One relay target within a button routing entry. */
-typedef struct {
-    uint64_t target_node_id;
-    char relay_command[2];
-} route_target_t;
 
 /** @brief All routing targets for a single button. */
 typedef struct {
@@ -409,6 +404,9 @@ void status_report_task(void* arg);
  * @param msg  Pointer to the decoded application message.
  */
 void root_handle_mesh_message(mesh_addr_t* from, mesh_app_msg_t* msg);
+
+/** @brief Register an authenticated battery remote reached via @p gateway. */
+void root_register_remote(uint64_t device_id, mesh_addr_t* gateway);
 
 /** @brief Initialise root-only resources (node registry mutex, etc.). */
 void node_root_start(void);

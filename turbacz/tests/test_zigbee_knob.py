@@ -24,6 +24,7 @@ KNOB_SWITCH_ID = zigbee_device_id(TOPIC)
 @pytest.fixture
 def knob(application, monkeypatch):
     from turbacz import zigbee
+    from turbacz.state_manager import StateManager
 
     cm = application.cm
     cm.switches[KNOB_SWITCH_ID] = ("tyua_knob", len(KNOB_BUTTONS))
@@ -69,6 +70,7 @@ def knob(application, monkeypatch):
 
     cm.set_zigbee_command = MagicMock(side_effect=save)
     monkeypatch.setattr(zigbee, "connection_manager", cm)
+    monkeypatch.setattr(zigbee, "state_manager", StateManager())
     monkeypatch.setattr(zigbee.ws_manager, "broadcast", AsyncMock())
     monkeypatch.setattr(zigbee.ha_bridge, "on_button_event", AsyncMock())
     monkeypatch.setattr(config, "zigbee", ZigbeeSettings())
@@ -90,9 +92,10 @@ async def test_event_and_command_mode_actions_use_rcm_connections(
     await broker.message(
         None, "zigbee2mqtt/tyua_knob", json.dumps({"action": action}).encode(), 0, {}
     )
+    # Neither light has reported its state, so both count as off.
     assert application.mqtt.drain() == [
-        ("/relay/cmd/111", "a", False),
-        ("/relay/cmd/111", "b", False),
+        ("/relay/cmd/111", "a1", False),
+        ("/relay/cmd/111", "b1", False),
     ]
     zigbee.ws_manager.broadcast.assert_any_await(
         {"type": "switch_state", "switch_id": KNOB_SWITCH_ID, "button_id": button},
@@ -112,6 +115,32 @@ async def test_light_command_selection(knob, application, command, expected):
     choices["buttons"]["a"]["command"] = command
     await zigbee.handle_zigbee_message(TOPIC, '{"action":"single"}')
     assert application.mqtt.drain() == [("/relay/cmd/111", expected, False)]
+
+
+@pytest.mark.parametrize(
+    "targets,states,expected",
+    [
+        ([(111, "a"), (111, "b")], {"a": 0, "b": 0}, ["a1", "b1"]),
+        ([(111, "a"), (111, "b")], {"a": 1, "b": 0}, ["a0", "b0"]),
+        # A light without a reported state counts as off.
+        ([(111, "a"), (111, "b")], {"b": 1}, ["a0", "b0"]),
+        ([(111, "a"), (111, "b")], {"a": 0}, ["a1", "b1"]),
+        # A single light, even one connected twice, toggles on its relay.
+        ([(111, "a")], {"a": 1}, ["a"]),
+        ([(111, "a"), (111, "a")], {"a": 1}, ["a"]),
+    ],
+)
+async def test_toggle_switches_connected_lights_together(
+    knob, application, targets, states, expected
+):
+    zigbee, cm, choices = knob
+    choices["buttons"]["a"]["command"] = "toggle"
+    cm.get_all_connections.return_value = {KNOB_SWITCH_ID: {"a": targets}}
+    zigbee.state_manager._states[111] = dict(states)
+    await zigbee.handle_zigbee_message(TOPIC, '{"action":"single"}')
+    assert application.mqtt.drain() == [
+        ("/relay/cmd/111", payload, False) for payload in expected
+    ]
 
 
 @pytest.mark.parametrize(

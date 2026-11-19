@@ -61,6 +61,8 @@ jobs:
           /tmp/radar-test
           clang -fsanitize=address,undefined -I uc/buttonsMeshIDF/src uc/buttonsMeshIDF/tests/presence_schedule_test.c -o /tmp/presence-schedule-test
           /tmp/presence-schedule-test
+          clang -fsanitize=address,undefined -I uc/buttonsMeshIDF/src uc/buttonsMeshIDF/tests/relay_group_test.c -o /tmp/relay-group-test
+          /tmp/relay-group-test
           clang++ -std=c++11 -fsanitize=address,undefined -I uc/blinds_wifi/src uc/blinds_wifi/tests/command_parser_test.cpp -o /tmp/blind-test
           /tmp/blind-test
           clang++ -std=c++11 -fsanitize=address,undefined -I uc/heating/src uc/heating/tests/command_parser_test.cpp -o /tmp/heating-test

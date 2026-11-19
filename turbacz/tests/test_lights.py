@@ -203,3 +203,12 @@ def test_section_names_are_unique_regardless_of_case_and_spacing(cm):
         validate_command("/lights/ws/1", {"type": "add_section", "name": "x" * 65}, cm)
     with pytest.raises(ValueError, match="Unknown section"):
         validate_command("/lights/ws/1", {"type": "all_off", "section": 3}, cm)
+
+
+def test_static_files_are_revalidated_on_every_load(application, tmp_path):
+    (tmp_path / "static" / "lights.js").write_text("// lights")
+    response = application.http.get("/static/lights.js")
+    assert response.headers["cache-control"] == "no-cache"
+    unchanged = application.http.get("/static/lights.js", headers={"If-None-Match": response.headers["etag"]})
+    assert unchanged.status_code == 304
+    assert unchanged.headers["cache-control"] == "no-cache"

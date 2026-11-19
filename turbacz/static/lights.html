@@ -8,8 +8,10 @@
 	<link rel="icon" href="/static/favicon.ico" type="image/x-icon">
 	<script src="/sentry-config.js"></script>
 	<script src="/static/scripts/sentry.js"></script>
-	<link rel="stylesheet" href="/static/styles/common.css">
-	<link rel="stylesheet" href="/static/styles/lights.css">
+	<!-- New URLs for files this page's rework changed: copies cached before /static
+		was revalidated would otherwise outlive the markup. -->
+	<link rel="stylesheet" href="/static/styles/common.css?v=2">
+	<link rel="stylesheet" href="/static/styles/lights.css?v=2">
 	<script src="/static/scripts/common.js"></script>
 </head>
 
@@ -103,7 +105,7 @@
 			</form>
 		</dialog>
 	</div>
-	<script src="/static/scripts/lights.js"></script>
+	<script src="/static/scripts/lights.js?v=2"></script>
 </body>
 
 </html>

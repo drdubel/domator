@@ -212,7 +212,20 @@ async def sentry_browser_config():
     )
 
 
-app.mount("/static", StaticFiles(directory="./static", html=True), name="static")
+class RevalidatedStaticFiles(StaticFiles):
+    """Static files are checked on every load, a cheap 304 when unchanged.
+
+    Browsers otherwise reuse them for days by heuristic, and an old script
+    could then run against a newer page.
+    """
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/static", RevalidatedStaticFiles(directory="./static", html=True), name="static")
 
 
 async def publish_relay_auto_off_config() -> None:
